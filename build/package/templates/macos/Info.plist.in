@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS .app bundle 清单（04 §5.3）。占位符由 build/package/package.py 填充。
+  CFBundleDocumentTypes 只声明 Viewer + LSHandlerRank=Alternate：登记「可打开」
+  但不抢系统默认程序（双击行为仍由用户选择，同 Windows 侧不篡夺默认动词的策略）。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>{{NAME}}</string>
+    <key>CFBundleDisplayName</key>
+    <string>{{NAME}}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{{BUNDLE_ID}}</string>
+    <key>CFBundleExecutable</key>
+    <string>{{GUI_BIN}}</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <!-- T-ICON：声明本地化集合是**功能前置**，不是装饰。`UTType.localizedDescription`
+         （系统类型名 → 浏览页「类型」列）的语言由进程 bundle 的本地化集合决定，
+         而不是由系统语言决定：同一台 zh_CN 机器上，未声明的 bundle 会拿到英文
+         `"Zip archive"`，声明后才是 `"Zip归档"`。hzip 支持 zh-CN/en 两种界面语言
+         （见 hzip-gui 的 rust-i18n 表），故在此如实声明；缺了它 macOS 侧的系统
+         类型名会被 hzip-platform 的 `localization_matches_system` 门控挡掉
+         （宁可不显示，也不中英混排）。 -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
+    <key>CFBundleShortVersionString</key>
+    <string>{{VERSION}}</string>
+    <key>CFBundleVersion</key>
+    <string>{{VERSION}}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>{{MIN_MACOS}}</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>{{COPYRIGHT}}</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Archive</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.archive</string>
+            </array>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+{{EXT_LIST}}
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

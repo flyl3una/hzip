@@ -1,0 +1,7 @@
+_meta = { generated = "by T40 hzip-cli" }
+
+[err]
+hz_0000 = "Internal error {code}: please report with logs"
+hz_3001 = "Checksum mismatch: CRC failed"
+hz_3101 = "Wrong password or corrupted encrypted data"
+hz_5003 = "Invalid argument: {code}"

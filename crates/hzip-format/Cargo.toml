@@ -1,0 +1,42 @@
+[package]
+name = "hzip-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 格式抽象与契约（02 §7），契约冻结级"
+
+[dependencies]
+# 依赖红线（02 §2.1 图）：FMTA --> ERR / PRG / CODEC；禁止依赖 hzip-fmt-*
+hzip-error = { workspace = true }
+hzip-progress = { workspace = true }
+hzip-codec = { workspace = true }
+smol_str = { workspace = true }
+time = { workspace = true }
+zeroize = { workspace = true }
+# 组合装配的解层解码器（02 §7.5：gz/bz2/xz/zstd Read 解码器直接绑定底层库）
+flate2 = { workspace = true, optional = true }
+bzip2 = { workspace = true, optional = true }
+xz2 = { workspace = true, optional = true }
+zstd = { workspace = true, optional = true }
+tracing = { workspace = true }   # EntrySink drop 保底收尾告警（02 §12.3）
+
+[features]
+default = ["deflate", "bzip2", "xz", "zstd"]
+# 02 §2.2 的 default-formats：本 crate 保留该 feature 名作为编译期标记；
+# 真正的格式聚合注册发生在 hzip-core（红线 3 优先，T20 §7-2 裁定）。
+default-formats = []
+deflate = ["dep:flate2"]
+bzip2 = ["dep:bzip2"]
+xz = ["dep:xz2"]
+zstd = ["dep:zstd"]
+
+[dev-dependencies]
+# 集成测试构造各压缩流样本（tests/sniff_registry.rs）
+flate2 = { workspace = true }
+bzip2 = { workspace = true }
+xz2 = { workspace = true }
+zstd = { workspace = true }
+
+[lints]
+workspace = true

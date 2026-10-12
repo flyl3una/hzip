@@ -1,0 +1,380 @@
+_meta = { generated = "hzip-gui i18n (dropdown options)" }
+_version = 2
+
+# 下拉候选 / 白名单展示文案（app::labels 各表的 label 列；value 列不翻译）
+[opt.format.zip]
+en = "*.zip"
+zh-CN = "*.zip"
+
+[opt.format.7z]
+en = "*.7z"
+zh-CN = "*.7z"
+
+[opt.format.tar]
+en = "*.tar"
+zh-CN = "*.tar"
+
+[opt.format.tar.gz]
+en = "*.tar.gz"
+zh-CN = "*.tar.gz"
+
+[opt.format.tar.bz2]
+en = "*.tar.bz2"
+zh-CN = "*.tar.bz2"
+
+[opt.format.tar.xz]
+en = "*.tar.xz"
+zh-CN = "*.tar.xz"
+
+[opt.format.tar.zst]
+en = "*.tar.zst"
+zh-CN = "*.tar.zst"
+
+[opt.format.gz]
+en = "*.gz"
+zh-CN = "*.gz"
+
+[opt.format.bz2]
+en = "*.bz2"
+zh-CN = "*.bz2"
+
+[opt.format.xz]
+en = "*.xz"
+zh-CN = "*.xz"
+
+[opt.format.zst]
+en = "*.zst"
+zh-CN = "*.zst"
+
+[opt.level.store]
+en = "Store"
+zh-CN = "存储"
+
+[opt.level.fastest]
+en = "Fastest"
+zh-CN = "最快"
+
+[opt.level.fast]
+en = "Fast"
+zh-CN = "快速"
+
+[opt.level.normal]
+en = "Normal"
+zh-CN = "标准"
+
+[opt.level.maximum]
+en = "Maximum"
+zh-CN = "最大"
+
+[opt.level.ultra]
+en = "Ultra"
+zh-CN = "极限"
+
+[opt.conflict.ask]
+en = "Ask"
+zh-CN = "询问"
+
+[opt.conflict.overwrite]
+en = "Overwrite"
+zh-CN = "覆盖"
+
+[opt.conflict.skip]
+en = "Skip"
+zh-CN = "跳过"
+
+[opt.conflict.rename]
+en = "Auto-rename"
+zh-CN = "自动改名"
+
+[opt.conflict.newer]
+en = "Overwrite if newer"
+zh-CN = "较新才覆盖"
+
+[opt.codepage.auto]
+en = "Auto"
+zh-CN = "自动"
+
+[opt.codepage.gbk]
+en = "GBK"
+zh-CN = "GBK"
+
+[opt.codepage.big5]
+en = "Big5"
+zh-CN = "Big5"
+
+[opt.codepage.sjis]
+en = "Shift-JIS"
+zh-CN = "Shift-JIS"
+
+[opt.codepage.euc_kr]
+en = "EUC-KR"
+zh-CN = "EUC-KR"
+
+[opt.codepage.cp1252]
+en = "CP1252"
+zh-CN = "CP1252"
+
+[opt.codepage.utf8]
+en = "UTF-8"
+zh-CN = "UTF-8"
+
+[opt.lang.system]
+en = "Follow system"
+zh-CN = "跟随系统"
+
+[opt.lang.zh_cn]
+en = "简体中文"
+zh-CN = "简体中文"
+
+[opt.lang.en]
+en = "English"
+zh-CN = "English"
+
+[opt.theme.system]
+en = "Follow system"
+zh-CN = "跟随系统"
+
+[opt.theme.light]
+en = "Light"
+zh-CN = "浅色"
+
+[opt.theme.dark]
+en = "Dark"
+zh-CN = "深色"
+
+# —— 设置-常规：布局密度（顺序 = labels::DENSITY = ui::spacing::Density::ALL 下标）——
+[opt.density.compact]
+en = "Compact"
+zh-CN = "紧凑"
+
+[opt.density.standard]
+en = "Standard"
+zh-CN = "标准"
+
+[opt.density.loose]
+en = "Loose"
+zh-CN = "宽松"
+
+# —— 压缩对话框：压缩方式 / 分卷 / 线程 / 加密方式（09 §5/§6 白名单）——
+[opt.method.deflate]
+en = "Deflate"
+zh-CN = "Deflate"
+
+[opt.method.bzip2]
+en = "BZip2"
+zh-CN = "BZip2"
+
+[opt.method.lzma2]
+en = "LZMA2"
+zh-CN = "LZMA2"
+
+[opt.method.zstd]
+en = "Zstandard"
+zh-CN = "Zstandard"
+
+[opt.split.none]
+en = "No split"
+zh-CN = "不分卷"
+
+[opt.split.10m]
+en = "10 MB"
+zh-CN = "10 MB"
+
+[opt.split.100m]
+en = "100 MB"
+zh-CN = "100 MB"
+
+[opt.split.700m]
+en = "700 MB"
+zh-CN = "700 MB"
+
+[opt.split.1g]
+en = "1 GB"
+zh-CN = "1 GB"
+
+[opt.split.4g]
+en = "4 GB"
+zh-CN = "4 GB"
+
+[opt.split.custom]
+en = "Custom…"
+zh-CN = "自定义…"
+
+[opt.threads.auto]
+en = "Auto ({n} cores)"
+zh-CN = "自动（{n} 核）"
+
+[opt.threads.1]
+en = "1"
+zh-CN = "1"
+
+[opt.threads.2]
+en = "2"
+zh-CN = "2"
+
+[opt.threads.4]
+en = "4"
+zh-CN = "4"
+
+[opt.threads.8]
+en = "8"
+zh-CN = "8"
+
+[opt.threads.16]
+en = "16"
+zh-CN = "16"
+
+[opt.enc.none]
+en = "Not supported"
+zh-CN = "该格式不支持"
+
+[opt.enc.zipcrypto]
+en = "ZipCrypto"
+zh-CN = "ZipCrypto"
+
+[opt.enc.aes128]
+en = "AES-128"
+zh-CN = "AES-128"
+
+[opt.enc.aes256]
+en = "AES-256"
+zh-CN = "AES-256"
+
+# —— 压缩对话框：字典大小 / 更新方式（09 §3.2 落账三项之二）——
+[opt.dict.auto]
+en = "Auto (from level)"
+zh-CN = "自动（随级别）"
+
+[opt.dict.64k]
+en = "64 KB"
+zh-CN = "64 KB"
+
+[opt.dict.1m]
+en = "1 MB"
+zh-CN = "1 MB"
+
+[opt.dict.4m]
+en = "4 MB"
+zh-CN = "4 MB"
+
+[opt.dict.16m]
+en = "16 MB"
+zh-CN = "16 MB"
+
+[opt.dict.64m]
+en = "64 MB"
+zh-CN = "64 MB"
+
+[opt.dict.256m]
+en = "256 MB"
+zh-CN = "256 MB"
+
+[opt.update.new]
+en = "Create a new archive"
+zh-CN = "新建档案"
+
+[opt.update.append]
+en = "Append to the existing archive"
+zh-CN = "追加到现有档案"
+
+# 设置面板零散文案（页脚动作行 / 文本行 / 列块 / 文件关联降级）
+[setting.actions]
+en = "Actions"
+zh-CN = "操作"
+
+[setting.text.system_default]
+en = "System default"
+zh-CN = "系统默认"
+
+[setting.text.current]
+en = "{desc} (current: {value})"
+zh-CN = "{desc}（当前：{value}）"
+
+[setting.columns.move_up]
+en = "Move up"
+zh-CN = "上移"
+
+[setting.columns.move_down]
+en = "Move down"
+zh-CN = "下移"
+
+[setting.columns.show]
+en = "Show this column"
+zh-CN = "显示该列"
+
+[setting.columns.hide]
+en = "Hide this column"
+zh-CN = "隐藏该列"
+
+[setting.assoc.no_formats]
+en = "No archive format is currently available for association"
+zh-CN = "当前没有可关联的档案格式"
+
+[setting.panel.title]
+en = "Settings"
+zh-CN = "设置"
+
+[setting.panel.reset]
+en = "Restore defaults"
+zh-CN = "恢复默认"
+
+[setting.panel.close]
+en = "Close"
+zh-CN = "关闭"
+
+
+[opt.toolbar_style.icon_text]
+en = "Icons and text"
+zh-CN = "图标和文字"
+
+[opt.toolbar_style.icon_only]
+en = "Icons only"
+zh-CN = "仅图标"
+
+[opt.toolbar_style.hidden]
+en = "Hidden"
+zh-CN = "隐藏"
+
+[opt.view_style.detail]
+en = "Details"
+zh-CN = "详细"
+
+[opt.view_style.icon]
+en = "Icons"
+zh-CN = "图标"
+
+[opt.view_style.list]
+en = "List"
+zh-CN = "列表"
+
+[opt.file_icons.system]
+en = "Same as system file manager"
+zh-CN = "与系统文件管理器一致"
+
+[opt.file_icons.builtin]
+en = "Built-in icons only"
+zh-CN = "只用内置图标"
+
+[setting.show_tree.label]
+en = "Show directory tree"
+zh-CN = "显示树型目录"
+
+
+[setting.show_jobs.label]
+en = "Show task center"
+zh-CN = "显示任务中心"
+
+[setting.show_jobs.help]
+en = "Show the task center tab; when off the window shows only the browse page (no tab bar)."
+zh-CN = "显示任务中心页签；关闭时界面只有浏览页，连页签栏也不显示。"
+
+
+[setting.toolbar_style.label]
+en = "Toolbar style"
+zh-CN = "工具栏样式"
+
+
+[setting.view_style.label]
+en = "View style"
+zh-CN = "视图样式"
+

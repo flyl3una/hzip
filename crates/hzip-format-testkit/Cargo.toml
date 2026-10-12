@@ -1,0 +1,20 @@
+[package]
+name = "hzip-format-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 格式一致性测试套件（02 §8.6），dev crate 不入发行链"
+
+[dependencies]
+# 依赖红线（02 §2.1 图 TK --> FMTA 单边）：只依赖 hzip-format（其再导出 hzip-error/progress/codec 类型）
+hzip-format = { workspace = true }
+hzip-error = { workspace = true }
+hzip-progress = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+time = { workspace = true }
+zeroize = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+#!/bin/sh
+# hzip postrm：卸载/升级后清缓存索引（04 §5.2）。用户数据（~/.config/hzip、
+# ~/.local/state/hzip/logs）**不在包内、也不删**——见 04 §8 卸载残留策略。
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    fi
+fi
+exit 0

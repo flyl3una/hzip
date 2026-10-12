@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 仓库开发辅助（env-check 等，04 §10），不进入发布产物"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+# 仅用标准库（04 §10）
+
+[lints]
+workspace = true

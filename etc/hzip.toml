@@ -1,0 +1,88 @@
+# hzip 用户配置模板（02 §12.1 / 附录 B.1）。
+# 运行时读取 {config_dir}/config.toml（Windows: %APPDATA%\hzip\config.toml；
+# 可用环境变量 HZIP_CONFIG 覆盖路径）。首次运行自动从本模板落盘到 config_dir。
+# 未知键忽略（向前兼容）；损坏文件回落默认值并告警。
+# 优先级：命令行参数 > HZIP_* 环境变量 > 本文件 > 内置默认值。
+
+[defaults]
+format = "zip"          # 缺省压缩格式（zip/7z/tar/gz/bz2/xz/zst）
+level = "normal"        # 缺省压缩级别（store/fastest/fast/normal/maximum/ultra）
+
+[security]
+max_file_gib = 32       # 单条目解压上限
+max_total_gib = 128     # 单任务总解压上限
+max_ratio = 200         # 压缩比率上限（防炸弹）
+max_entries = 1000000   # 条目数上限
+min_free_disk_pct = 5   # 磁盘余量预检阈值(%)
+symlink = "deny-escape" # 符号链接策略（deny-escape/skip/flatten/deny-all；skip = 逃逸链接跳过其余照常释放，跨平台 Linux 档案释放用）
+follow_symlinks = false # 压缩时是否跟随链接
+
+[extract]
+smart = false           # 多顶层自动包档案名壳
+conflict = "ask"        # 冲突策略（ask/overwrite/skip/rename/newer）
+best_effort = false     # 坏条目跳过继续
+delete_after = false    # 解压成功后删除档案
+# codepage = "gbk"      # 强制文件名代码页（gbk/big5/sjis/euc-kr/cp1252/utf-8）；省略 = 自动
+
+[compress]
+keep_metadata = true    # 保留 mtime/权限/属性
+verify_after = true     # 写后重开自检（大文件可关）
+solid_block_mib = 64    # 7z 固实块大小
+
+[jobs]
+max_parallel = 4        # 任务并发上限
+notify_on_finish = false # 任务完成后发送系统通知（R-GUI4 #3 完成流程开关）
+progress_window = true  # 解压/压缩时弹出独立进度窗口（T-PW）
+exit_on_finish = false   # 全部任务完成后退出 hzip（设置页与进度窗复选框同一配置）
+exit_delay_ms = 1000     # 退出前等待毫秒数：进度到 100% 后停留展示再退出
+                         # （仅配置文件可调，界面无此项；0 = 立即退出）
+open_show_delay_ms = 250 # 打开档案超过多少毫秒才弹「正在打开」进度窗
+                         # （仅配置文件可调；0 = 一律弹。小档案秒开就不闪窗）
+open_close_delay_ms = 100 # 「正在打开」窗在打开完成后停留多少毫秒自动关闭
+                         # （仅配置文件可调；不受「完成后退出」设置影响）
+
+[preview]
+max_text_kb = 256       # 文本预览截断
+max_image_mb = 8        # 图片预览截断
+max_hex_kb = 4          # HEX 预览截断
+
+[ui]
+theme = "system"          # system/light/dark
+lang = "system"           # system/zh-CN/en
+show_dotdot = true        # 压缩文件中显示 .. 跳上级
+show_jobs = false         # 任务中心页签显隐（默认关：界面只有浏览页、不显示页签栏；
+                          # 菜单「视图 ▸ 任务中心」/ 设置-查看器双入口同源）
+auto_update = false       # 自动更新（检查逻辑挂账 T43）
+#assoc_formats = []      # 文件关联勾选扩展名（GUI 设置页写入；空 = 未关联）
+#ctx_extract = []        # 上下文解压菜单勾选 key（GUI 设置页写入）
+#ctx_compress = []       # 上下文压缩菜单勾选 key
+show_folder_size = false  # 目录行显示聚合大小
+image_viewer = ""         # 图像查看器路径（空 = 系统默认）
+editor = ""               # 编辑器路径（空 = 系统默认）
+toolbar_style = "icon_text"  # 工具栏样式（icon_text/icon_only/hidden；菜单「视图 ▸ 工具栏」同源）
+view_style = "detail"        # 浏览右栏渲染模式（detail/icon/list；菜单「视图 ▸ 视图样式」同源）
+file_type_icons = "system"   # 文件列表图标来源：system(与系统文件管理器逐类型一致) /
+#                             builtin(只用内置图标集，零平台调用)。未知值按 system。
+#                             仅行/树/网格图标走此项；工具栏/按钮图标恒为内置。
+tree_width = 260          # 浏览页左树宽度 px（拖动后自动保存）
+font_family = ""          # 界面字体族（空 = 系统默认字体；设置-常规 从系统字体列表选择）
+font_size = 16            # 界面字号 px（10~24；rem 基准——全界面文字与间距按此等比缩放）
+density = "standard"      # 布局密度：compact(紧凑) / standard(标准) / loose(宽松)
+#                         只缩放组件**之间的间距**，不改变字号（未知值按 standard）
+line_height = 1.2         # 文字行高倍率（× 字号 = 行框高；文件列表 / 目录树 /
+#                         设置页复选标签）。有效域 1.0~3.0，越界/漏键按 1.2。
+#                         低于字体字形盒（ascent+|descent| ≈ 1.3em）时**夹到字形盒**：
+#                         再紧就会裁掉字形下降部（g 看起来像 a）。故本项只能让行更松。
+#                         只改行框高度；「行与行贴多紧」由上面的 density 决定。
+
+[logging]
+level = "info"            # 日志级别（debug/info/warn/error）；GUI 基线 debug/CLI warn
+retention_days = 7        # 日志按天滚动保留天数
+dir = ""                  # 日志目录。**留空 = 系统默认**（Windows %LOCALAPPDATA%\hzip\logs、
+                          # Linux ~/.local/state/hzip/logs、macOS ~/Library/Logs/hzip）。
+                          # 相对路径按**进程工作目录**解析（在仓库根 cargo run → 仓库/logs；
+                          # 经右键菜单/双击拉起时工作目录不可控 → 要固定位置请写绝对路径）。
+                          # ⚠ 本文件只是**首启模板**：运行时读 {config_dir}/config.toml
+                          # （Windows %APPDATA%\hzip\config.toml）——机器上已有该文件时，
+                          # 改这里无效。改日志目录请改那份，或用 GUI「常规 → 日志目录」。
+format = "detailed"       # plain / detailed（detailed = 带源文件名+代码行+target）

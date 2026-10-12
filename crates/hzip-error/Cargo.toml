@@ -1,0 +1,14 @@
+[package]
+name = "hzip-error"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 统一错误模型（02 §3）"
+
+[dependencies]
+thiserror = { workspace = true }
+smol_str = { workspace = true }
+
+[lints]
+workspace = true

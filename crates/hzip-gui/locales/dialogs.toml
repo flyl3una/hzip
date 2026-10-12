@@ -1,0 +1,667 @@
+_meta = { generated = "hzip-gui dialogs i18n" }
+_version = 2
+
+# ── 对话框公共按钮 ────────────────────────────────────────────────
+[dlg.cancel]
+en = "Cancel"
+zh-CN = "取消"
+
+[dlg.confirm]
+en = "OK"
+zh-CN = "确定"
+
+[dlg.browse]
+en = "Browse…"
+zh-CN = "浏览…"
+
+# ── 压缩对话框 ────────────────────────────────────────────────────
+[dlg.compress.title]
+en = "Compress"
+zh-CN = "压缩"
+
+[dlg.compress.start]
+en = "Start"
+zh-CN = "开始压缩"
+
+[dlg.compress.scheme_unsupported_format]
+en = "This encryption method is not supported by the selected format"
+zh-CN = "所选加密方式不被当前格式支持"
+
+[dlg.compress.enc_none]
+en = "no encryption"
+zh-CN = "无加密"
+
+[dlg.compress.enc_set]
+en = "Encrypted · {method}"
+zh-CN = "已加密 · {method}"
+
+# ── 解压对话框 ────────────────────────────────────────────────────
+[dlg.extract.title]
+en = "Extract"
+zh-CN = "解压"
+
+[dlg.extract.start]
+en = "Start"
+zh-CN = "开始解压"
+
+[dlg.extract.smart_hint]
+en = "Unpack following the archive's directory structure"
+zh-CN = "按档案内目录结构展开"
+
+[dlg.extract.best_effort_hint]
+en = "Continue the archive after individual failures"
+zh-CN = "单条失败不中断整档"
+
+# ── 冲突对话框 ────────────────────────────────────────────────────
+[dlg.conflict.title]
+en = "Conflict"
+zh-CN = "冲突"
+
+[dlg.conflict.subtitle]
+en = "A file with the same name already exists"
+zh-CN = "同名文件已存在"
+
+[dlg.conflict.apply_all]
+en = "Apply to all"
+zh-CN = "应用到全部"
+
+[dlg.conflict.abort]
+en = "Abort"
+zh-CN = "中止"
+
+[dlg.conflict.overwrite]
+en = "Overwrite"
+zh-CN = "覆盖"
+
+[dlg.conflict.skip]
+en = "Skip"
+zh-CN = "跳过"
+
+[dlg.conflict.rename_auto]
+en = "Auto rename"
+zh-CN = "自动改名"
+
+[dlg.conflict.kind_dir]
+en = "Directory"
+zh-CN = "目录"
+
+[dlg.conflict.kind_file]
+en = "File"
+zh-CN = "文件"
+
+# 现有文件简要：{kind} · {size}
+[dlg.conflict.brief]
+en = "{kind} · {size}"
+zh-CN = "{kind} · {size}"
+
+[dlg.conflict.archive_brief]
+en = "Entry in archive"
+zh-CN = "档案内条目"
+
+# ── 密码对话框 ────────────────────────────────────────────────────
+[dlg.prompt.title]
+en = "Input required"
+zh-CN = "需要输入"
+
+[dlg.password.title]
+en = "Password required"
+zh-CN = "需要密码"
+
+[dlg.password.subtitle]
+en = "Enter the password to continue"
+zh-CN = "输入密码以继续"
+
+# 重试说明（次数并入本行：弹窗只有一个输入框）
+[dlg.password.error_retry]
+en = "Incorrect password, please try again (attempt {n}/{max})"
+zh-CN = "密码错误，请重试（第 {n}/{max} 次）"
+
+# ── 表单字段名 ────────────────────────────────────────────────────
+[field.format]
+en = "Format"
+zh-CN = "格式"
+
+[field.level]
+en = "Level"
+zh-CN = "级别"
+
+[field.output]
+en = "Output"
+zh-CN = "输出"
+
+[field.split]
+en = "Split"
+zh-CN = "分卷"
+
+[field.split_placeholder]
+en = "0 = no split"
+zh-CN = "0 = 不分卷"
+
+[field.excludes]
+en = "Excludes"
+zh-CN = "排除"
+
+[field.password]
+en = "Password"
+zh-CN = "密码"
+
+[field.object]
+en = "Object"
+zh-CN = "对象"
+
+[field.preview]
+en = "Preview"
+zh-CN = "预览"
+
+[field.dest_dir]
+en = "Destination folder"
+zh-CN = "目标目录"
+
+[field.smart_extract]
+en = "Smart extract"
+zh-CN = "智能解压"
+
+[field.conflict_strategy]
+en = "Conflict policy"
+zh-CN = "冲突策略"
+
+[field.filename_encoding]
+en = "Filename encoding"
+zh-CN = "文件名编码"
+
+[field.best_effort]
+en = "Best effort"
+zh-CN = "尽力而为"
+
+[field.repaired_preview]
+en = "Repair preview"
+zh-CN = "修复预览"
+
+[field.target]
+en = "Target"
+zh-CN = "目标"
+
+# —— 压缩对话框（09-GUI压缩对话框设计）新增字段 ——
+[field.filename]
+en = "File name"
+zh-CN = "文件名"
+
+[field.out_dir]
+en = "Save to"
+zh-CN = "保存到"
+
+[field.method]
+en = "Method"
+zh-CN = "压缩方式"
+
+[field.threads]
+en = "Threads"
+zh-CN = "线程数"
+
+[field.solid]
+en = "Solid"
+zh-CN = "固实"
+
+[field.dict_size]
+en = "Dictionary"
+zh-CN = "字典大小"
+
+[field.update_mode]
+en = "Update mode"
+zh-CN = "更新方式"
+
+[dlg.compress.hint_dict_7z]
+en = "LZMA2 dictionary; a larger dictionary raises the ratio but also the memory used while compressing"
+zh-CN = "LZMA2 字典：越大压缩率越高，压缩时占用内存也越大"
+
+[dlg.compress.hint_dict_unsupported]
+en = "Only 7z LZMA2 exposes a dictionary setting"
+zh-CN = "仅 7z 的 LZMA2 可调字典"
+
+[dlg.compress.hint_update_append]
+en = "New entries are appended to the existing archive; unsupported formats report an error instead of overwriting"
+zh-CN = "新条目追加进既有档案；不支持的格式会直接报错，绝不覆盖"
+
+[dlg.compress.hint_update_unsupported]
+en = "This format cannot append; it always creates a new archive"
+zh-CN = "该格式不支持追加，恒新建档案"
+
+[field.solid_hint]
+en = "Solid blocks improve the ratio, but updating or extracting one file re-reads the whole block"
+zh-CN = "固实可提升压缩率，但更新/解压单文件需重读整块"
+
+[field.exclude_hidden]
+en = "Exclude hidden files"
+zh-CN = "排除隐藏文件"
+
+[field.follow_symlinks]
+en = "Follow symbolic links"
+zh-CN = "跟随符号链接"
+
+[field.keep_metadata]
+en = "Keep file attributes (time/permissions)"
+zh-CN = "保留文件属性（时间/权限）"
+
+[field.verify_after]
+en = "Verify the archive afterwards"
+zh-CN = "完成后校验档案"
+
+# 压缩对话框的「单条失败继续」说明（字段名复用既有 [field.best_effort]）
+[dlg.compress.best_effort_hint]
+en = "Keep packing after an individual entry fails"
+zh-CN = "单条失败继续打包（不做 fail-fast 回滚）"
+
+[field.password_confirm]
+en = "Confirm password"
+zh-CN = "确认密码"
+
+[field.encryption_method]
+en = "Encryption"
+zh-CN = "加密方式"
+
+[field.encrypt_names]
+en = "Encrypt file names (listing requires the password)"
+zh-CN = "加密文件名（连条目名一起加密，列目录需密码）"
+
+[field.split_custom]
+en = "Custom size"
+zh-CN = "自定义大小"
+
+# —— 压缩对话框：分区标题 ——
+[dlg.compress.sec_basic]
+en = "Basics"
+zh-CN = "基本"
+
+[dlg.compress.sec_advanced]
+en = "Advanced"
+zh-CN = "高级选项"
+
+[dlg.compress.sec_encryption]
+en = "Encryption"
+zh-CN = "加密"
+
+[dlg.compress.sec_summary]
+en = "Summary"
+zh-CN = "摘要"
+
+# —— 压缩对话框：能力受限说明（控件禁用时的灰字原因）——
+[dlg.compress.hint_method_locked]
+en = "This format always uses {method}"
+zh-CN = "该格式固定使用 {method}"
+
+[dlg.compress.hint_no_method]
+en = "This format only packs, it does not compress"
+zh-CN = "该格式仅打包，不压缩"
+
+[dlg.compress.hint_split_unsupported]
+en = "Splitting is not supported by this format"
+zh-CN = "该格式不支持分卷"
+
+[dlg.compress.hint_threads_7z]
+en = "7z LZMA2 is currently single-threaded; this setting has no effect"
+zh-CN = "7z 的 LZMA2 当前为单线程编码，线程数对本格式不生效"
+
+[dlg.compress.hint_solid_unsupported]
+en = "Solid blocks require 7z"
+zh-CN = "固实仅 7z 支持"
+
+[dlg.compress.hint_stream_wrap]
+en = "{format} is a single-stream format: multiple files or a folder are packed as one stream without directory structure (pick zip/7z/tar to keep it)"
+zh-CN = "{format} 是单文件流格式：多文件/目录将按单流写出、不含目录结构（需保留结构请选 zip/7z/tar）"
+
+[dlg.compress.hint_encrypt_fmt_unsupported]
+en = "This format cannot be encrypted"
+zh-CN = "该格式不支持加密"
+
+[dlg.compress.hint_encrypt_names_7z]
+en = "Only 7z with header encryption supports this"
+zh-CN = "仅 7z 头加密支持"
+
+[dlg.compress.password_mismatch]
+en = "The two passwords do not match"
+zh-CN = "两次输入的密码不一致"
+
+[dlg.compress.password_required]
+en = "Enter a password for encryption"
+zh-CN = "请设置加密密码"
+
+[dlg.compress.name_invalid]
+en = "The file name contains characters that are not allowed: \\ / : * ? \" < > |"
+zh-CN = "文件名含不允许的字符：\\ / : * ? \" < > |"
+
+[dlg.compress.exists_renamed]
+en = "Target exists: {path} → will be saved as {renamed} (existing archives are never overwritten)"
+zh-CN = "目标已存在：{path} → 将保存为 {renamed}（绝不覆盖既有档案）"
+
+# 分卷产物命名提示：{name} 为档案名（含分卷后缀约定）
+[dlg.compress.hint_split_names]
+en = "Volumes: {name}.001 / .002 / …"
+zh-CN = "分卷产物：{name}.001 / .002 / …"
+
+# 折叠区就地摘要（收起状态也能读到取值）
+[dlg.compress.sum_advanced]
+en = "Split {split} · Threads {threads} · Dictionary {dict}"
+zh-CN = "分卷 {split} · 线程 {threads} · 字典 {dict}"
+[dlg.compress.level_detail]
+en = "{detail} · speed {speed}"
+zh-CN = "{detail} · 速度 {speed}"
+
+[dlg.level.detail_deflate]
+en = "Deflate level {n}"
+zh-CN = "Deflate 级别 {n}"
+[dlg.level.detail_lzma2]
+en = "LZMA2 dictionary {dict} · mode {mode}"
+zh-CN = "LZMA2 字典 {dict} · 模式 {mode}"
+
+[dlg.level.detail_xz]
+en = "xz preset {n}"
+zh-CN = "xz preset {n}"
+
+[dlg.level.detail_zstd]
+en = "zstd level {n}"
+zh-CN = "zstd 级别 {n}"
+
+[dlg.level.detail_bzip2]
+en = "bzip2 block {n}"
+zh-CN = "bzip2 块 {n}"
+
+[dlg.level.detail_none]
+en = "No compression (packing only)"
+zh-CN = "不压缩（仅打包）"
+
+[dlg.level.speed_fastest]
+en = "fastest"
+zh-CN = "最快"
+
+[dlg.level.speed_fast]
+en = "fast"
+zh-CN = "快"
+
+[dlg.level.speed_medium]
+en = "medium"
+zh-CN = "中"
+
+[dlg.level.speed_slow]
+en = "slow"
+zh-CN = "慢"
+
+[dlg.level.speed_none]
+en = "—"
+zh-CN = "—"
+
+# 级别滑块两端语义（比例 ↔ 速度）
+[dlg.compress.pole_faster]
+en = "Faster · larger"
+zh-CN = "更快 · 体积大"
+
+[dlg.compress.pole_smaller]
+en = "Slower · smaller"
+zh-CN = "更慢 · 体积小"
+
+# 分卷自定义值单位（固定 MB）
+[unit.mb]
+en = "MB"
+zh-CN = "MB"
+
+# 源摘要卡的体量信息（目录不给递归体量——渲染帧内不做目录遍历）
+[dlg.compress.source_dir_meta]
+en = "folder · {path}"
+zh-CN = "目录 · {path}"
+
+[dlg.compress.source_unreadable]
+en = "size unavailable"
+zh-CN = "体量未知"
+
+# 能力受限的统一占位（折叠区摘要用）
+[dlg.compress.unsupported]
+en = "not supported"
+zh-CN = "不支持"
+
+[field.existing_file]
+en = "Existing file"
+zh-CN = "现有文件"
+
+[field.archive_entry]
+en = "Archive entry"
+zh-CN = "档案条目"
+
+[dlg.compress.preview]
+en = "Format {format} · Level {level} · Split {split} · Exclude {excludes}"
+zh-CN = "格式 {format} · 级别 {level} · 分卷 {split} · 排除 {excludes}"
+
+[dlg.extract.preview]
+en = "Destination {dest} · Smart {smart} · Conflict {conflict} · Encoding {codepage}"
+zh-CN = "目标 {dest} · 智能解压 {smart} · 冲突 {conflict} · 编码 {codepage}"
+
+[dlg.params.multi]
+en = "{first} and {n} more"
+zh-CN = "{first} 等 {n} 项"
+
+[dlg.params.on]
+en = "on"
+zh-CN = "开"
+
+[dlg.params.off]
+en = "off"
+zh-CN = "关"
+
+[dlg.params.source_dir]
+en = "archive folder"
+zh-CN = "档案所在目录"
+
+[dlg.params.auto]
+en = "auto"
+zh-CN = "自动"
+
+[dlg.params.no_split]
+en = "none"
+zh-CN = "不分卷"
+
+[dlg.params.no_excludes]
+en = "none"
+zh-CN = "无"
+
+[dlg.params.need_output]
+en = "Set an output archive path"
+zh-CN = "请填写输出档案路径"
+
+[dlg.params.need_input]
+en = "Nothing to process"
+zh-CN = "没有可处理的输入"
+
+[dlg.error.title]
+en = "Operation failed"
+zh-CN = "操作失败"
+
+[dlg.password.failed.title]
+en = "Password verification failed"
+zh-CN = "密码验证失败"
+
+[dlg.close]
+en = "Close"
+zh-CN = "关闭"
+
+[dlg.params.failed]
+en = "hzip could not complete the operation: {err}"
+zh-CN = "hzip 无法完成该操作：{err}"
+
+# —— 目标已存在：覆盖确认（参数窗内联，不弹二级对话框）——
+[dlg.overwrite.title]
+en = "Target exists"
+zh-CN = "目标已存在"
+
+[dlg.overwrite.prompt]
+en = "Target already exists:"
+zh-CN = "目标已存在："
+
+[dlg.overwrite.hint]
+en = "Overwrite replaces the existing archive. Cancel returns to the options."
+zh-CN = "「覆盖」会替换既有档案；「取消」返回参数继续调整。"
+
+[dlg.overwrite.accept]
+en = "Overwrite"
+zh-CN = "覆盖"
+
+[dlg.compress.exists_warn]
+en = "Target exists: {path} — you will be asked to overwrite when starting"
+zh-CN = "目标已存在：{path}（开始时将询问是否覆盖）"
+
+# —— 编辑提交确认（T-MENU6/7：添加/删除/同名冲突）——
+
+[dlg.edit.add_title]
+en = "Add Files"
+zh-CN = "添加文件"
+
+[dlg.edit.add_prompt]
+en = "Add {count} file(s) to the archive?"
+zh-CN = "向档案添加 {count} 个文件？"
+
+[dlg.edit.add_confirm]
+en = "Add"
+zh-CN = "添加"
+
+[dlg.edit.replace_existing]
+en = "Replace Existing"
+zh-CN = "替换同名"
+
+[dlg.edit.conflict_prompt]
+en = "{count} name(s) already exist in the archive"
+zh-CN = "档案中已存在 {count} 个同名条目"
+
+[dlg.edit.delete_title]
+en = "Delete Files"
+zh-CN = "删除文件"
+
+[dlg.edit.delete_prompt]
+en = "Delete {count} selected item(s) from the archive? This cannot be undone."
+zh-CN = "从档案删除选中的 {count} 个条目？此操作不可撤销。"
+
+[dlg.edit.delete_confirm]
+en = "Delete"
+zh-CN = "删除"
+
+[dlg.edit.conflict_title]
+en = "Name Conflict"
+zh-CN = "同名条目冲突"
+
+[dlg.edit.conflict_body]
+en = "{count} item(s) have names already present in the archive."
+zh-CN = "有 {count} 个条目的名称已存在于档案中。"
+
+[dlg.edit.conflict_replace]
+en = "Replace"
+zh-CN = "替换"
+
+[dlg.edit.conflict_skip]
+en = "Skip"
+zh-CN = "跳过"
+
+[dlg.edit.failed]
+en = "Edit Failed"
+zh-CN = "编辑失败"
+
+# —— 「正在打开档案」进度窗（R-GUI2-06；打开耗时超门槛才弹）——
+
+[openprogress.title]
+en = "Opening archive"
+zh-CN = "打开档案"
+
+[openprogress.opening]
+en = "Opening…"
+zh-CN = "正在打开…"
+
+[openprogress.done]
+en = "Opened"
+zh-CN = "已打开"
+
+# 失败原因由调用方给（档案名/错误串），此处只提供句式
+[openprogress.failed]
+en = "Failed to open: {reason}"
+zh-CN = "打开失败：{reason}"
+
+# 快速失败（没弹出进度窗）的界面 toast 标题——正文 = 「条目名：原因」
+[openprogress.failed_title]
+en = "Failed to open"
+zh-CN = "打开失败"
+
+# —— 过程明细（用户口径 2026-09-24：打开/进入容器要能看见后台在干什么）——
+# 阶段文案由工作者线程写（`OpenDetail::set_phase`），随状态行下一行显示。
+
+[openprogress.phase_expand_layer]
+en = "Expanding the inner container…"
+zh-CN = "正在展开内层容器…"
+
+[openprogress.phase_extract_inner]
+en = "Extracting the inner archive…"
+zh-CN = "正在解出内层档案…"
+
+[openprogress.phase_index_inner]
+en = "Indexing the inner archive…"
+zh-CN = "正在索引内层档案…"
+
+[openprogress.detail_known]
+en = "Processed {done} / {total}"
+zh-CN = "已处理 {done} / {total}"
+
+[openprogress.detail_unknown]
+en = "Processed {done}"
+zh-CN = "已处理 {done}"
+
+# 复制选中条目（与「正在打开」同一窗形态，动词不同）
+[openprogress.title_copy]
+en = "Copy entries"
+zh-CN = "复制条目"
+
+[openprogress.copying]
+en = "Copying…"
+zh-CN = "正在复制…"
+
+[openprogress.copied]
+en = "Copied"
+zh-CN = "已复制"
+
+[openprogress.phase_materialize]
+en = "Extracting the selected entries…"
+zh-CN = "正在解出选中条目…"
+
+# 外部打开（物化条目 → 系统默认程序；同一「操作进度窗」形态）
+[openprogress.title_external]
+en = "Open entry"
+zh-CN = "打开条目"
+
+[openprogress.opening_external]
+en = "Opening entry…"
+zh-CN = "正在打开条目…"
+
+[openprogress.opened_external]
+en = "Opened"
+zh-CN = "已打开"
+
+[openprogress.phase_materialize_one]
+en = "Extracting the entry…"
+zh-CN = "正在解出条目…"
+
+# 刷新（重读档案；同一「操作进度窗」形态）
+[openprogress.title_refresh]
+en = "Refresh"
+zh-CN = "刷新"
+
+[openprogress.refreshing]
+en = "Refreshing…"
+zh-CN = "正在刷新…"
+
+[openprogress.refreshed]
+en = "Refreshed"
+zh-CN = "已刷新"
+
+[copy.label]
+en = "Copying {n} entry(ies)"
+zh-CN = "复制 {n} 个条目"
+
+[dlg.password.failed_title]
+en = "Password incorrect"
+zh-CN = "密码错误"
+
+[dlg.password.failed_body]
+en = "Wrong password too many times ({max}); this operation was cancelled."
+zh-CN = "密码连续错误 {max} 次，已取消本次操作。"

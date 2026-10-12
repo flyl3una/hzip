@@ -1,0 +1,11 @@
+/target/
+tests-assets/out/
+*.hzip-tmp-*
+dist/
+.omp/mcp.json
+tests-assets/
+test_data/
+logs/
+shell/hzip-shell/target/
+dist-installers/
+__pycache__/

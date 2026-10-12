@@ -1,0 +1,20 @@
+[package]
+name = "hzip-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 日志收口（02 §12.3）：按天滚动文件 + 保留 + 级别链 + 脱敏；主流程初始化"
+
+[dependencies]
+hzip-platform = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+time = { workspace = true }          # 文件名日期（测试）
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

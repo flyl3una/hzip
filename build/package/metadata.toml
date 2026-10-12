@@ -1,0 +1,106 @@
+# hzip 安装包元数据（build/package/package.py 的唯一配置来源；设计依据 04 §5）。
+#
+# 版本号**不在这里**：唯一来源是根 `Cargo.toml` 的 `[workspace.package].version`
+#（02 §2.2 全 crate 同版本）；发布时用 `--check-tag vX.Y.Z` 断言 tag 与之一致。
+#
+# 本文件刻意只用**最简单**的 TOML 子集（驱动解析器支持范围）：
+#   [section] / key = "字符串" / key = 123 / key = true / key = ["字符串", ...]
+# 不支持嵌套表、内联表、多行字符串——需要这些语法请先扩 `package.py::read_toml`。
+#
+# 许可：**唯一事实源 = 仓库根 `LICENSE`（GPL-3.0 全文）+ 下方 `[package] spdx`**。
+# 驱动收集根目录的 LICENSE*/COPYING*（package.py 的 ctx.licenses），自动装进各产物：
+# deb/rpm/AppImage → usr/share/doc/hzip/；portable tar.gz/zip → 包根；macOS .app →
+# Contents/Resources/；MSI → 安装目录（INSTALLFOLDER）。缺失时才告警。
+# 换许可只需改根 LICENSE + 这里的 spdx，**不要**在此或模板里另抄一份许可正文。
+#
+# [WARN] 发布前置（驱动会打印警告，不阻断本地打包）：
+#   1. 根 LICENSE 缺失时驱动警告：产物将不含许可文本（GPL 随附义务不满足，勿发布）。
+#      （homepage / issues_url / maintainer 已换成真实值：gitee.com/flyl3una/hzip）
+
+[package]
+# 应用身份：三处必须一致——.desktop 文件名 / AppStream <id> / 图标名
+app_id          = "io.github.hzip.hzip"
+# macOS bundle identifier（CFBundleIdentifier）
+bundle_id       = "io.github.hzip.hzip"
+name            = "hzip"
+# deb 的 Maintainer、rpm 的 %packager、AppStream <developer><name>
+vendor          = "hzip"
+maintainer      = "flyl3una <l3una@outlook.com>"
+homepage        = "https://gitee.com/flyl3una/hzip"
+issues_url      = "https://gitee.com/flyl3una/hzip/issues"
+spdx            = "GPL-3.0-or-later"
+copyright       = "Copyright (c) hzip contributors"
+summary         = "Archive manager: zip/7z/tar/gz/bz2/xz/zst read-write, rar extract-only"
+summary_zh      = "归档压缩/解压工具：zip/7z/tar/gz/bz2/xz/zst 读写，rar 仅解压"
+# .desktop Categories / AppStream <categories>
+categories      = ["Utility", "Archiving", "Compression"]
+# .desktop MimeType、.deb/.rpm 的关联注册、macOS CFBundleTypeExtensions
+mime_types      = [
+  "application/zip",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/x-tar",
+  "application/gzip",
+  "application/x-bzip2",
+  "application/x-xz",
+  "application/zstd",
+]
+# 扩展名清单：macOS 的 CFBundleTypeExtensions 与 Windows MSI 的「打开方式」登记共用
+# （tgz 也要列——macOS 按扩展名匹配；Linux 的关联走 mime_types）
+extensions      = ["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst"]
+description     = [
+  "hzip browses, creates and extracts archives from a native GUI or a scriptable CLI. It reads and writes zip, 7z, tar, gz, bz2, xz and zst, and extracts rar, iso and cab archives, with safety defaults for untrusted input.",
+  "Supported read-write: zip, 7z, tar, gz, bz2, xz, zst. Supported extract-only: rar, iso, cab.",
+  "Safety defaults: path-traversal sanitising, zip-bomb ratio/entry limits, atomic writes.",
+]
+description_zh  = [
+  "hzip 用原生界面或可脚本化命令行浏览、创建、解压归档。",
+  "读写支持：zip、7z、tar、gz、bz2、xz、zst；仅解压：rar、iso、cab。",
+  "安全默认值：路径穿越净化、压缩炸弹比率/条目上限、原子写入。",
+]
+
+[deb]
+section         = "utils"
+priority        = "optional"
+# 依赖清单推导（2026-09-22，两条命令，见 README「依赖推导」）：
+#   ldd <产物二进制>                                # 动态库 soname
+#   cargo tree -p hzip-gui --target x86_64-unknown-linux-gnu -e normal
+# 结论：C 库（xz/bzip2/zstd/unrar）由 cc 自编静态链，动态只剩 glibc/libgcc + GUI 图形栈：
+#   · libvulkan1         —— wgpu/ash 运行时 dlopen libvulkan.so.1（主要渲染路径）
+#   · libfreetype6       —— freetype-sys 经 pkg-config 动态链接
+#   · libxkbcommon0 / libwayland-* —— 依赖树里没有 -sys/-dl 包（纯 Rust 或 dlopen），
+#                          属**保守声明**：多装几个桌面库无害，少装会让 GUI 起不来
+#   · libegl1/libgles2   —— wgpu 的 GLES 回落路径，列为 Recommends
+depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libxkbcommon0, libwayland-client0, libwayland-egl1"
+recommends      = "libegl1, libgles2, mesa-vulkan-drivers"
+
+[rpm]
+group           = "Applications/Archiving"
+# rpm 侧刻意 AutoReqProv: no + 显式 Requires（跨架构打包时宿主 rpm 库与目标不符，
+# 自动推导会得出错误结果）。
+requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, libxkbcommon, libwayland-client, libwayland-egl"
+
+[appimage]
+# 工具锁版本 + sha256（滚动 tag 的发布物也会变，校验失败即中止——升级步骤见 README）
+appimagetool_version = "1.9.1"
+appimagetool_url_x86_64 = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+appimagetool_sha256_x86_64 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+appimagetool_url_aarch64 = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage"
+appimagetool_sha256_aarch64 = "f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+# 交叉架构（x86_64 宿主打 aarch64 包）时替换进 AppImage 的 type-2 runtime
+# AppImage 内嵌的 type-2 runtime：**总是**由驱动按目标架构取用并通过 --runtime-file 传入，
+# 不让 appimagetool 自己去网上下载（那样既不锁版本，也把打包变成联网操作）。
+runtime_version = "20251108"
+runtime_url_x86_64 = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
+runtime_sha256_x86_64 = "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+runtime_url_aarch64 = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64"
+runtime_sha256_aarch64 = "00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444"
+
+[macos]
+min_system_version = "11.0"
+
+[windows]
+# WiX 版本（CI 用 `dotnet tool install --global wix --version <该值>`；本地版本不符会告警）
+wix_version     = "5.0.2"
+# UpgradeCode：**发布后永不修改**（改它 = 用户机器上多出一份互不相认的安装）
+upgrade_code    = "7ED29F94-CBFA-5392-999D-7C3F88766C40"

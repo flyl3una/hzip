@@ -1,0 +1,44 @@
+%global debug_package %{nil}
+%global _build_id_links none
+
+Name:           {{NAME}}
+Version:        {{VERSION}}
+Release:        1%{?dist}
+Summary:        {{SUMMARY}}
+License:        {{SPDX}}
+URL:            {{HOMEPAGE}}
+Vendor:         {{VENDOR}}
+Packager:       {{MAINTAINER}}
+Group:          {{GROUP}}
+BuildArch:      {{RPM_ARCH}}
+# 跨架构打包：宿主 rpm 的自动依赖推导会按宿主库算，与目标不符（README「依赖推导」）
+AutoReqProv:    no
+Requires:       {{REQUIRES}}
+
+%description
+{{DESCRIPTION}}
+
+%prep
+# 无源码包：文件树由 build/package/package.py 预置为 %{_sourcedir}/root（FHS 布局）
+
+%build
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}
+cp -a %{_sourcedir}/root/. %{buildroot}/
+
+%post
+if [ -x /usr/bin/update-desktop-database ]; then /usr/bin/update-desktop-database -q /usr/share/applications || : ; fi
+if [ -x /usr/bin/gtk-update-icon-cache ]; then /usr/bin/gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || : ; fi
+
+%postun
+if [ -x /usr/bin/update-desktop-database ]; then /usr/bin/update-desktop-database -q /usr/share/applications || : ; fi
+if [ -x /usr/bin/gtk-update-icon-cache ]; then /usr/bin/gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || : ; fi
+
+%files
+{{FILE_LIST}}
+
+%changelog
+* {{DATE_RPM}} {{MAINTAINER}} - {{VERSION}}-1
+- hzip {{VERSION}}

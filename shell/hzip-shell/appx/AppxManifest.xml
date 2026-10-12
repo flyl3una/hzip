@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  hzip 右键菜单稀疏包清单（Windows 11 / Server 2025 现代菜单顶层入口）。
+
+  模板占位符由 build/shell-ext/build-shell-ext.ps1 在打包前替换：
+    {{IDENTITY_NAME}}  Identity/@Name       （hzip.ShellMenu）
+    {{PUBLISHER}}      Identity/@Publisher  （**必须与签名证书 Subject 完全一致**）
+    {{VERSION}}        Identity/@Version    （四段式，如 0.1.0.0）
+    {{ARCH}}           ProcessorArchitecture（x64 / arm64）
+    {{CLSID}}          com:Class/@Id 与三处 desktop5:Verb/@Clsid（稀疏包 CLSID）
+    {{DLL}}            com:Class/@Path      （hzip-shell.dll）
+
+  要点：
+  1. `AllowExternalContent=true` 让 Path 解析到**外部安装目录**（与 hzip-gui.exe
+     同目录），故本包不含任何二进制，也不改变现有安装器形态；
+  2. `MinVersion 10.0.19041.0` 是 AllowExternalContent 的硬门槛——低于它的系统
+     （Win10 ≤1909 / Server 2019）不注册本包，由 hzip-platform 回落经典注册；
+  3. `MaxVersionTested 10.0.26100.0` 声明已在 Win11 24H2 / Server 2025 上验证；
+  4. 三个 ItemType（`*` / `Directory` / `Directory\Background`）覆盖「任意文件」
+     「选中的文件夹」「文件夹空白处」三种右键语境；
+  5. 条目内容（哪些解压/压缩项、什么文案）**不在清单里**——由 DLL 现读
+     `%APPDATA%\hzip\shell-menu.json`，故增删勾选项无需重打包、无需重启 Explorer。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap10 com desktop4 desktop5 rescap">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="{{ARCH}}" />
+
+  <Properties>
+    <DisplayName>hzip 上下文菜单</DisplayName>
+    <PublisherDisplayName>hzip</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+
+  <Applications>
+    <!-- AppListEntry="none"：本包只提供 shell 扩展，不出现在「已安装应用」列表 -->
+    <Application
+      Id="hzipShellMenu"
+      Executable="hzip-gui.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="hzip 上下文菜单"
+        Description="资源管理器右键菜单集成"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <!-- ① COM 类：DLL 跑在 dllhost 代理进程（崩溃不牵连 Explorer） -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="hzip 上下文菜单">
+              <com:Class
+                Id="{{CLSID}}"
+                Path="{{DLL}}"
+                ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <!-- ② 把该 CLSID 挂到三种右键语境 -->
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="hzip" Clsid="{{CLSID}}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="hzip" Clsid="{{CLSID}}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="hzip" Clsid="{{CLSID}}" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

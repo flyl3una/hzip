@@ -1,0 +1,226 @@
+_meta = { generated = "hzip-gui i18n" }
+_version = 2
+
+# ==== 任务中心页（ui/views/jobs.rs） ====
+
+[jobs.col_title]
+en = "Task"
+zh-CN = "任务"
+
+[jobs.col_input]
+en = "Input"
+zh-CN = "输入"
+
+[jobs.col_output]
+en = "Output"
+zh-CN = "输出"
+
+[jobs.col_action]
+en = "Action"
+zh-CN = "行为"
+
+[jobs.col_format]
+en = "Format"
+zh-CN = "格式"
+
+[jobs.col_started]
+en = "Started"
+zh-CN = "开始时间"
+
+[jobs.col_elapsed]
+en = "Elapsed"
+zh-CN = "耗时"
+
+[jobs.col_size]
+en = "Size"
+zh-CN = "大小"
+
+[jobs.col_progress]
+en = "Progress"
+zh-CN = "进度"
+
+[jobs.col_failure]
+en = "Failure reason"
+zh-CN = "失败原因"
+
+[jobs.col_state]
+en = "State"
+zh-CN = "状态"
+
+[jobs.col_ops]
+en = "Actions"
+zh-CN = "操作"
+
+[jobs.col_detail]
+en = "Details"
+zh-CN = "详情"
+
+[jobs.cancel]
+en = "Cancel"
+zh-CN = "取消"
+
+[jobs.cancel_all]
+en = "Cancel all"
+zh-CN = "全部取消"
+
+[jobs.clear_finished]
+en = "Clear finished"
+zh-CN = "清除已完成"
+
+# —— 任务详情弹窗（ui/dialogs/job_detail.rs）——
+
+[jobs.detail_title]
+en = "Task details"
+zh-CN = "任务详情"
+
+[jobs.detail_failures]
+en = "Failure reasons"
+zh-CN = "失败原因"
+
+[jobs.detail_id]
+en = "Task ID"
+zh-CN = "任务 ID"
+
+[jobs.detail_action]
+en = "Action"
+zh-CN = "行为"
+
+[jobs.detail_state]
+en = "State"
+zh-CN = "状态"
+
+[jobs.detail_input]
+en = "Input"
+zh-CN = "输入"
+
+[jobs.detail_output]
+en = "Output"
+zh-CN = "输出"
+
+[jobs.detail_format]
+en = "Format"
+zh-CN = "格式"
+
+[jobs.detail_started]
+en = "Started"
+zh-CN = "开始时间"
+
+[jobs.detail_elapsed]
+en = "Elapsed"
+zh-CN = "耗时"
+
+[jobs.detail_size]
+en = "Size"
+zh-CN = "大小"
+
+[jobs.detail_progress]
+en = "Progress"
+zh-CN = "进度"
+
+[jobs.detail_progress_unknown]
+en = "Unknown total"
+zh-CN = "未知总量"
+
+[jobs.detail_entries]
+en = "Entries"
+zh-CN = "条目"
+
+[jobs.detail_current_entry]
+en = "Current entry"
+zh-CN = "当前条目"
+
+# ==== 进度窗口（ui/views/progress/mod.rs） ====
+
+[progress.current]
+en = "Current: {name}"
+zh-CN = "当前：{name}"
+
+[progress.state_done]
+en = "Done"
+zh-CN = "已完成"
+
+[progress.state_cancelled]
+en = "Cancelled"
+zh-CN = "已取消"
+
+[progress.waiting_start]
+en = "Waiting to start…"
+zh-CN = "等待开始…"
+
+[progress.preparing]
+en = "Preparing… (reading archive index)"
+zh-CN = "准备中…（读取档案索引）"
+
+[progress.cancel]
+en = "Cancel (C)"
+zh-CN = "取消(C)"
+
+[progress.close]
+en = "Close (C)"
+zh-CN = "关闭(C)"
+
+[progress.exit_on_finish]
+en = "Auto-close window when done"
+zh-CN = "完成后自动关闭窗口"
+
+[progress.window_create_failed]
+en = "Failed to create progress window job_id={job_id}: {err}"
+zh-CN = "进度窗口创建失败 job_id={job_id}: {err}"
+
+[progress.eta_remaining]
+en = "Remaining {time}"
+zh-CN = "剩余 {time}"
+
+[progress.eta_unknown]
+en = "Remaining --:--"
+zh-CN = "剩余 --:--"
+
+[progress.stat_line]
+en = "{speed} · {eta} · {done}/{total} items"
+zh-CN = "{speed} · {eta} · {done}/{total} 条"
+
+# ==== 输出区 Tabs 与终局摘要（ui/views/progress/file_list.rs） ====
+
+[progress.tab_result]
+en = "Result"
+zh-CN = "结果"
+
+[progress.tab_ok]
+en = "Succeeded"
+zh-CN = "成功项"
+
+[progress.tab_fail]
+en = "Failed"
+zh-CN = "失败项"
+
+[progress.summary_done]
+en = "✔ All done"
+zh-CN = "✔ 全部完成"
+
+[progress.summary_partial_entry]
+en = "⚠ Partially completed: {entry} ({n} items failed)"
+zh-CN = "⚠ 部分完成：{entry}（等 {n} 项失败）"
+
+[progress.summary_partial]
+en = "⚠ Partially completed: {n} items failed"
+zh-CN = "⚠ 部分完成：{n} 项失败"
+
+[progress.summary_failed_reason]
+en = "✘ Failed: {reason}"
+zh-CN = "✘ 失败：{reason}"
+
+[progress.summary_failed_entry]
+en = "✘ Failed: {entry} ({reason})"
+zh-CN = "✘ 失败：{entry}（{reason}）"
+
+[progress.summary_failed]
+en = "✘ Failed"
+zh-CN = "✘ 失败"
+
+[progress.summary_cancelled]
+en = "◼ Cancelled"
+zh-CN = "◼ 已取消"
+
+[job.kind_edit]
+en = "Rename / New"
+zh-CN = "重命名/新建"

@@ -1,0 +1,61 @@
+[package]
+name = "hzip-fmt-zip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip ZIP 格式实现（02 §8；T24 基础版 + T45 AES/zipx/编码修复）"
+
+[features]
+# 02 §2.2 feature 矩阵：默认全开。aes = WinZip AES 逻辑模块 + 密码学依赖
+# （zip crate aes-crypto 由根 workspace 并集常开，此处门控本 crate 模块与 caps）；
+# zipx = 方法 ID 12(bzip2)/93(zstd) 解码路由模块（02 §2.2 语义；写方向不启用）。
+# encoding（chardetng 检测修复）feature 无关常开。
+default = ["aes", "zipx"]
+aes = ["dep:aes", "dep:hmac", "dep:pbkdf2", "dep:sha1", "dep:getrandom"]
+zipx = []
+
+[dependencies]
+# 依赖红线（02 §2.1 图）：FMTZ --> FMTA / CODEC / ERR；与其他 fmt crate 零依赖。
+# zip crate 版本锁定在根 [workspace.dependencies]（05 §1.2）；feature 并集语义：
+# 根 Cargo.toml 已声明 zip features=["aes-crypto","deflate","bzip2","zstd"]（所有
+# 成员经 workspace=true 继承启用）；本行再显式追加 deflate64/time（deflate64 读
+# 兼容、time 头字段）——cargo 按并集合并实际启用全部（T24 注释同理）。
+# **lzma 不启用**（任务卡 §3.3 zipx 14 列原定 zip feature `lzma`）：zip 4.6 的
+# lzma 经 liblzma → liblzma-sys 原生链接，与 hzip-codec/hzip-fmt-single 的 xz2
+# (lzma-sys, links=lzma) 冲突（同一 native lib 双 crate，cargo links 拒绝）。
+# 方法 14(LZMA) 解码归 Unsupported 5001 明确报错（zipx.rs 模块文档登记）。
+hzip-format = { workspace = true }
+hzip-codec  = { workspace = true }
+hzip-error  = { workspace = true }
+# T20 冻结 API 隐含依赖：EntrySink::from_backend 签名需命名
+# hzip_progress::CancellationToken / ProgressBus（hzip-format 未 re-export 令牌）。
+hzip-progress = { workspace = true }
+# 编辑路径密码持有（`Zeroizing`；与 aes feature 无关——编辑器需与 feature 无关地
+# 持有密码以透传给 `PasswordRef`）。下方 aes feature 同引用该依赖（optional 取消）。
+time        = { workspace = true }   # EntryInfo.mtime 换算（02 §1.2）
+tracing     = { workspace = true }   # salvage warning / drop 保底告警（02 §12.3）
+zip         = { workspace = true, default-features = false, features = ["deflate", "deflate64", "time"] }
+flate2      = { workspace = true }   # salvage 数据描述符/无目录条目的裸 deflate 流解码（02 §8.1）
+tempfile    = { workspace = true }   # 两遍法/Stdin 缓冲/read_entry 临时 spool（02 §8.2 同型）
+# T45 编码修复（02 §8.1 encoding 行；feature 无关，chardetng 批量检测 + 转码）。
+chardetng   = { workspace = true }
+encoding_rs = { workspace = true }
+# T45 AES（feature aes 门控，02 §2.2）：读/写加解密经 zip crate aes-crypto
+# （根并集常开）；本模块原语（extra field 解析 / PBKDF2 KV 拆包 / NUL 拒绝）需
+# RustCrypto + zeroize + getrandom。optional=true 使 feature 门控真正裁剪依赖。
+aes         = { workspace = true, optional = true }
+hmac        = { workspace = true, optional = true }
+pbkdf2      = { workspace = true, optional = true }
+sha1        = { workspace = true, optional = true }
+zeroize     = { workspace = true }
+getrandom   = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# T21 testkit 接入（tests/conformance.rs；02 §8.6）
+hzip-format-testkit = { workspace = true }
+sha2                = { workspace = true }   # roundtrip 内容等价断言
+zeroize             = { workspace = true }   # conformance PasswordSource 替身返回类型
+
+[lints]
+workspace = true

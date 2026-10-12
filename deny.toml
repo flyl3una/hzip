@@ -1,0 +1,55 @@
+# hzip 合规配置（04 §9）：运行时依赖白名单制；GPL 类禁止进入链接边界；
+# unrar C 库例外显式声明（解压用途免费分发，D2：hzip 仅解压）。
+[graph]
+targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
+           "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+           "x86_64-apple-darwin", "aarch64-apple-darwin"]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+default = "deny"          # 白名单制（04 §9）：未在 allow 列表中的许可一律拒绝
+copy-files = false
+confidence-threshold = 0.93
+allow = [
+  "MIT", "Apache-2.0", "MIT OR Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "Unicode-3.0", "Unicode-DFS-2016",
+  "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "0BSD", "CC0-1.0",
+  "MPL-2.0",
+  # 本项目自身以 GPL-3.0-or-later 发布（04 §9）⇒ 与 GPLv3 **兼容**的传染协议可以进入
+  # 链接边界；`deny` 里保留的才是与 GPLv3 不兼容的那些（见下方注释）。
+  "GPL-3.0", "GPL-3.0-only", "GPL-3.0-or-later",
+  "LGPL-3.0", "LGPL-3.0-only", "LGPL-3.0-or-later",
+  "GPL-2.0-or-later",
+]
+deny = [   # 04 §9：**与 GPLv3 不兼容**者仍拒绝——GPL-2.0-only / LGPL-2.1-only 无法与
+           # GPLv3 组合链接；AGPL 会把本项目整体升级为 AGPL（传染更强），维持拒绝。
+  "GPL-2.0", "GPL-2.0-only",
+  "LGPL-2.0", "LGPL-2.0-only", "LGPL-2.1", "LGPL-2.1-only",
+  "AGPL-1.0", "AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later",
+  "SSPL-1.0",
+]
+
+# unrar 例外（04 §9）：许可允许解压用途免费分发、禁止用于创建 RAR 的再实现——
+# hzip 仅解压（D2）满足约束；发行版合规构建 --no-default-features 剔除路径（04 §3.2）。
+[[licenses.exceptions]]
+name = "unrar"
+allow = ["UnRAR"]
+[[licenses.exceptions]]
+name = "unrar-sys"        # 依实际依赖树出现与否保留/删除
+allow = ["UnRAR"]
+
+[bans]
+multiple-versions = "warn"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

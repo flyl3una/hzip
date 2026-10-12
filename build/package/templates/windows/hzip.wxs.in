@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  hzip Windows 安装包（MSI / WiX v4-v5 语法，04 §5.1）。**不要手工调用**——
+  由 build/package/package.py 生成构建目录（含扩展名关联的 extensions.wxi）
+  并传参：
+
+    wix build hzip.wxs -arch x64 -culture zh-CN \
+      -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
+      -d Version=0.1.0 -d Vendor=hzip -d ProductName=hzip -d UpgradeCode={...} \
+      -d BinDir=<target\x86_64-pc-windows-msvc\release> \
+      -d IcoPath=<crates\hzip-gui\assets\logo\hzip.ico> -d ArchLabel=x86_64 \
+      -d WithShellExt=1 -d ShellExtDir=<shell\hzip-shell\target\shell-ext> \
+      -d HasLicenses=1 -d LicenseDir=<tmp>\msi\licenses \
+      -o hzip-0.1.0-setup-x86_64.msi
+
+  设计要点（与 04 §5.1/§8、05 T43 对齐）：
+  1. 一机一份：Scope=perMachine → Program Files，需管理员；WixUI_InstallDir 允许改目录；
+  2. MajorUpgrade：同版本可重装、低版本拒绝；升级**不动**用户配置（配置在
+     %APPDATA%\hzip，MSI 从不触碰）；
+  3. 卸载精确回收 MSI 自己写的东西（文件/快捷方式/PATH/注册表值）；
+     用户数据默认保留，`msiexec /x <msi> REMOVEUSERDATA=1` 才清（04 §8）；
+  4. 右键菜单不在这里注册：经典注册与稀疏包都由应用运行时按 HKCU 写（04 §5.1），
+     因为 verb 挂到 `*`/`Directory` 会改写其 Shell 默认值、卸载要「精确还原原值」，
+     只有写过它的应用才知道原值。MSI 只落 hzip-shell.dll / hzip-shellmenu.msix。
+  5. 文件关联**只**写 ProgID + OpenWithProgids（=「打开方式」里登记），不改
+     .zip/.7z 等的默认程序——不做默认程序篡夺。
+  6. 组件 GUID 全部是固定字面量（发布后不得变）：MSI 靠它做升级时的组件身份识别。
+     例外：扩展名关联与许可文件的组件由驱动按 `uuid5(固定命名空间, ...)` 派生（仍确定）。
+  7. GPL-3.0 随附义务：许可全文（`$(var.LicenseDir)`，由驱动从仓库根 LICENSE*/COPYING*
+     收集）随安装落进 INSTALLFOLDER；`HasLicenses=0` 时不引用该组件组。
+     `WixUILicenseRtf`（`--license-rtf`）只是可选的安装前显示页，与此**独立**。
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="$(var.ProductName)" Manufacturer="$(var.Vendor)" Version="$(var.Version)"
+           UpgradeCode="$(var.UpgradeCode)" Scope="perMachine" Compressed="yes">
+
+    <SummaryInformation
+      Description="$(var.ProductName) $(var.Version) ($(var.ArchLabel)) — 归档压缩/解压工具"
+      Manufacturer="$(var.Vendor)"/>
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallExecute"
+                  DowngradeErrorMessage="本机已安装更新版本的 [ProductName]；请先卸载旧版本再安装本版本。"/>
+    <MediaTemplate EmbedCab="yes"/>
+
+    <!-- 控制面板/设置里的应用图标与条目信息 -->
+    <Icon Id="hzip.ico" SourceFile="$(var.IcoPath)"/>
+    <Property Id="ARPPRODUCTICON" Value="hzip.ico"/>
+    <Property Id="ARPCOMMENTS" Value="归档压缩/解压工具（zip/7z/tar/gz/bz2/xz/zst 读写，rar 仅解压）"/>
+    <Property Id="ARPNOREPAIR" Value="0"/>
+
+    <!-- 用户数据清理开关：默认 0（保留配置/日志）。见文件头第 3 条。 -->
+    <Property Id="REMOVEUSERDATA" Value="0"/>
+    <!-- 属性值里不能引用别的属性（WIX1077）：用 SetProperty（类型 51 CA）在 CostFinalize
+         前求值；安装与卸载两个序列都会跑，卸载时 RemoveFolderEx 才拿得到真实路径。 -->
+    <SetProperty Id="HZIP_ROAMING_DIR" Value="[AppDataFolder]hzip" Before="CostFinalize" Sequence="both"/>
+    <SetProperty Id="HZIP_LOCAL_DIR" Value="[LocalAppDataFolder]hzip" Before="CostFinalize" Sequence="both"/>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER"/>
+    <?if $(var.HasLicenseRtf) = 1 ?>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)"/>
+    <?endif?>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)"/>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppStartMenuDir" Name="$(var.ProductName)"/>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder"/>
+
+    <Feature Id="Main" Title="hzip（主程序 + 命令行）" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="MainComponents"/>
+      <ComponentGroupRef Id="FileAssocExtensions"/>
+      <?if $(var.HasLicenses) = 1 ?>
+      <!-- GPL-3.0 随附义务：许可全文落进 INSTALLFOLDER（清单由驱动生成 licenses.wxi） -->
+      <ComponentGroupRef Id="LicenseComponents"/>
+      <?endif?>
+    </Feature>
+    <?if $(var.WithShellExt) = 1 ?>
+    <Feature Id="ShellExt" Title="资源管理器右键菜单扩展（hzip-shell.dll + 稀疏包）"
+             Description="由应用在设置页「应用」时注册/注销；不装则只有经典菜单入口。"
+             Level="1" AllowAbsent="yes">
+      <ComponentGroupRef Id="ShellExtComponents"/>
+    </Feature>
+    <?endif?>
+
+    <ComponentGroup Id="MainComponents" Directory="INSTALLFOLDER">
+      <Component Id="CliExe" Guid="6B01CC24-7544-5310-A860-1767AEFA6180">
+        <File Id="filHzipCli" Source="$(var.BinDir)\hzip.exe" KeyPath="yes"/>
+      </Component>
+
+      <Component Id="GuiExe" Guid="8C53C754-E33D-584D-8125-ABA1FE70C507">
+        <File Id="filHzipGui" Source="$(var.BinDir)\hzip-gui.exe" KeyPath="yes"/>
+      </Component>
+
+      <!-- 系统 PATH 追加安装目录（卸载时 MSI 摘除自己加的那段） -->
+      <Component Id="PathEnv" Guid="D4B9807B-AEDE-5CA1-BC81-19737E889859">
+        <Environment Id="envPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
+                     Action="set" System="yes" Permanent="no"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\hzip\Components" Name="PathEnv"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+
+      <!-- App Paths：Win+R / cmd 里直接敲 hzip、hzip-gui -->
+      <Component Id="AppPaths" Guid="449FA80F-89CA-50C7-BE1B-BB7BF7CC8F5B">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip.exe"
+                       Type="string" Value="[INSTALLFOLDER]hzip.exe" KeyPath="yes"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip.exe"
+                       Name="Path" Type="string" Value="[INSTALLFOLDER]"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip-gui.exe"
+                       Type="string" Value="[INSTALLFOLDER]hzip-gui.exe"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip-gui.exe"
+                       Name="Path" Type="string" Value="[INSTALLFOLDER]"/>
+        <!-- 这两个键整个属于 hzip：卸载时连子键一起删（空键残留会让「应用列表」里留垃圾项） -->
+        <RemoveRegistryKey Id="rmAppPathCli" Root="HKLM"
+                           Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip.exe"
+                           Action="removeOnUninstall"/>
+        <RemoveRegistryKey Id="rmAppPathGui" Root="HKLM"
+                           Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\hzip-gui.exe"
+                           Action="removeOnUninstall"/>
+      </Component>
+
+      <!-- 文件关联：仅 ProgID + 「打开方式」登记（默认程序不动，见文件头第 5 条） -->
+      <Component Id="FileAssoc" Guid="CD105BBF-5233-589C-8BCC-81324CBF06FB">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\hzip.Archive"
+                       Type="string" Value="hzip 归档" KeyPath="yes"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\hzip.Archive\DefaultIcon"
+                       Type="string" Value="[INSTALLFOLDER]hzip-gui.exe,0"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\hzip.Archive\shell\open\command"
+                       Type="string" Value="&quot;[INSTALLFOLDER]hzip-gui.exe&quot; &quot;%1&quot;"/>
+        <RemoveRegistryKey Id="rmProgId" Root="HKLM" Key="SOFTWARE\Classes\hzip.Archive"
+                           Action="removeOnUninstall"/>
+      </Component>
+
+      <!-- 系统注册（用户要求「安装后在系统上注册为 hzip」）：
+           RegisteredApplications + Capabilities 让 hzip 出现在「设置 → 应用 → 默认应用」的候选里，
+           用户可把 hzip 设为 .zip/.7z… 的默认程序。这里是把自己**登记成可被选中的程序**，
+           不是抢默认值（默认值仍由用户/系统决定；OpenWithProgids 那条负责「打开方式」列表）。 -->
+      <Component Id="AppRegistration" Guid="FB8D3DCF-4737-5703-B492-00F48CE389D4">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\RegisteredApplications" Name="$(var.ProductName)"
+                       Type="string" Value="SOFTWARE\$(var.ProductName)\Capabilities" KeyPath="yes"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\$(var.ProductName)\Capabilities" Name="ApplicationName"
+                       Type="string" Value="$(var.ProductName)"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\$(var.ProductName)\Capabilities" Name="ApplicationDescription"
+                       Type="string" Value="归档压缩/解压工具（zip/7z/tar/gz/bz2/xz/zst 读写，rar 仅解压）"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\$(var.ProductName)\Capabilities" Name="ApplicationIcon"
+                       Type="string" Value="[INSTALLFOLDER]hzip-gui.exe,0"/>
+        <!-- SOFTWARE\hzip 整棵树属于我们（含 Capabilities 与下面的组件标记） -->
+        <RemoveRegistryKey Id="rmHzipTree" Root="HKLM" Key="SOFTWARE\$(var.ProductName)"
+                           Action="removeOnUninstall"/>
+      </Component>
+
+      <Component Id="DesktopShortcut" Guid="D27ACC20-95FD-549D-9F76-5B950B6068EC" Directory="DesktopFolder">
+        <Shortcut Id="lnkDesktop" Name="hzip" Description="hzip 归档压缩/解压"
+                  Target="[INSTALLFOLDER]hzip-gui.exe" WorkingDirectory="INSTALLFOLDER"
+                  Icon="hzip.ico" Advertise="no"/>
+        <RemoveFile Id="rmDesktopLnk" Name="hzip.lnk" On="uninstall" Directory="DesktopFolder"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\hzip\Components" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+
+      <Component Id="StartMenuShortcut" Guid="9A3372FD-9F56-5456-BBC7-99455E1413F1" Directory="AppStartMenuDir">
+        <Shortcut Id="lnkStartMenu" Name="hzip" Description="hzip 归档压缩/解压"
+                  Target="[INSTALLFOLDER]hzip-gui.exe" WorkingDirectory="INSTALLFOLDER"
+                  Icon="hzip.ico" Advertise="no"/>
+        <RemoveFile Id="rmStartMenuLnk" Name="hzip.lnk" On="uninstall" Directory="AppStartMenuDir"/>
+        <RemoveFolder Id="rmStartMenuDir" On="uninstall"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\hzip\Components" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+
+      <!-- 可选：卸载时连用户数据一起清（REMOVEUSERDATA=1，仅装过本组件才触发） -->
+      <Component Id="UserDataCleanup" Guid="76F2C011-8515-5620-A1CB-0B6D37C60354"
+                 Condition="REMOVEUSERDATA=1">
+        <util:RemoveFolderEx Id="rmRoaming" On="uninstall" Property="HZIP_ROAMING_DIR"/>
+        <util:RemoveFolderEx Id="rmLocal" On="uninstall" Property="HZIP_LOCAL_DIR"/>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\hzip\Components" Name="UserDataCleanup"
+                       Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+
+    <?if $(var.WithShellExt) = 1 ?>
+    <ComponentGroup Id="ShellExtComponents" Directory="INSTALLFOLDER">
+      <Component Id="ShellDll" Guid="E48F7C9E-54C5-5020-8466-837D0D3738EF">
+        <File Id="filShellDll" Source="$(var.ShellExtDir)\hzip-shell.dll" KeyPath="yes"/>
+      </Component>
+      <Component Id="ShellMsix" Guid="4973EC1D-0925-5ED4-89A3-431C28A507BA">
+        <File Id="filShellMsix" Source="$(var.ShellExtDir)\hzip-shellmenu.msix" KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+    <?endif?>
+  </Package>
+
+  <?include extensions.wxi?>
+  <?if $(var.HasLicenses) = 1 ?>
+  <?include licenses.wxi?>
+  <?endif?>
+</Wix>

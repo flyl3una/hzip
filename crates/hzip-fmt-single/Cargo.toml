@@ -1,0 +1,36 @@
+[package]
+name = "hzip-fmt-single"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 单文件压缩流实现（02 §8.5；gz/bz2/xz/zst）"
+
+[dependencies]
+hzip-format = { workspace = true }
+hzip-error = { workspace = true }
+hzip-codec = { workspace = true }
+hzip-progress = { workspace = true }
+flate2 = { workspace = true, optional = true }
+bzip2 = { workspace = true, optional = true, features = ["static"] }
+xz2 = { workspace = true, optional = true, features = ["static"] }
+zstd = { workspace = true, optional = true, features = ["zstdmt"] }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+tempfile = { workspace = true }
+sha2 = { workspace = true }
+zeroize = { workspace = true }
+
+[features]
+# 格式矩阵（02 §2.2）：默认全开，可裁剪
+default = ["gz", "bz2", "xz", "zst"]
+gz = ["dep:flate2"]
+bz2 = ["dep:bzip2"]
+xz = ["dep:xz2"]
+zst = ["dep:zstd"]
+
+[lints]
+workspace = true

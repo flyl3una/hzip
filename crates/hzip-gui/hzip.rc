@@ -1,0 +1,18 @@
+// hzip GUI executable resources.
+//
+// Resource ID MUST be 1.
+//   * gpui's Windows backend loads the window-class icon with
+//     LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCE(1), IMAGE_ICON, ...)
+//     (gpui-pre-windows, src/platform.rs `load_icon`). Without this resource the
+//     titlebar, taskbar and Alt-Tab entry fall back to the generic system icon.
+//   * Explorer's file-manager icon for the exe, and the shell-extension menu icon
+//     (`{exe},0` -- written by hzip-platform::context_menu and returned by
+//     hzip-shell's IExplorerCommand::GetIcon), resolve to the lowest-ID icon
+//     group of this image, i.e. this entry.
+//
+// The .ico is generated from assets/logo/hzip-<N>.png by build/icons/make-icons.ps1;
+// do not edit it by hand.
+//
+// NOTE: comments here are intentionally ASCII-only -- rc.exe is invoked without
+// a codepage flag, so non-ASCII bytes would be parsed in the ANSI codepage.
+1 ICON "assets/logo/hzip.ico"

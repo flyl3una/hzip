@@ -1,0 +1,17 @@
+hzip {{VERSION}} — 免安装版
+================================
+
+本目录是解压即用的 hzip（Windows 免安装 / Linux·macOS 绿色包）：
+
+    hzip        命令行（脚本友好，支持 --json 输出）
+    hzip-gui    图形界面
+
+Windows：双击 hzip-gui.exe 即用；把本目录加进 PATH 后可直接敲 `hzip`。
+Linux / macOS：chmod +x 后运行 ./hzip-gui；想全局可用就把 hzip 软链到 PATH：
+
+    ln -sf "$PWD/hzip" /usr/local/bin/hzip
+
+卸载 = 删掉本目录。配置与日志在用户目录（Windows %APPDATA%\hzip、
+Linux ~/.config/hzip、macOS ~/Library/Application Support/hzip），删目录不会动它们。
+
+完整安装包（MSI / dmg / deb / rpm / AppImage）见同一 Release 的其他产物。

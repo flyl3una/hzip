@@ -1,0 +1,9 @@
+# 开发证书的私钥与口令**绝不入库**（gen-dev-chain.ps1 在本机生成）。
+# 脚本（*.ps1）与 README 属于交付物，需保留。
+*.pfx
+*.cer
+*.pem
+*.key
+*.crt
+dev-cert-password.txt
+*.log

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream 元数据（04 §5.2）：AppImage 的 appimagetool 与发行版软件中心读取。
+  id / 文件名 / .desktop 名 / 图标名四者必须一致（都为 {{APP_ID}}）。
+  驱动在打包前跑 `appstreamcli validate`（错误即中止）。
+-->
+<component type="desktop-application">
+  <id>{{APP_ID}}</id>
+  <!-- metadata_license = **本 AppStream 元数据文件自身**的许可（AppStream 规范推荐值，
+       写 CC0 是为了让软件中心能自由再分发这些元数据）；它与 hzip 的项目许可无关，
+       不要改。项目许可在这里：project_license = metadata.toml 的 `[package] spdx`。 -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>{{SPDX}}</project_license>
+  <name>{{NAME}}</name>
+  <summary>{{SUMMARY}}</summary>
+  <summary xml:lang="zh-CN">{{SUMMARY_ZH}}</summary>
+  <description>
+    <p>{{DESC_LINE1}}</p>
+    <ul>
+      <li>{{DESC_LINE2}}</li>
+      <li>{{DESC_LINE3}}</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">{{APP_ID}}.desktop</launchable>
+  <provides>
+    <binary>{{CLI_BIN}}</binary>
+    <binary>{{GUI_BIN}}</binary>
+  </provides>
+  <url type="homepage">{{HOMEPAGE}}</url>
+  <url type="bugtracker">{{ISSUES_URL}}</url>
+  <developer id="{{DEVELOPER_ID}}">
+    <name>{{VENDOR}}</name>
+  </developer>
+  <categories>
+{{CATEGORIES_XML}}
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="{{VERSION}}" date="{{DATE}}"/>
+  </releases>
+</component>

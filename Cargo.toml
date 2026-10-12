@@ -1,0 +1,158 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/hzip-error", "crates/hzip-progress", "crates/hzip-platform",
+    "crates/hzip-codec", "crates/hzip-format", "crates/hzip-config",
+    "crates/hzip-format-testkit",
+    "crates/hzip-fmt-zip", "crates/hzip-fmt-7z", "crates/hzip-fmt-rar",
+    "crates/hzip-fmt-tar", "crates/hzip-fmt-single", "crates/hzip-fmt-cpio",
+    "crates/hzip-core", "crates/hzip-cli", "crates/hzip-gui", "crates/hzip-log",
+    "crates/xtask",
+]
+exclude = ["tests-assets"]          # T02 独立生成器 bin，不入 workspace（05 T02：不依赖 hzip crate）
+
+[workspace.package]
+version = "0.1.2"                   # 全部 crate 同版本同步发布（02 §2.2）
+edition = "2024"                    # MSRV 1.95（04 §1；T-G00 Spike#9 评审升级）
+rust-version = "1.95"
+license = "GPL-3.0-or-later"         # 04 §9：本项目以 GPL-3.0-or-later 发布，正文见仓库根 LICENSE（唯一事实源）
+                                     #（若要"仅 3.0"，改 GPL-3.0-only 并同步 04 §9 + deny.toml + metadata.toml）
+repository = "https://gitee.com/flyl3una/hzip"
+
+[workspace.dependencies]
+# —— workspace 内部（path + version，供发布时互相引用）——
+hzip-error    = { path = "crates/hzip-error",    version = "0.1.0" }
+hzip-progress = { path = "crates/hzip-progress", version = "0.1.0" }
+hzip-platform = { path = "crates/hzip-platform", version = "0.1.0" }
+hzip-codec    = { path = "crates/hzip-codec",    version = "0.1.0" }
+hzip-format   = { path = "crates/hzip-format",   version = "0.1.0" }
+hzip-config   = { path = "crates/hzip-config",   version = "0.1.0" }
+hzip-fmt-zip  = { path = "crates/hzip-fmt-zip",  version = "0.1.0" }
+hzip-fmt-7z   = { path = "crates/hzip-fmt-7z",   version = "0.1.0" }
+hzip-fmt-rar  = { path = "crates/hzip-fmt-rar",  version = "0.1.0" }
+hzip-fmt-tar  = { path = "crates/hzip-fmt-tar",  version = "0.1.0" }
+hzip-fmt-single = { path = "crates/hzip-fmt-single", version = "0.1.0" }
+hzip-fmt-cpio = { path = "crates/hzip-fmt-cpio", version = "0.1.0" }
+hzip-core     = { path = "crates/hzip-core",     version = "0.1.0" }
+hzip-log      = { path = "crates/hzip-log",      version = "0.1.0" }  # 日志收口（02 §12.3）
+# T21 合入时未自登记；T22/T24 conformance 需 workspace=true 引用（02 §8.6 dev crate）
+hzip-format-testkit = { path = "crates/hzip-format-testkit", version = "0.1.0" }
+
+# —— 外部依赖：04 §3.1 清单（版本唯一来源）——
+zip         = { version = "4", default-features = false, features = ["aes-crypto", "deflate", "bzip2", "zstd"] }
+sevenz-rust = { version = "0.6", features = ["compress", "aes256"] }
+unrar       = { version = "0.5" }
+tar         = "0.4"
+flate2      = "1"
+xz2         = "0.1"
+zstd        = "0.13"
+bzip2       = "0.4"
+crc32fast   = "1"                                   # codec CRC 流式增量（02 §6.2；T12）
+crossbeam-utils = "0.8"                             # T10 事件泵 parking（如需）
+sha2        = "0.10"                                # T11 平台哈希（02 §5 收口）
+dirs        = "6"                                   # T11 平台目录（02 §5 收口）
+clap        = { version = "4", features = ["derive"] }
+gpui-kit    = "=0.7.1"  # 06 §1.2 GUI 层（T-G00 切换；0.7.1 把 gpui 指向 gpui-pre =0.3.8，家族整体换版；gpui-kit 仍无 MSRV 声明，rustc 1.95 已实测可编）
+# —— 02 文档点名的外部依赖（版本由实施者按当时最新稳定版校准，05 T00 实施要点）——
+thiserror        = "2"                                  # HzipError 派生（02 §3.3）
+crossbeam-channel = "0.5"                               # ProgressBus 广播通道（02 §4.1）
+smol_str         = "0.3"                                # FormatId/EntryName（02 §7.2）
+percent-encoding = "2"                                  # macOS「打开方式」file:// URL 解码（T-MACOS-OPEN）
+time             = { version = "0.3", features = ["macros", "formatting", "local-offset"] }  # 02 §1.2
+zeroize          = "1"                                  # 密码 Zeroizing（02 §1.2；T20 PasswordRef）
+chardetng        = "0.1"                                # 文件名编码检测（02 §8.1；T45）
+encoding_rs      = "0.8"                                # 编码转码（02 §8.1；T45/T32/T34）
+# —— RustCrypto 密码学（T45/T46 任务卡 §2/§4.5 允许的自研路径备选；feature 路线不用则不进依赖树）——
+aes              = "0.8"
+cbc              = { version = "0.1", features = ["alloc"] }
+hmac             = "0.12"
+pbkdf2           = { version = "0.12", features = ["hmac"] }
+sha1             = "0.10"
+notify           = "8"                                  # watch 封装（02 §5.1）
+rayon            = "1"                                  # 小文件并行预读（02 §9.5）
+walkdir          = "2"                                  # 压缩输入目录展开（02 §9.5 B；T33）
+glob             = "0.3"                                # 压缩排除过滤（02 §9.5 B；T33）
+uuid             = { version = "1", features = ["v4"] } # 编辑临时档案名（02 §9.9；T33）
+serde            = { version = "1", features = ["derive"] }   # --json schema 锁定（02 §10.4）
+serde_json       = "1"
+toml             = "1"                                 # 配置解析（hzip-config，02 §12.1）
+tracing          = "0.1"                                # 02 §12.3
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"                                # 文件滚动日志（hzip-log；02 §12.3）
+rpassword        = "7"                                  # CLI 密码输入（02 §10.2）
+rust-i18n        = "3"                                  # 02 §12.2
+cc               = "1"                                  # C 源码编译（04 §1）
+embed-resource   = "3"                                  # Windows exe 资源（程序图标；hzip-gui/hzip-cli build.rs）
+rust-embed       = { version = "8", features = ["interpolate-folder-path", "include-exclude"] }  # T-G50 GUI 图标内嵌（04 §3.1）；include-exclude 供 assets/logo 排除（见 ui/assets.rs）
+rfd              = "0.15"                               # T-G52 原生文件选择对话框 + 扩展名过滤（04 §3.1 收口例外：UI 原生对话框）
+# —— 平台收口：只允许 hzip-platform 引用（红线 5，02 §5）——
+# 0.61：mio 1.2（notify 8 传递）已强制 windows-sys ^0.61；若 platform 停留在 0.60
+# 则双版本共存——0.61 改用 windows_link 绑定而 0.60 用传统 #[link]，同名导入
+# （GetProcessTimes 实测 ACCESS_VIOLATION）错乱。必须统一到 0.61。
+windows-sys      = "0.61"
+core-foundation  = "0.9"
+objc             = "0.2"
+libc             = "0.2"
+# T-ICON：macOS 系统图标（NSWorkspace.iconForContentType: → NSBitmapImageRep
+# 预乘 RGBA → BGRA）。版本与 crate 图对齐（gpui-pre-macos 0.3.8 已传递引入
+# objc2 0.6 / objc2-app-kit 0.3.2），避免同族双版本共存。
+objc2                            = { version = "0.6", default-features = false, features = ["std"] }
+objc2-app-kit                    = { version = "0.3.2", default-features = false, features = [
+    "std", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep",
+    "NSBitmapImageRep", "NSWorkspace", "objc2-core-foundation",
+    "objc2-uniform-type-identifiers",
+] }
+objc2-foundation                 = { version = "0.3.2", default-features = false, features = [
+    "std", "NSString", "NSArray", "NSBundle", "NSEnumerator",
+] }
+objc2-core-foundation            = { version = "0.3.2", default-features = false, features = ["std"] }
+objc2-uniform-type-identifiers   = { version = "0.3.2", default-features = false, features = [
+    "std", "UTType", "UTCoreTypes", "UTTagClass",
+] }
+# —— 测试专用（dev-dependencies）——
+proptest    = "1"
+criterion   = "0.5"
+insta       = "1"
+assert_cmd  = "2"
+predicates  = "3"
+tempfile    = "3"        # T21 testkit 及各 fmt 任务 dev-dependency（tempdir/临时档案）
+
+[workspace.lints.clippy]            # 02 §1.2（库 crate 全局生效；测试代码 cfg_attr 例外）
+unwrap_used  = "deny"
+expect_used  = "deny"
+print_stdout = "deny"
+
+# 上游补丁（保留，用户裁定 2026-10-12）：gpui-pre-macos 的 accesskit 适配器用
+# accesskit_macos 的 SubclassingAdapter（object_setClass 动态改内容视图的类，Drop
+# 时再改回去）——这会破坏 AppKit 触摸栏（_NSTouchBarFinder）建在该视图上的 KVO，
+# 关闭窗口时在 display-cycle flush 里抛未捕获异常 → SIGILL（仅触控栏机型）。
+# 0.3.8 仍走同一路径（window.rs:710/:2365，accesskit_macos 0.26.x 的 subclass.rs:203/:263），
+# 且没有任何 feature 开关可关；故 vendor/ 保留：用普通 accesskit_macos::Adapter +
+# GPUIView 自身实现 NSView 无障碍方法，不再改类。
+#
+# ⚠️ 版本必须与 crate 图精确一致（当前 =0.3.8）。若 vendor 版本落后，cargo 只报
+#    “patch … was not used in the crate graph” 警告并**静默回落 crates.io 原版**
+#    ——2026-10 就发生过：vendor 停在 0.3.6、图上却是 0.3.4，补丁从未生效。
+#    CI 因此加了断言（见 .github/workflows/ci.yml）。上游合并修复后可改回直接升版本。
+# 触控栏机型的第二道保险：见 crates/hzip-platform（机型识别）+ hzip-gui 启动的
+#    HZIP_MACOS_A11Y=off 逃生路径。
+[patch.crates-io]
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+
+[profile.release]                   # 04 §4.1 忠实抄录
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+strip = "debuginfo"
+opt-level = 3
+
+[profile.release.package."*"]
+opt-level = 3
+
+# dev 构建依赖优化（T-PERF 走查 #2：弹窗/下拉动画卡顿主因）——
+# gpui/gpui-kit 的布局、绘制、动画帧元素构建在无优化 debug 下慢 10~50 倍。
+# 依赖（含 gpui 全家）开 O3，workspace 成员保持无优化（增量编译/断点不受
+# 影响）。代价：首次构建全量重编依赖（一次性）；日常改 workspace 代码不
+# 触发依赖重编。
+[profile.dev.package."*"]
+opt-level = 3

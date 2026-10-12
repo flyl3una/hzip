@@ -1,0 +1,25 @@
+---
+source: crates/hzip-cli/tests/snapshot.rs
+expression: text
+---
+压缩（别名 c）：把文件/目录打包为档案
+
+Usage: hzip compress [OPTIONS] --format <FORMAT> --out <OUT> [INPUTS]...
+
+Arguments:
+  [INPUTS]...  输入（文件/目录，可多个）
+
+Options:
+  -f, --format <FORMAT>              输出格式（zip/7z/tar/tar.gz/tar.bz2/tar.xz/tar.zst/gz/bz2/xz/zst）
+      --json                         JSON 输出：stdout 单文档结果 + stderr NDJSON 进度（02 §10.4）
+  -L, --level <LEVEL>                压缩级别（store/fastest/fast/normal/maximum/ultra）
+      --no-color                     禁用 ANSI 颜色（NO_COLOR 环境变量亦生效）
+  -o, --out <OUT>                    输出档案路径
+  -v, --verbose...                   详细日志（可叠加；0=warn 1=info 2+=debug/trace）
+      --password-env <PASSWORD_ENV>  密码环境变量名（三通道优先级最高；变量缺失 → HZ-5003 退出 2）
+      --encryption <METHOD>          加密方式（zipcrypto/aes128/aes192/aes256；给 `--password-env` 或 `HZIP_PASSWORD` 即隐式开启，缺省 aes256）
+      --no-encrypt-names             7z 不加密文件名（默认加密文件名 = 头加密 `-mhe=on`，设计稿 11 决策②）
+      --exclude <EXCLUDE>            排除 glob（可多次；`*.tmp` 按段、`sub/*` 剪枝）
+      --follow-symlinks              跟随符号链接（默认：链接条目记 target）
+      --split <SPLIT>                分卷大小（二进制单位，如 1m/100k；zip/7z）
+  -h, --help                         Print help

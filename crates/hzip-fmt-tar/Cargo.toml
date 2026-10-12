@@ -1,0 +1,30 @@
+[package]
+name = "hzip-fmt-tar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip TAR 格式实现（02 §8）"
+
+[dependencies]
+# 依赖红线（T22 §2）：hzip-format / hzip-error / hzip-platform / tar，全部 workspace = true
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-platform = { workspace = true }
+tar           = { workspace = true }
+tracing       = { workspace = true }   # set_sparse 降级 warning / 取消映射诊断（02 §12.3）
+time          = { workspace = true }   # OffsetDateTime 纪元换算（EntryInfo.mtime，02 §1.2）
+tempfile      = { workspace = true }   # 写路径/Stream 缓冲的临时文件（NamedTempFile，本 crate 自管）
+# T20 冻结 API 隐含依赖：EntrySink::from_backend 签名需命名
+# hzip_progress::CancellationToken（hzip-format 未 re-export）；workspace 内部 crate
+hzip-progress = { workspace = true }
+# 红线 1：hzip-fmt-* 之间零依赖；tar 无压缩 → 不依赖 hzip-codec
+# （codec 类型经 hzip-format 再导出使用；progress 类型经 hzip_format::ProgressBus 等）
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+sha2                = { workspace = true }
+zeroize             = { workspace = true }   # conformance 测试 PasswordSource 替身返回类型
+
+[lints]
+workspace = true

@@ -1,0 +1,23 @@
+---
+source: crates/hzip-cli/tests/snapshot.rs
+expression: text
+---
+hzip 压缩/解压命令行工具（02 §10）
+
+Usage: hzip [OPTIONS] <COMMAND>
+
+Commands:
+  compress  压缩（别名 c）：把文件/目录打包为档案
+  extract   解压（别名 x）：默认按原样目录结构展开到目标（不剥不包）
+  list      列表（别名 l）：列出档案条目
+  preview   预览条目（别名 p）：stdout 输出条目内容（截断）
+  test      测试完整性（别名 t）：逐条目 CRC 校验
+  convert   格式转换（别名 cv）：如 zip → 7z
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --json        JSON 输出：stdout 单文档结果 + stderr NDJSON 进度（02 §10.4）
+      --no-color    禁用 ANSI 颜色（NO_COLOR 环境变量亦生效）
+  -v, --verbose...  详细日志（可叠加；0=warn 1=info 2+=debug/trace）
+  -h, --help        Print help
+  -V, --version     Print version

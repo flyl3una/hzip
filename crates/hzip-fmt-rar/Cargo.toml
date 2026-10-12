@@ -1,0 +1,27 @@
+[package]
+name = "hzip-fmt-rar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip RAR 格式实现（02 §8.3；只读，unrar C++ 绑定）"
+
+[dependencies]
+# 依赖红线（T26 §2）：hzip-fmt-rar → hzip-format / hzip-error（不依赖 hzip-codec：
+# rar 解压全在 unrar C 库内完成，02 §2.1 图中 FMTR 无 CODEC 边）
+hzip-format = { workspace = true }
+hzip-error  = { workspace = true }
+unrar       = { workspace = true }   # C++ unrar 源码经 cc 编译（MSVC；05 §4 裁剪规则：失败可独立推迟）
+tracing     = { workspace = true }   # C 边界 panic 监控 / 取消诊断（02 §12.3 / §8.3 ②）
+time        = { workspace = true }   # DOS 时间戳 → OffsetDateTime（EntryInfo.mtime）
+tempfile    = { workspace = true }   # read_entry 物化到即弃临时文件（本 crate 生产依赖）
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+hzip-progress       = { workspace = true }   # 测试构造 CancellationToken/ProgressBus
+tempfile            = { workspace = true }
+sha2                = { workspace = true }
+zeroize             = { workspace = true }   # PasswordSource 替身返回值（Zeroizing<String>）
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+_meta = { generated = "by T40 hzip-cli" }
+
+[err]
+hz_0000 = "内部错误 {code}：请附带日志上报 issue"
+hz_3001 = "校验失败：CRC 不匹配"
+hz_3101 = "密码错误或加密数据损坏"
+hz_5003 = "参数非法：{code}"

@@ -1,0 +1,75 @@
+[package]
+name = "hzip-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 任务编排核心（02 §9）"
+
+[dependencies]
+hzip-format  = { workspace = true }
+hzip-codec   = { workspace = true }
+hzip-error   = { workspace = true }
+hzip-platform = { workspace = true }
+hzip-progress = { workspace = true }
+tracing      = { workspace = true }
+crossbeam-channel = { workspace = true }
+zeroize = { workspace = true }
+smol_str = { workspace = true }
+time    = { workspace = true }
+# 文件名编码检测/转码（02 §8.1；T32 core 半场——workspace 条目已预置）
+chardetng   = { workspace = true }
+encoding_rs = { workspace = true }
+# 压缩管道（T33）：walkdir 目录展开 + glob 排除过滤（02 §9.5 B 框）、
+# rayon 小文件并行预读（H 框局部数据并行，非任务池）、uuid 临时档案名
+# （02 §9.9 时序步 ⑥ `{原档案}.hzip-tmp-{uuid}`）。workspace 已预置 rayon；
+# walkdir/glob/uuid 为 hzip 首次消费（版本经根 workspace 追加登记，见根卡）。
+walkdir = { workspace = true }
+glob    = { workspace = true }
+rayon   = { workspace = true }
+uuid    = { workspace = true }
+sha2    = { workspace = true }
+# 格式注册汇集点（02 §2.1 红线 2 的例外通道——fmt 依赖按 feature 门控，
+# register_builtin_handlers 是唯一 import fmt crate 的位置）
+hzip-fmt-tar    = { workspace = true, optional = true }
+hzip-fmt-single = { workspace = true, optional = true }
+hzip-fmt-cpio   = { workspace = true, optional = true }
+hzip-fmt-zip    = { workspace = true, optional = true }
+hzip-fmt-7z     = { workspace = true, optional = true }
+hzip-fmt-rar    = { workspace = true, optional = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+sha2      = { workspace = true }
+tempfile  = { workspace = true }
+hzip-fmt-tar        = { workspace = true }
+hzip-fmt-single     = { workspace = true }
+hzip-fmt-cpio       = { workspace = true }
+hzip-fmt-zip        = { workspace = true }
+hzip-fmt-7z         = { workspace = true }
+proptest  = { workspace = true }
+flate2    = { workspace = true }
+
+[features]
+# 默认格式集（02 §2.2）：tar/gz/bz2/xz/zst/zip/7z + rar。
+#
+# rar 单独列出（不在 `default-formats` 内）：04 §3.2 的两个构建命令据此区分——
+#   默认（全功能）        cargo build --release                      → 含 rar
+#   发行版合规（去 unrar）cargo build --release --no-default-features \
+#                          -p hzip-cli --features default-formats    → 不含 rar
+# 与 04 §3.2「默认（全功能）… 含 rar（unrar 许可允许解压用途分发）」一致。
+# 影响面：文件关联候选与右键菜单档案判定都由「表 ∩ 已注册 handler」派生，
+# 故启用后 `.rar` 自动出现在设置页与右键菜单里（`hzip_format::exts` 表）。
+default = ["default-formats", "rar"]
+default-formats = [
+    "dep:hzip-fmt-tar",
+    "dep:hzip-fmt-single",
+    "dep:hzip-fmt-cpio",
+    "dep:hzip-fmt-zip",
+    "dep:hzip-fmt-7z",
+]
+# rar（T26；unrar C 库依赖单独门控）
+rar = ["dep:hzip-fmt-rar"]
+
+[lints]
+workspace = true

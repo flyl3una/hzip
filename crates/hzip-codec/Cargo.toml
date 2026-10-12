@@ -1,0 +1,29 @@
+[package]
+name = "hzip-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 编解码器门面（02 §6）"
+
+[dependencies]
+# 依赖红线：CODEC → ERR 单向（02 §2.1），一律 workspace = true（02 §2.2）。
+hzip-error = { workspace = true }
+smol_str   = { workspace = true }   # CodecId 承载类型（02 §6.5）
+crc32fast  = { workspace = true }   # crc32 流式增量（02 §6.2）
+flate2     = { workspace = true, optional = true }   # miniz_oxide 纯 Rust 后端
+bzip2      = { workspace = true, optional = true, features = ["static"] }  # libbz2 vendored 静态
+xz2        = { workspace = true, optional = true, features = ["static"] }  # liblzma vendored 静态
+zstd       = { workspace = true, optional = true, features = ["zstdmt"] }  # multithread 压缩需要 zstdmt
+
+[features]
+# feature 矩阵（02 §2.2）：默认全开，按格式裁剪。
+default = ["deflate", "bzip2", "xz", "zstd", "bcj2"]
+deflate = ["dep:flate2"]
+bzip2   = ["dep:bzip2"]
+xz      = ["dep:xz2"]
+zstd    = ["dep:zstd"]
+bcj2    = []
+
+[lints]
+workspace = true

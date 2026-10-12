@@ -1,0 +1,49 @@
+[package]
+name = "hzip-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 命令行前端（02 §10），T40 实现 6 子命令 + 退出码契约 + --json 双流"
+
+[[bin]]
+name = "hzip"
+path = "src/main.rs"
+
+[dependencies]
+# —— workspace 内部（02 §2.1 依赖图：CLI → core/platform/error/progress）——
+hzip-core     = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-platform = { workspace = true }
+hzip-progress = { workspace = true }
+# 红线 2（02 §2.1）：禁止 hzip-fmt-* / hzip-codec——格式能力一律经 hzip-core。
+hzip-format   = { workspace = true }
+hzip-log      = { workspace = true }    # 日志初始化（02 §12.3）
+hzip-config   = { workspace = true }    # 配置加载（02 §12.1）
+
+# —— 第三方（02 §10.3 clap / §10.2 rpassword / §10.4 serde / §12.3 tracing）——
+clap                = { workspace = true }
+rpassword           = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+rust-i18n           = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+zeroize             = { workspace = true }
+time                = { workspace = true }
+
+[build-dependencies]
+embed-resource = { workspace = true }   # hzip.rc → exe 图标资源（资源 ID 1）
+
+[dev-dependencies]
+assert_cmd  = { workspace = true }
+predicates  = { workspace = true }
+insta       = { workspace = true }
+tempfile    = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+# cpio 只读格式无写侧，E2E 素材由 testkit 拼字节（dev-only；红线 R2 只判运行时依赖）
+hzip-format-testkit = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,81 @@
+[package]
+name = "hzip-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 平台差异收口层（02 §5）"
+
+[features]
+default = []
+# Windows \\?\ 长路径前缀处理（02 §2.2；TC-SEC-010 两层行为）
+win-long-path = []
+# T-CM：强制编译非本机平台的右键菜单后端（CI/开发期语法校验——本机 Windows
+# 无法编译 linux/macos 分支，防止不可达平台代码腐坏）。只影响编译，不改行为。
+cross-check = []
+
+[dependencies]
+# 红线 4：不依赖 workspace 内其他业务 crate；仅 hzip-error（02 §2.1 图 PLT-->ERR）
+hzip-error = { workspace = true }
+# 02 §1.2：时间类型统一 time::OffsetDateTime（FileMeta.mtime 签名）
+time = { workspace = true }
+# 02 §12.3：日志（temp_area Drop 告警、watch 回调异常捕获）
+tracing = { workspace = true }
+# 02 §5.3.6：文件变更监听封装
+notify = { workspace = true }
+# 02 §5.3.5：TempArea 路径分配 sha256
+sha2 = { workspace = true }
+# R-GUI4 #3：任务完成系统通知（三平台 toast/通知中心）
+notify-rust = "4"
+# 02 §5.3.10：基准目录解析（XDG_STATE_HOME 等细节自实现）
+dirs = { workspace = true }
+# T-CM：右键菜单配置 shell-menu.json（GUI 写 / Windows DLL 读）构造与转义
+serde_json = { workspace = true }
+# T-ICON A2：Linux 图标后端解码主题里的 PNG（只启 png 解码器，不拉全套格式依赖）
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_Threading",
+    # shell 派发可能加载 shell 扩展（要求调用线程在 COM 套间）；open.rs `ensure_com_initialized`
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_Security", # 0.61：CreateFileW 签名含 SECURITY_ATTRIBUTES，需此 feature
+    # T-ICON：shell 图标（SHGetFileInfoW 在 UI::Shell）→ HICON 画进 32bpp DIB
+    "Win32_Graphics_Gdi", # CreateDIBSection/CreateCompatibleDC/SelectObject/DeleteDC/DeleteObject
+    # T-ICON 拍板3：系统语言探测（GetUserDefaultLocaleName）
+    "Win32_Globalization",
+    # T-MENU8 写侧收口：系统剪贴板文件列表（hzip → 外部方向）
+    "Win32_System_DataExchange", # OpenClipboard/EmptyClipboard/SetClipboardData 等
+    "Win32_System_Memory",       # GlobalAlloc/GlobalLock/GlobalUnlock/GMEM_MOVEABLE
+    # CF_HDROP/CF_UNICODETEXT 常量实际落在 System::Ole（0.61.2 源码核对，非 UI::Shell）
+    "Win32_System_Ole",
+] }
+
+# R-GUI2-05：文件关联注册表读写（HKCU）
+winreg = "0.55"
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+# T-ICON：macOS 系统文件类型图标（NSWorkspace → NSImage → NSBitmapImageRep）。
+# **只按 target 门控**：与 Windows 侧 `windows-sys` 同款——这些是 objc2 家族
+# 绑定，在非 macOS 主机上既编不过也无法 `cross-check` 拉进来（见
+# `file_icon/mod.rs` 的分节说明）。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-uniform-type-identifiers = { workspace = true }
+
+[lints]
+workspace = true

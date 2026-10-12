@@ -1,0 +1,53 @@
+[package]
+name = "hzip-shell"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "hzip Explorer 上下文菜单 Shell 扩展（IExplorerCommand）"
+
+# 独立 workspace：与主 workspace 零代码依赖（02 §11.5），也不参与主依赖图，
+# 因而无需 build/checks/deps-direction.py 为例外放行。
+[workspace]
+
+[features]
+default = []
+# 载入/调用追踪（排查「右键菜单里没有我们的项」）。**发布禁用**：
+# 它会在每次菜单构建时写盘。用法见 src/trace.rs。
+shell-trace = []
+
+[lib]
+name = "hzip_shell"
+crate-type = ["cdylib"]
+
+[dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    # AllowSetForegroundWindow(ASFW_ANY)：把前台权预授给即将启动的 GUI
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_Security",
+] }
+# #[implement] 展开为 ::windows_core::… 路径，故需直接依赖（非可选）
+windows-core = "0.62"
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+# 必须 unwind：本 DLL 进程内载入 Explorer，abort 会连带杀死资源管理器。
+# 跨 FFI 边界另有 catch_unwind 兜底（见 src/guard.rs）。
+panic = "unwind"
+strip = "debuginfo"
+opt-level = 3
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"

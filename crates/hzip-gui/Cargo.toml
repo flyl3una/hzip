@@ -1,0 +1,56 @@
+[package]
+name = "hzip-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 图形前端（02 §11；gpui-kit 界面层）"
+
+[[bin]]
+name = "hzip-gui"
+path = "src/main.rs"
+
+# lib 目标承载 ViewModel 层（纯 Rust 可单测）；UI 层同 crate 内 src/ui/
+[lib]
+name = "hzip_gui"
+path = "src/lib.rs"
+
+[dependencies]
+hzip-core = { workspace = true }
+hzip-error = { workspace = true }
+hzip-progress = { workspace = true }
+hzip-format = { workspace = true }
+hzip-platform = { workspace = true }   # dirs/proc/temp_area/open（单实例锁/退出钩子/系统打开）
+hzip-log = { workspace = true }
+hzip-config = { workspace = true }
+tracing = { workspace = true }
+crossbeam-channel = { workspace = true }
+zeroize = { workspace = true }
+serde_json = "1"                       # theme.rs ThemeConfig JSON 构造（gpui-kit schema 反序列化）
+# Spike#10：image 解码（图片预览路径；GUI 侧解码合法，02 §9.10）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
+encoding_rs = { workspace = true }
+glob.workspace = true                  # 压缩排除过滤展示层回显（02 §9.5 B）
+gpui-kit = { workspace = true }        # Spike#1：default features（component+assets）；关 tree-sitter-*/decimal/inspector
+smol = "2"                             # contracts SignalTx（smol::channel）；Spike#7 验证 roundtrip
+walkdir = { workspace = true }         # 粘贴目录源递归展开（T-MENU8 双向粘贴 P0；与 core 压缩输入同库）
+percent-encoding = { workspace = true } # macOS「打开方式」Apple Event 的 file:// URL 解码（app/open_event.rs）
+time = { workspace = true }            # mtime 本地时区格式化（T-G20；02 §1.2）
+
+rust-embed = { workspace = true }      # T-G50：assets/icons 内嵌（logo/ 已 exclude）
+rfd = { workspace = true }             # T-G52：原生文件选择 + 扩展名过滤
+rust-i18n = { workspace = true }       # 失败原因文案查表（02 §12.2；locales 共用 CLI 源）
+
+[build-dependencies]
+embed-resource = { workspace = true }   # hzip.rc → exe 图标资源（资源 ID 1，见 build.rs）
+
+[dev-dependencies]
+tempfile = { workspace = true }
+toml = { workspace = true }             # i18n 文案表完整性单测（读 locales/*.toml）
+hzip-format-testkit = { workspace = true }
+flate2 = { workspace = true }           # 组合档夹具（`.cpio.gz`：延迟展开用例）
+# Spike#6：headless 测试直连 gpui-kit test-support（同一 crate 升 feature，无版本分裂）
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

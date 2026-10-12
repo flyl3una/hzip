@@ -1,0 +1,47 @@
+[package]
+name = "hzip-fmt-7z"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 7z 格式实现（02 §8.2；T25 基础版）"
+
+[dependencies]
+# 依赖红线（02 §2.1 图）：FMT7Z --> FMTA / CODEC / ERR；与其他 fmt crate 零依赖。
+hzip-format = { workspace = true }
+hzip-codec  = { workspace = true }
+hzip-error  = { workspace = true }
+hzip-progress = { workspace = true }
+# sevenz-rust：workspace 版本锁定（根 [workspace.dependencies]，features=["compress","aes256"]）。
+# 依赖继承约束（cargo 禁止子表覆盖 workspace 的 default-features）→ 直接 workspace=true
+# 引用，aes256 随之启用。T25 头加密分支语义不受影响：sevenz-rust 读路径无密码时不产出
+# 任何条目名（错误映射为 HZ-3102）；真正 AES 解密/头加密写归 T46。
+sevenz-rust = { workspace = true }
+time        = { workspace = true }   # EntryInfo.mtime（02 §1.2；OffsetDateTime 构造）
+tracing     = { workspace = true }   # 保底收尾/取消映射诊断（02 §12.3）
+# T20 冻结 API 隐含依赖：EntrySink::from_backend 签名需命名 hzip_progress::CancellationToken
+# （hzip-format 未 re-export）；workspace 内部 crate
+# —— T46 自研头加密原语（feature aes；RustCrypto，根预置 workspace=true 条目）——
+aes  = { workspace = true, optional = true }
+cbc  = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
+
+[features]
+# 02 §2.2 feature 矩阵：aes=7z 头加密读写；solid=固实块打包；split=写侧分卷；
+# bcj2=BCJ2 编码路由（编码器本体在 hzip-codec filter::bcj2_encode，本 feature 门控
+# 挂点组装）。
+default = ["aes", "solid", "split", "bcj2"]
+aes    = ["dep:aes", "dep:cbc", "dep:sha2", "dep:zeroize"]
+solid  = []
+split  = []
+bcj2   = []
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+sha2                = { workspace = true }
+tempfile            = { workspace = true }
+zeroize             = { workspace = true }
+
+[lints]
+workspace = true

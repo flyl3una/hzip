@@ -1,0 +1,399 @@
+_meta = { generated = "hzip-gui i18n (settings)" }
+_version = 2
+
+# 设置面板：页签 / 设置项 / 动作按钮（T-SET）
+# 注：主题展示名在 options.toml 的 opt.theme.*（labels::THEME 单一来源）
+[tab.general]
+en = "General"
+zh-CN = "常规"
+
+[tab.assoc]
+en = "File associations"
+zh-CN = "文件关联"
+
+[tab.context_menu]
+en = "Context menu"
+zh-CN = "上下文菜单"
+
+[tab.extract]
+en = "Extraction"
+zh-CN = "解压设置"
+
+[tab.compress]
+en = "Compression"
+zh-CN = "压缩设置"
+
+[tab.viewer]
+en = "Viewers"
+zh-CN = "查看器"
+
+[tab.language]
+en = "Language"
+zh-CN = "语言"
+
+# T-SET 界面外观：界面字体 / 字体大小 / 布局密度（设置-常规页签）
+[setting.font_family.search]
+en = "Search fonts"
+zh-CN = "搜索字体"
+
+[setting.font_family.label]
+en = "Interface font"
+zh-CN = "界面字体"
+
+[setting.font_family.help]
+en = "Font family used by the whole interface; \u201cDefault\u201d follows the system UI font."
+zh-CN = "整个界面使用的字体；\u201c\u9ed8\u8ba4\u201d\u8ddf\u968f\u7cfb\u7edf\u754c\u9762\u5b57\u4f53"
+
+[setting.font_size.label]
+en = "Font size"
+zh-CN = "字体大小"
+
+[setting.font_size.help]
+en = "Base size of interface text (10\u201324); text and component spacing scale with it."
+zh-CN = "界面文字的基准字号（10~24）；文字与组件间距随之等比缩放"
+
+[setting.corner_radius.label]
+en = "Corner radius"
+zh-CN = "圆角弧度"
+
+[setting.corner_radius.help]
+en = "Corner radius in px for menus, buttons, inputs and dialogs (0 = square, up to 20); takes effect immediately."
+zh-CN = "菜单、按钮、输入框、弹层的圆角弧度 px（0 = 直角，最大 20）；改完立即生效"
+
+[setting.density.label]
+en = "Layout density"
+zh-CN = "布局密度"
+
+[setting.density.help]
+en = "Spacing between components: Compact / Standard / Loose. Text size is unaffected."
+zh-CN = "组件之间的间距：紧凑 / 标准 / 宽松；不影响字号"
+
+[setting.theme.label]
+en = "Theme"
+zh-CN = "主题"
+
+
+# T-SEL 走查 #3：主题色（ColorPicker 行）
+[setting.theme_color.label]
+en = "Theme colour"
+zh-CN = "主题色"
+
+# T-SEL 后走查 #6：恢复默认成功提示
+[setting.reset_ok]
+en = "Settings restored to defaults"
+zh-CN = "设置已恢复系统默认"
+
+[setting.theme_color.help]
+en = "Buttons, selections and highlights use this accent colour; empty uses the theme default."
+zh-CN = "按钮、选中高亮等处的强调色；留空使用主题默认色。"
+
+[setting.show_dotdot.label]
+en = "Show \"..\" parent row"
+zh-CN = "显示 .. 跳上级"
+
+[setting.show_dotdot.help]
+en = 'Show a ".." row at the top of the list; double-click it to go back to the parent folder.'
+zh-CN = "列表顶部显示一行「..」，双击可返回上一级目录。"
+
+[setting.auto_update.label]
+en = "Automatic updates"
+zh-CN = "自动更新"
+
+[setting.auto_update.help]
+en = "Check for a new version on startup (not implemented yet, the preference is saved)."
+zh-CN = "启动时自动检查新版本（该功能尚未实现，目前仅保存偏好）。"
+
+[setting.assoc.label]
+en = "File associations"
+zh-CN = "关联格式"
+
+[setting.assoc.help]
+en = 'Double-clicking these archive types opens them in hzip. "Apply associations" registers hzip and makes it the effective handler: it clears the system user-choice layer (FileExts\\UserChoice) and removes other programs from the per-user "Open with" list for the ticked formats (they are restored by "Remove associations"). Windows may ask for elevation (UAC) if a step needs admin rights. Cost: your earlier explicit default choices are discarded and cannot be restored.'
+zh-CN = "勾选后双击这类压缩包即用 hzip 打开。点「应用关联」会注册 hzip 并让它**真正生效**：清掉系统里的「用户显式选择」层（FileExts\\UserChoice），并把这些格式在**每用户「打开方式」列表**里的其它程序摘掉（点「解除关联」会原样还回去）。若某一步需要管理员权限，会弹出 UAC 提权确认。代价：这些格式此前由你在系统 UI 里做过的默认选择会被丢弃且无法还原。"
+
+[assoc.group.archive]
+en = "Archive containers"
+zh-CN = "归档容器"
+
+[assoc.group.composite]
+en = "tar archives (with compression)"
+zh-CN = "tar 复合归档"
+
+[assoc.group.stream]
+en = "Single-stream compression"
+zh-CN = "单流压缩"
+
+[setting.ctx_extract.label]
+en = "Extract menu"
+zh-CN = "解压菜单"
+
+[setting.ctx_extract.help]
+en = 'Which formats appear in the Explorer right-click "Extract" menu.'
+zh-CN = "资源管理器右键「解压」菜单里出现哪些格式。"
+
+[setting.ctx_compress.label]
+en = "Compress menu"
+zh-CN = "压缩菜单"
+
+[setting.ctx_compress.help]
+en = 'Which formats appear in the Explorer right-click "Compress" menu.'
+zh-CN = "资源管理器右键「压缩」菜单里出现哪些格式。"
+
+[setting.extract_smart.label]
+en = "Smart extract"
+zh-CN = "智能解压"
+
+[setting.extract_smart.help]
+en = "When the archive wraps everything in a single folder, extract its contents directly without the extra folder."
+zh-CN = "压缩包只包一层目录时，解压后直接取出里面的内容，不多套一层文件夹。"
+
+[setting.extract_conflict.label]
+en = "Conflict policy"
+zh-CN = "冲突策略"
+
+[setting.extract_conflict.help]
+en = "What to do when a file with the same name already exists on disk."
+zh-CN = "解压遇到同名文件时的处理方式。"
+
+[setting.extract_best_effort.label]
+en = "Best effort"
+zh-CN = "尽力而为"
+
+[setting.extract_best_effort.help]
+en = "Skip files that fail and keep extracting the rest instead of aborting the whole job."
+zh-CN = "个别文件解压失败时跳过并继续其余，而不是整单中止。"
+
+[setting.extract_codepage.label]
+en = "Filename encoding"
+zh-CN = "文件名编码"
+
+[setting.extract_codepage.help]
+en = "Pick the filename encoding for old archives with garbled names; Auto detects it for you."
+zh-CN = "文件名乱码的老压缩包可手动指定编码；「自动」为自动检测。"
+
+[setting.notify_on_finish.label]
+en = "Notify on finish"
+zh-CN = "完成通知"
+
+
+[setting.progress_window.label]
+en = "Progress window"
+zh-CN = "进度窗口"
+
+
+[setting.exit_on_finish.label]
+en = "Quit when finished"
+zh-CN = "完成后退出"
+
+
+[setting.format.label]
+en = "Default format"
+zh-CN = "默认格式"
+
+
+[setting.level.label]
+en = "Default level"
+zh-CN = "默认级别"
+
+
+[setting.keep_metadata.label]
+en = "Keep metadata"
+zh-CN = "保留元数据"
+
+[setting.keep_metadata.help]
+en = "Keep file timestamps and other attributes when compressing."
+zh-CN = "压缩时保留文件的修改时间等属性。"
+
+[setting.verify_after.label]
+en = "Verify after"
+zh-CN = "完成后校验"
+
+
+[setting.folder_size.label]
+en = "Folder size in list"
+zh-CN = "目录行显示大小"
+
+[setting.folder_size.help]
+en = "Show the total size of a folder's contents on its row; large archives may be a little slower."
+zh-CN = "文件夹一行显示其内容的总大小；大档案会稍慢。"
+
+[setting.image_viewer.label]
+en = "Image viewer"
+zh-CN = "图像查看器"
+
+[setting.image_viewer.help]
+en = "Program used to open images; empty uses the system default."
+zh-CN = "双击图片时打开的程序；留空用系统默认。"
+
+[setting.editor.label]
+en = "Editor"
+zh-CN = "编辑器"
+
+[setting.editor.help]
+en = 'Program opened by the "Edit" action; empty uses the system default.'
+zh-CN = "右键「编辑」时打开的程序；留空用系统默认。"
+
+[setting.columns.label]
+en = "Columns & order"
+zh-CN = "列顺序与显隐"
+
+[setting.columns.help]
+en = "Reorder and show/hide columns in the file list; the Name column is always shown."
+zh-CN = "调整文件列表的列顺序与显示；「名称」列固定显示。"
+
+[setting.lang.label]
+en = "Interface language"
+zh-CN = "界面语言"
+
+[setting.file_icons.label]
+en = "File type icons"
+zh-CN = "文件类型图标"
+
+[setting.file_icons.help]
+en = "Use the same icons as your system file manager for each file type (colorful; depends on installed apps). \"Built-in\" uses only hzip's monochrome icons - no icon queries are made to the system."
+zh-CN = "文件列表按各文件类型使用系统文件管理器里的图标（彩色，随已安装程序变化）；选「内置」则只用 hzip 的单色图标 —— 此时完全不向系统查询图标。"
+
+
+[action.check_update]
+en = "Check for updates"
+zh-CN = "检查更新"
+
+[action.assoc_apply]
+en = "Apply associations"
+zh-CN = "应用关联"
+
+[action.assoc_remove]
+en = "Remove associations"
+zh-CN = "解除关联"
+
+[action.browse]
+en = "Browse…"
+zh-CN = "浏览…"
+
+[action.open_log_dir]
+en = "Open log folder"
+zh-CN = "打开日志目录"
+
+[action.open_config]
+en = "Open config file"
+zh-CN = "打开配置文件"
+
+[setting.log_dir.label]
+en = "Log directory"
+zh-CN = "日志目录"
+
+[setting.log_dir.help]
+en = "Where log files are stored; empty uses the system default, restart to apply."
+zh-CN = "日志文件保存的位置；留空使用系统默认，修改后重启生效。"
+
+[action.reset_default]
+en = "Use system default"
+zh-CN = "恢复系统默认"
+
+[action.ctx_apply]
+en = "Apply to system"
+zh-CN = "应用到系统"
+
+[action.ctx_clear]
+en = "Remove from system"
+zh-CN = "从系统清除"
+
+[setting.ctx_status.label]
+en = "Status"
+zh-CN = "系统状态"
+
+[setting.ctx_status.desc]
+en = "Context menu entries currently registered with the system"
+zh-CN = "当前已在操作系统中注册的右键菜单项"
+
+[setting.ctx_dirty]
+en = "Unapplied changes — click \"Apply to system\" to take effect"
+zh-CN = "有未应用的更改——点「应用到系统」后生效"
+
+[ctxstatus.not_installed]
+en = "Not registered with the system"
+zh-CN = "尚未注册到系统"
+
+[ctxstatus.installed]
+en = "Registered: {mode}, {items} entries"
+zh-CN = "已注册：{mode}，{items} 项"
+
+[ctxstatus.restart]
+en = "Registered — restart the file manager to see it"
+zh-CN = "已注册——重启文件管理器后可见"
+
+[ctxstatus.degraded]
+en = "Limited: {reason}"
+zh-CN = "受限：{reason}"
+
+[ctxstatus.unsupported]
+en = "Unsupported: {reason}"
+zh-CN = "暂不支持：{reason}"
+
+[ctxstatus.mode.modern]
+en = "Windows 11 modern menu"
+zh-CN = "Windows 11 新式菜单"
+
+[ctxstatus.mode.legacy]
+en = "classic menu"
+zh-CN = "经典菜单"
+
+[ctxstatus.mode.finder]
+en = "Finder extension"
+zh-CN = "Finder 扩展"
+
+[ctxstatus.mode.services]
+en = "Services menu"
+zh-CN = "服务菜单"
+
+[ctxstatus.mode.desktop]
+en = "desktop integration"
+zh-CN = "桌面集成"
+
+# —— 文件关联页：双击实况状态行（谁真的会打开它）+「打开方式」夺回入口 ——
+# 语义边界：勾选只落盘；「应用关联」写 HKCU；被 UserChoice 占着的格式写不进去，
+# 只能由用户在系统对话框里勾一次「始终使用此应用」。
+
+[setting.assoc_status.label]
+en = "Double-click opens"
+zh-CN = "双击打开"
+
+[setting.assoc_status.desc]
+en = 'Who actually opens these formats when double-clicked in the file manager, grouped by the set you ticked. On Linux (mimeapps.list) and macOS (LaunchServices) "Apply associations" writes the default directly. On Windows it also clears the protected user-choice layer, so a format listed below as still owned by another program means that cleanup failed — the button opens the system Default apps settings as a fallback.'
+zh-CN = "在文件管理器里双击这些格式时，实际由哪个程序打开（按当前勾选的集合分组列出）。Linux（mimeapps.list）与 macOS（LaunchServices）上「应用关联」直接写默认；Windows 上它同时清掉受保护的「用户显式选择」层，因此若下面仍显示某格式归别的程序，说明那次清理没有成功——旁边的按钮会打开系统「默认应用」设置作为兜底途径。"
+
+[assoc.failed.title]
+en = "File association failed"
+zh-CN = "文件关联操作失败"
+
+[assoc.failed.partial_title]
+en = "Some formats were not taken over"
+zh-CN = "部分格式没有接管成功"
+
+[assoc.failed.items]
+en = "These formats were not taken over:\n{items}"
+zh-CN = "这些格式没有接管成功：\n{items}"
+
+[assocstatus.none]
+en = "No formats selected yet"
+zh-CN = "尚未勾选任何格式"
+
+[assocstatus.effective]
+en = "Opened by hzip: {exts}"
+zh-CN = "已由 hzip 打开：{exts}"
+
+[assocstatus.pending]
+en = 'Will open in hzip after "Apply associations": {exts}'
+zh-CN = "点「应用关联」后由 hzip 打开：{exts}"
+
+[assocstatus.blocked]
+en = "{exts} is still opened by {owner}"
+zh-CN = "{exts} 目前仍由 {owner} 打开"
+
+[assocstatus.open_settings]
+en = "Open system Default apps settings"
+zh-CN = "打开系统「默认应用」设置"
+
+[assocstatus.failed]
+en = "System operation failed: {reason}"
+zh-CN = "系统操作失败：{reason}"

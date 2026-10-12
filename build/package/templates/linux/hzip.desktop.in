@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name={{NAME}}
+Name[zh_CN]=hzip 压缩管理器
+GenericName=Archive Manager
+GenericName[zh_CN]=压缩包管理器
+Comment={{SUMMARY}}
+Comment[zh_CN]={{SUMMARY_ZH}}
+Exec={{GUI_BIN}} %f
+TryExec={{GUI_BIN}}
+Icon={{APP_ID}}
+Terminal=false
+Categories={{CATEGORIES}};
+MimeType={{MIME_TYPES}};
+Keywords=archive;zip;7z;rar;tar;compression;extract;归档;压缩;解压;{{NAME}};
+# gpui 主窗口的窗口类（04 §5.5 验收锚点 5：class=Zed::Window）——不声明的话
+# 任务栏/坞会把窗口当独立应用、图标分裂成两个。
+StartupWMClass=Zed::Window
+DBusActivatable=false

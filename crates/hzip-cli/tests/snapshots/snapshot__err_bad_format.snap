@@ -1,0 +1,7 @@
+---
+source: crates/hzip-cli/tests/snapshot.rs
+expression: text
+---
+error: invalid value 'bogus' for '--format <FORMAT>': 格式必须是 zip/7z/tar/tar.gz/tar.bz2/tar.xz/tar.zst/gz/bz2/xz/zst 之一（HZ-5003）
+
+For more information, try '--help'.

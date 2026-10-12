@@ -1,0 +1,11 @@
+#!/bin/sh
+# hzip AppImage 入口（04 §5.2）。
+#
+# 无参数 → GUI 主界面；带参数 → 原样交给 GUI（`hzip-gui <档案路径>` 是文件关联/
+# 双击走的同一条路径，故 AppImage 双击档案也能用）。
+#
+# CLI 也在 AppDir 里：`./hzip-*.AppImage --appimage-extract` 后 usr/bin/hzip。
+HERE="$(dirname "$(readlink -f "$0")")"
+export PATH="${HERE}/usr/bin:${PATH}"
+export APPDIR="${HERE}"
+exec "${HERE}/usr/bin/{{GUI_BIN}}" "$@"

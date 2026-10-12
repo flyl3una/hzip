@@ -1,0 +1,10 @@
+// hzip CLI executable resources.
+//
+// Same rationale as crates/hzip-gui/hzip.rc: resource ID 1 is the icon group the
+// Windows shell and gpui's Windows backend resolve to. The CLI has no window of
+// its own, but the exe still shows up in Explorer / console hosts / shortcuts,
+// so it carries the same icon as the GUI.
+//
+// Generated from crates/hzip-gui/assets/logo/hzip-<N>.png by build/icons/make-icons.ps1
+// -- do not edit.
+1 ICON "../hzip-gui/assets/logo/hzip.ico"

@@ -1,0 +1,26 @@
+[package]
+name = "hzip-fmt-cpio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip CPIO 格式实现（只读；02 §8.7）"
+
+[dependencies]
+# 依赖红线（同 tar）：hzip-format / hzip-error / hzip-platform + 时间与临时文件，
+# 全部 workspace = true。cpio 是纯打包容器（无压缩、无加密）→ 不依赖 hzip-codec。
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-platform = { workspace = true }   # mtime/权限落盘（extract 路径，02 §5.3）
+time          = { workspace = true }   # OffsetDateTime 纪元换算（EntryInfo.mtime）
+tracing       = { workspace = true }   # 坏头/降级诊断（02 §12.3）
+tempfile      = { workspace = true }   # Source::Stream 缓冲（组合链内层，02 §7.5）
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true }
+hzip-progress       = { workspace = true }   # ExtractCtx 的 CancellationToken
+sha2                = { workspace = true }
+zeroize             = { workspace = true }   # PasswordSource 替身返回类型
+
+[lints]
+workspace = true

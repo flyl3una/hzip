@@ -1,0 +1,13 @@
+Package: {{NAME}}
+Version: {{VERSION}}
+Architecture: {{DEB_ARCH}}
+Maintainer: {{MAINTAINER}}
+Installed-Size: {{INSTALLED_SIZE_KB}}
+Depends: {{DEPENDS}}
+Recommends: {{RECOMMENDS}}
+Section: {{SECTION}}
+Priority: {{PRIORITY}}
+Homepage: {{HOMEPAGE}}
+Rules-Requires-Root: no
+Description: {{SUMMARY}}
+{{DESCRIPTION}}

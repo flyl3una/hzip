@@ -1,0 +1,122 @@
+_meta = { generated = "hzip-gui T-PW" }
+_version = 2
+
+[err.hz_1001]
+en = "Target is not writable"
+zh-CN = "目标不可写"
+
+[err.hz_1002]
+en = "Insufficient disk space"
+zh-CN = "磁盘空间不足"
+
+[err.hz_1003]
+en = "Permission denied"
+zh-CN = "权限拒绝"
+
+[err.hz_1004]
+en = "Source not found"
+zh-CN = "源不存在"
+
+[err.hz_2001]
+en = "Unrecognized archive format"
+zh-CN = "魔数不匹配/无法识别格式"
+
+[err.hz_2002]
+en = "Archive is truncated"
+zh-CN = "档案被截断"
+
+[err.hz_2003]
+en = "Unknown compression method"
+zh-CN = "未知压缩方法"
+
+[err.hz_2004]
+en = "Archive header corrupted"
+zh-CN = "档案头损坏"
+
+[err.hz_2005]
+en = "Missing volume"
+zh-CN = "分卷缺失"
+
+[err.hz_3001]
+en = "Checksum mismatch: CRC failed"
+zh-CN = "校验失败：CRC 不匹配"
+
+[err.hz_3101]
+en = "Wrong password"
+zh-CN = "密码错误"
+
+[err.hz_3102]
+en = "Header encrypted: password required to list"
+zh-CN = "头部加密，无法列出条目"
+
+[err.hz_3103]
+en = "Unknown encryption scheme"
+zh-CN = "未知加密方案"
+
+[err.hz_4001]
+en = "Path traversal (.., absolute path, drive letter, UNC)"
+zh-CN = "路径穿越（../绝对路径/盘符/UNC）"
+
+[err.hz_4002]
+en = "Unsafe symlink: target escapes destination"
+zh-CN = "不安全的符号链接：目标越界"
+
+[err.hz_4003]
+en = "Windows reserved device name"
+zh-CN = "Windows 保留设备名"
+
+[err.hz_4004]
+en = "Entry name contains NUL or control characters"
+zh-CN = "条目名含 NUL/控制字符"
+
+[err.hz_4501]
+en = "Single-file extract limit exceeded"
+zh-CN = "单文件解压超限"
+
+[err.hz_4502]
+en = "Total extract size limit exceeded"
+zh-CN = "总解压量超限"
+
+[err.hz_4503]
+en = "Compression ratio limit exceeded (possible bomb)"
+zh-CN = "压缩比率超限（疑似炸弹）"
+
+[err.hz_4504]
+en = "Entry count limit exceeded"
+zh-CN = "条目数超限/组合层数超限"
+
+[err.hz_5001]
+en = "Unsupported operation"
+zh-CN = "不支持的操作"
+
+[err.hz_5002]
+en = "Decision request timed out"
+zh-CN = "决策请求超时"
+
+[err.hz_5003]
+en = "Invalid argument: {code}"
+zh-CN = "参数非法：{code}"
+
+[err.hz_5004]
+en = "Source not found (job spec)"
+zh-CN = "源不存在（JobSpec 校验）"
+
+[err.hz_5005]
+en = "Destination not empty and policy requires failure"
+zh-CN = "目标非空且策略要求失败"
+
+[err.hz_6001]
+en = "Job cancelled"
+zh-CN = "任务已取消"
+
+[err.hz_6002]
+en = "Partial failure"
+zh-CN = "部分失败"
+
+[err.hz_6003]
+en = "Queue closed"
+zh-CN = "队列已关闭"
+
+[err.hz_0000]
+en = "Internal error {code}: please report with logs"
+zh-CN = "内部错误 {code}：请附带日志上报 issue"

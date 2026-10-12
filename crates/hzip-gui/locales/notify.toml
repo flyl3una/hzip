@@ -1,0 +1,139 @@
+_meta = { generated = "hzip-gui i18n" }
+_version = 2
+
+# —— 系统通知（任务完成/失败；app/pump_host.rs）——
+[notify.kind_extract]
+en = "Extract"
+zh-CN = "解压"
+
+[notify.kind_compress]
+en = "Compress"
+zh-CN = "压缩"
+
+[notify.kind_test]
+en = "Test"
+zh-CN = "测试"
+
+[notify.kind_job]
+en = "Job"
+zh-CN = "任务"
+
+[notify.state_done]
+en = "completed"
+zh-CN = "已完成"
+
+[notify.state_partial_done]
+en = "partially completed"
+zh-CN = "部分完成"
+
+[notify.state_failed]
+en = "failed"
+zh-CN = "失败"
+
+[notify.state_cancelled]
+en = "cancelled"
+zh-CN = "已取消"
+
+[notify.state_finished]
+en = "finished"
+zh-CN = "结束"
+
+[notify.failures_suffix]
+en = " ({n} failed)"
+zh-CN = "（{n} 条失败）"
+
+[notify.title]
+en = "{kind} job #{job_id} {state}{failures}"
+zh-CN = "{kind}任务 #{job_id} {state}{failures}"
+
+[notify.component_title]
+en = "hzip"
+zh-CN = "hzip"
+
+# —— 原生文件选择器（app/file_picker.rs）——
+[picker.open_title]
+en = "Open Archive"
+zh-CN = "打开档案"
+
+[picker.save_title]
+en = "Save Archive As"
+zh-CN = "压缩档案另存为"
+
+[picker.filter_supported]
+en = "Archives supported by hzip"
+zh-CN = "hzip 支持的档案"
+
+[picker.filter_all]
+en = "All Files"
+zh-CN = "所有文件"
+
+[picker.filter_executable]
+en = "Executables"
+zh-CN = "可执行文件"
+
+[picker.executable_title]
+en = "Select Program"
+zh-CN = "选择程序"
+
+# —— ViewModel 派生展示文案 ——
+[vm.root_default_name]
+en = "Archive"
+zh-CN = "档案"
+
+[vm.more_items]
+en = "… and {n} more"
+zh-CN = "… 等 {n} 项"
+
+[vm.job_pill_summary]
+en = "{kind} · {done}/{total} items"
+zh-CN = "{kind} · {done}/{total} 条"
+
+# —— 用户可见错误/提示 ——
+[msg.preview_no_archive]
+en = "hz-5003 no archive opened"
+zh-CN = "hz-5003 未打开档案"
+
+[msg.password_no_pending]
+en = "hz-5003 no pending password request"
+zh-CN = "hz-5003 无待决密码请求"
+
+[msg.conflict_no_pending]
+en = "hz-5003 no pending conflict request"
+zh-CN = "hz-5003 无待决冲突请求"
+
+[msg.compress_no_format]
+en = "compression format not selected"
+zh-CN = "压缩未选格式"
+
+[msg.compress_no_inputs]
+en = "compression requires at least one input path"
+zh-CN = "压缩需要至少一个输入路径"
+
+[msg.copy_no_archive]
+en = "no archive opened"
+zh-CN = "未打开档案"
+
+[msg.copy_nothing]
+en = "nothing was materialized for copy"
+zh-CN = "没有条目被物化（无可复制内容）"
+
+[msg.copy_partial]
+en = "partially copied"
+zh-CN = "部分条目复制失败"
+
+[msg.extract_source_missing]
+en = "source does not exist: {path}"
+zh-CN = "源不存在: {path}"
+
+# —— 命令行 --help（main.rs；参数名保持原样）——
+[cli.help.banner]
+en = "hzip-gui 0.1.0 — Archive Manager"
+zh-CN = "hzip-gui 0.1.0 — 档案管理器"
+
+[cli.help.usage]
+en = "Usage: hzip-gui [--open <archive>] [--extract-here <archive>]\n      [--auto-extract <archive>] [--extract-dir <archive>] [--extract-to <archive>]\n      [--compress <path> [--format <fmt>]] [--compress-to <directory>]"
+zh-CN = "用法: hzip-gui [--open <档案>] [--extract-here <档案>]\n      [--auto-extract <档案>] [--extract-dir <档案>] [--extract-to <档案>]\n      [--compress <路径> [--format <fmt>]] [--compress-to <目录>]"
+
+[picker.add_files_title]
+en = "Select Files to Add"
+zh-CN = "选择要添加的文件"
