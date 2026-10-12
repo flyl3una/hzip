@@ -901,7 +901,7 @@ pub const REGISTRY: &[SettingDef] = &[
         id: SettingId::Lang,
         page: SettingsTab::Language,
         label: "setting.lang.label",
-        help: None,
+        help: Some("setting.lang.help"),
         widget: WidgetKind::Select {
             label_keys: &LANG_LABEL_KEYS,
         },

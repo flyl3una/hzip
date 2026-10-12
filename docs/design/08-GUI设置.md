@@ -853,6 +853,14 @@ toolbar/argv 解压意图 → submit_extract_locked
 
 - **设置逻辑**：`Select`，白名单 `labels::LANG` = 跟随系统 / 简体中文 / English
   （落盘值 `system` / `zh-CN` / `en`）→ 写 `[ui].lang` + 镜像 `settings.lang_ix`。
+- **缺中文字形 → 回退英文（用户口径 2026-10-12）**：本项有 `？` 帮助（`setting.lang.help`）。
+  产品不内置字体，若本机**没有任何能渲染中文字形的字体**，中文文案会整屏变成 `.notdef`
+  豆腐块——既读不懂也看不出该装什么。故启动（`runtime.rs` 的 `app.run` 内、**开窗之前**）
+  与运行期切语言（`apply_ui_effects` 的 `lang_ix` 分支，在 `relocalize` **之前**）各判定一次：
+  `ui::fonts::apply_cjk_guard` 用界面当前主题字体真整形探针汉字（`GlyphId(0)` = 缺字形），
+  缺字形且语言是**自动**（`system`/脏值）→ 落 `en` + 告警日志（写明装哪款字体）；显式
+  `zh-CN` 只告警不改（尊重用户选择）；探测失灵（连拉丁字形都拿不到）不回退。判定与单测见
+  `crates/hzip-gui/src/ui/fonts.rs`；Linux 安装包用 `Recommends` 带中文字体（02 §12.2）。
 - **生效逻辑**：`Effect::Locale`，两处消费——
   1. 启动装配：`runtime.rs` `init_locale(&config.ui.lang)`（开窗之前）；
   2. 运行时切换（T-SET 修复轮）：泵批次判定 `batch_requested(&batch, Lang)` →

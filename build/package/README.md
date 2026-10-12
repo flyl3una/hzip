@@ -108,6 +108,18 @@ cargo tree -p hzip-gui --target x86_64-unknown-linux-gnu -e normal -i aws-lc-sys
 暴露路径：CI 的 Linux 腿因缺 `fontconfig.pc` 在 build script 里 panic（exit 101）。CI 现在会把
 Linux 腿的 `ldd` 打进日志（`package.yml`），换依赖树后照着它核清单，别靠记忆。
 
+### 弱依赖（Recommends）
+
+`[deb] recommends` / `[rpm] recommends` **不是**从 `ldd` 推出来的，是产品语义声明：
+
+- `libegl1, libgles2, mesa-vulkan-drivers`：wgpu 的 GLES/Vulkan 回落路径；
+- 中文字体（deb `fonts-noto-cjk` / rpm `google-noto-sans-cjk-fonts`）：产品文案默认跟随系统
+  语言，而包内**不**内置字体——机器上一款中文字体都没有时，GUI 会把界面回退英文（02 §12.2）。
+  弱依赖让 apt/dnf 默认装上它，`--no-install-recommends` 的最小安装仍可用（英文界面）。
+
+rpm 的 `Recommends:` 行由 `package.py` **整行**成形（占位符留空会产出一个空的字段行 = 非法
+spec），模板里只留 `{{RPM_RECOMMENDS}}`。
+
 ### AppImage 工具升级
 
 `metadata.toml` 的 `appimagetool_*` / `runtime_*` 是 **URL + sha256 双锁**（滚动 tag 的

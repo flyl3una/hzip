@@ -697,6 +697,9 @@ def build_rpm(ctx: Ctx, targets: list[Target]) -> None:
         RPM_ARCH=t.rpm_arch,
         GROUP=ctx.meta["rpm"]["group"],
         REQUIRES=ctx.meta["rpm"]["requires"],
+        # 弱依赖（中文字体）：整行由这里成形——模板里留 `Recommends:` 空值会产出
+        # 一个空字段行，rpm 会当成语法错误。
+        RPM_RECOMMENDS="Recommends:     " + ctx.meta["rpm"]["recommends"],
         DESCRIPTION="\n".join(ctx.meta["package"]["description"]),
         FILE_LIST="\n".join("/" + f for f in files),
         **fmt_ctx(ctx),

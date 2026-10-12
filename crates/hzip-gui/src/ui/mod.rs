@@ -14,6 +14,7 @@
 //! | [`widgets`] | 自绘 widgets（gpui-kit 没有：图标/状态/过滤行/面包屑） |
 //! | [`dialogs`] | 四对话框纯 props 组件（按对话框分文件） |
 //! | [`theme`] | 主题 token → ActiveTheme（focus/selection 统一） |
+//! | [`fonts`] | 字体可用性探测（缺中文字形 → 界面回退英文，02 §12.2） |
 //! | [`spacing`] | 布局密度（紧凑/标准/宽松）+ 间距刻度 `sp()` |
 //! | [`constant`] | 界面尺寸/颜色**默认值常量表**（布局字面量的唯一定义处） |
 //! | [`binding`] | VM 行 → UI 行派生 |
@@ -37,6 +38,7 @@ pub mod binding;
 pub mod constant;
 pub mod contracts;
 pub mod dialogs;
+pub mod fonts;
 pub mod notify;
 pub mod shell;
 pub mod spacing;

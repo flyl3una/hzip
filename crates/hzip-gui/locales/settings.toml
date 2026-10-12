@@ -245,6 +245,10 @@ zh-CN = "调整文件列表的列顺序与显示；「名称」列固定显示�
 en = "Interface language"
 zh-CN = "界面语言"
 
+[setting.lang.help]
+en = "Follows the system language by default. If your system language needs Chinese but this machine has no font that can draw Chinese glyphs, the interface falls back to English automatically so it stays readable (the reason is written to the log). Install a Chinese font, e.g. fonts-noto-cjk on Linux, and restart to get Chinese back."
+zh-CN = "默认跟随系统语言。若系统语言需要中文、而本机没有能显示中文的字体，界面会自动回退英文（避免整屏豆腐块，原因写进日志）。安装任意中文字体（Linux：fonts-noto-cjk）后重启即可恢复中文。"
+
 [setting.file_icons.label]
 en = "File type icons"
 zh-CN = "文件类型图标"

@@ -165,6 +165,10 @@ fn zh_cn_text_matches_pre_i18n_wording() {
         ("setting.toolbar_style.label", "工具栏样式"),
         ("setting.view_style.label", "视图样式"),
         ("setting.lang.label", "界面语言"),
+        (
+            "setting.lang.help",
+            "默认跟随系统语言。若系统语言需要中文、而本机没有能显示中文的字体，界面会自动回退英文（避免整屏豆腐块，原因写进日志）。安装任意中文字体（Linux：fonts-noto-cjk）后重启即可恢复中文。",
+        ),
         ("setting.file_icons.label", "文件类型图标"),
         (
             "setting.file_icons.help",

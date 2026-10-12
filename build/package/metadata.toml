@@ -73,15 +73,25 @@ priority        = "optional"
 #   · libxkbcommon0 / libwayland-* —— 依赖树里没有 -sys/-dl 包（纯 Rust 或 dlopen），
 #                          属**保守声明**：多装几个桌面库无害，少装会让 GUI 起不来
 #   · libegl1/libgles2   —— wgpu 的 GLES 回落路径，列为 Recommends
+#   · fonts-noto-cjk     —— **界面中文可读性**：产品文案默认跟随系统语言，而本仓库
+#                          不内置字体；机器上没有任何中文字体时中文会渲染成豆腐块
+#                          （hzip-gui 为此会把界面回退英文，见 02 §12.2）。
+#                          apt 默认装 Recommends ⇒ 中文用户开箱即得；--no-install-recommends
+#                          的最小安装仍可用（英文界面）。
 # CI 的 Linux 腿会打印 `ldd`（package.yml），用来核对本清单与实际 DT_NEEDED，而不是靠记忆。
 depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libfontconfig1, libxkbcommon0, libwayland-client0, libwayland-egl1"
-recommends      = "libegl1, libgles2, mesa-vulkan-drivers"
+recommends      = "libegl1, libgles2, mesa-vulkan-drivers, fonts-noto-cjk"
 
 [rpm]
 group           = "Applications/Archiving"
 # rpm 侧刻意 AutoReqProv: no + 显式 Requires（跨架构打包时宿主 rpm 库与目标不符，
 # 自动推导会得出错误结果）。
 requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, fontconfig, libxkbcommon, libwayland-client, libwayland-egl"
+# 中文字体（Fedora/RHEL 系的包名）。**弱依赖**：dnf/zypper 默认会装，装不上也不阻断
+# ——此时界面按「缺中文字体则回退英文」处理（见 deb 段同一项的注释与 02 §12.2）。
+# 其他 RPM 系发行版包名可能不同（如 openSUSE 的 noto-sans-cjk-fonts），未匹配到只是
+# 这一项装不上，不影响安装 hzip 本体。
+recommends      = "google-noto-sans-cjk-fonts"
 
 [appimage]
 # 工具锁版本 + sha256（滚动 tag 的发布物也会变，校验失败即中止——升级步骤见 README）

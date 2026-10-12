@@ -14,6 +14,7 @@ BuildArch:      {{RPM_ARCH}}
 # 跨架构打包：宿主 rpm 的自动依赖推导会按宿主库算，与目标不符（README「依赖推导」）
 AutoReqProv:    no
 Requires:       {{REQUIRES}}
+{{RPM_RECOMMENDS}}
 
 %description
 {{DESCRIPTION}}

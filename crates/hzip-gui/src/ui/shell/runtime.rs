@@ -284,6 +284,9 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
         cx.set_app_identity("fun.hzip.hzip", "hzip");
         gpui_kit::component::init(cx); // Theme/menu 全局注册（内含 menu::init 键绑定）
         crate::ui::theme::init(cx);
+        // 缺中文字体 → 界面回退英文（用户口径 2026-10-12）：必须跑在**开窗之前**，
+        // 否则用户先白看一屏豆腐块。探测用界面当前字体整形探针字形，见 `ui::fonts`。
+        crate::ui::fonts::apply_cjk_guard(cx, &config.ui.lang);
         // 文件类型图标（T-ICON）装配：建缓存 Global + 启后台探测线程，幂等。
         // `tx` 即首个 shell 的 `signal_tx`（`make_data` 把它同时写进
         // `AppData.signal_tx`）——图标填充信号经它回投主线程泵，泵只重绘。
@@ -1425,7 +1428,11 @@ pub(crate) fn apply_ui_effects(
         cx.refresh_windows();
     }
     if let Some(ix) = lang_ix {
-        crate::init_locale(crate::app::labels::value_of(&crate::app::labels::LANG, ix));
+        let lang = crate::app::labels::value_of(&crate::app::labels::LANG, ix);
+        crate::init_locale(lang);
+        // 切到中文但本机没有中文字形 → 回退英文（显式 `zh-CN` 只告警不改，见
+        // `ui::fonts`）。必须在 `relocalize` **之前**：它按最终 locale 重建文案。
+        crate::ui::fonts::apply_cjk_guard(cx, lang);
         crate::ui::views::progress::relocalize(cx, job_rows);
         cx.refresh_windows();
     }
