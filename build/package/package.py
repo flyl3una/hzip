@@ -73,26 +73,72 @@ TARGETS = {
 # --------------------------------------------------------------------------- 输出
 
 
+def _configure_stdio() -> None:
+    """把 stdout/stderr 配成「不会因为某个字符编不出来就崩掉」的形态。
+
+    Windows 上 CPython 按**系统 ANSI 代码页**编码 stdout（CI 的 windows runner 是
+    cp1252），而本驱动的日志既有 `→` 也有中文——一 print 就是 `UnicodeEncodeError`：
+    CI 实测，Windows 腿连第一步 `hzip {ver} → {triple}` 都过不去，`package.py`
+    退出码 1（打包根本没开始）。`log()` 只接 `OSError`，而 `UnicodeEncodeError` 是
+    `ValueError` 子类，所以旧代码包不住它。
+
+    两种形态分开处理，各自取最优：
+
+    * **输出被重定向/管道**（CI 抓日志、`> log.txt`）：改成 UTF-8——日志在 Actions
+      网页、文件、编辑器里都是可读的，非 ASCII 一个不丢；
+    * **交互式终端**（本机 cmd/PowerShell）：保留终端自己的编码（cmd 的 cp936/cp437
+      认得中文与 `→`），只加 `errors="replace"` 兜底——绝不为了一个字符崩掉整次打包。
+
+    改不动就静默跳过（有些环境把 stdout 换成了不可 reconfigure 的包装对象）。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
+_configure_stdio()
+
+
 def xml_escape(s: str) -> str:
     import xml.sax.saxutils
 
     return xml.sax.saxutils.escape(s, {'"': "&quot;", "'": "&apos;"})
 
 
+def _emit(msg: str, *, err: bool = False) -> None:
+    """打印一行，双重兜底：**编码**与**管道**都不能把驱动搞崩。
+
+    `_configure_stdio()` 已把编码调好，这里是最后一道保险——万一某个环境把 stdout
+    换成了不可 reconfigure 的包装对象，退化成 ASCII（`?` 替掉编不出来的字符）再打一次；
+    仍被下游关掉（`| head`）就安静退出。`die()` 用它尤其重要：报错信息本身**不能崩**，
+    否则用户看到的是一条 Python traceback 而不是「哪一步错了」。
+    """
+    stream = sys.stderr if err else sys.stdout
+    for text in (msg, msg.encode("ascii", "replace").decode("ascii")):
+        try:
+            print(text, file=stream, flush=True)
+            return
+        except UnicodeEncodeError:
+            continue
+        except OSError:
+            sys.exit(0)
+
+
 def log(msg: str) -> None:
-    try:
-        print(msg, flush=True)
-    except OSError:
-        # 输出被下游提前关掉（如 `| head`）：安静退出，别甩 traceback
-        sys.exit(0)
+    _emit(msg)
 
 
 def warn(msg: str) -> None:
-    print(f"[WARN] {msg}", flush=True)
+    _emit(f"[WARN] {msg}")
 
 
 def die(msg: str) -> None:
-    print(f"[ERROR] {msg}", file=sys.stderr, flush=True)
+    _emit(f"[ERROR] {msg}", err=True)
     sys.exit(1)
 
 

@@ -43,13 +43,14 @@ CI 里 A 档由 [`.github/actions/rust-build-deps`](../.github/actions/rust-buil
 | Rust | `rust-toolchain.toml` pin **1.95.0**（含 rustfmt/clippy） | rustup | rustup | rustup |
 | C/C++ 编译器 | 编 xz2 / bzip2 / zstd / unrar 的 C 源码 | VS 2022 Build Tools：**C++ 生成工具 + Windows SDK** | `build-essential` | Xcode CLT |
 | `pkg-config` + freetype 头 | 让 `freetype-sys` 找到 `freetype2` | —（MSVC 下走自带构建） | `pkg-config libfreetype-dev` | 自带 |
+| fontconfig 头 | 让 `yeslogic-fontconfig-sys`（gpui 字体栈，经 `zed-font-kit`）找到 `fontconfig`；它的 build.rs **无条件** pkg-config 探测（除非设 `RUST_FONTCONFIG_DLOPEN`）——缺了直接在 build script 里 panic | — | `libfontconfig1-dev` | 自带 |
 | `cmake` + `nasm` | **`aws-lc-sys`**（`gpui-kit → reqwest → rustls` 的 TLS 后端）自带构建脚本要求 | 镜像自带 cmake + `choco install nasm` | `cmake nasm perl` | 自带 cmake（arm64 不需要 nasm） |
 | 交叉目标 | 出 arm64 / universal 包时 | `rustup target add aarch64-pc-windows-msvc` | arm64 需 arm64 runner（见 04 §6.1） | `rustup target add x86_64-apple-darwin aarch64-apple-darwin` |
 
 Ubuntu/Debian 一行装齐：
 
 ```bash
-sudo apt-get install -y build-essential pkg-config cmake nasm perl libfreetype-dev
+sudo apt-get install -y build-essential pkg-config cmake nasm perl libfreetype-dev libfontconfig1-dev
 ```
 
 > **为什么有 cmake/nasm**：`hzip-gui` 经 gpui-kit 拉进 `reqwest → rustls → aws-lc-rs`，
@@ -215,6 +216,12 @@ Stop-Process -Name explorer -Force      # 桌面会闪一下，随后自动重�
 arm64（`tar.gz,deb,rpm,appimage`）。**关掉某一格**用仓库变量（`HZIP_ARM64_RUNNER=off` 不做
 Linux arm64、`HZIP_WIN_ARM=off` 不做 Windows arm64）；被 `--skip` 的用例、以及各条与早期设计
 草稿的差异，逐条写在 workflow 注释与 [04 §6.1](../docs/design/04-编译与部署.md)。
+
+打包作业自己会装**打包工具**（`package.yml` 的「打包工具」步骤，属于
+[`package/README.md`](package/README.md)「前置工具」那一类）：Windows 按 `metadata.toml` 的
+`wix_version` 装 WiX，Linux 装 `dpkg-dev rpm squashfs-tools desktop-file-utils appstream`，
+macOS 用镜像自带的 `hdiutil/iconutil/sips`。Linux 腿还会把 `ldd` 打进日志，用于核对
+`metadata.toml` 里手写的 `[deb]/[rpm]` 依赖清单。
 
 本地复现发版（CI 跑的同一对命令）：
 

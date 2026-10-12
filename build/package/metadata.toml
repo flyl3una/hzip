@@ -62,23 +62,26 @@ description_zh  = [
 [deb]
 section         = "utils"
 priority        = "optional"
-# 依赖清单推导（2026-09-22，两条命令，见 README「依赖推导」）：
-#   ldd <产物二进制>                                # 动态库 soname
-#   cargo tree -p hzip-gui --target x86_64-unknown-linux-gnu -e normal
+# 依赖清单推导（2026-09-22 两条命令：`ldd <产物二进制>` + `cargo tree …`；见 README「依赖推导」）：
 # 结论：C 库（xz/bzip2/zstd/unrar）由 cc 自编静态链，动态只剩 glibc/libgcc + GUI 图形栈：
 #   · libvulkan1         —— wgpu/ash 运行时 dlopen libvulkan.so.1（主要渲染路径）
 #   · libfreetype6       —— freetype-sys 经 pkg-config 动态链接
+#   · libfontconfig1     —— yeslogic-fontconfig-sys（zed-font-kit）经 pkg-config 动态链接：
+#                          它的 build.rs 只在设了 RUST_FONTCONFIG_DLOPEN（或 dlopen feature）
+#                          时才改走 dlopen，CI 两者都没有 ⇒ 产物 DT_NEEDED 里一定有它。
+#                          （2026-10-12 补：Linux 构建因缺 fontconfig.pc 失败时才暴露本项缺失）
 #   · libxkbcommon0 / libwayland-* —— 依赖树里没有 -sys/-dl 包（纯 Rust 或 dlopen），
 #                          属**保守声明**：多装几个桌面库无害，少装会让 GUI 起不来
 #   · libegl1/libgles2   —— wgpu 的 GLES 回落路径，列为 Recommends
-depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libxkbcommon0, libwayland-client0, libwayland-egl1"
+# CI 的 Linux 腿会打印 `ldd`（package.yml），用来核对本清单与实际 DT_NEEDED，而不是靠记忆。
+depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libfontconfig1, libxkbcommon0, libwayland-client0, libwayland-egl1"
 recommends      = "libegl1, libgles2, mesa-vulkan-drivers"
 
 [rpm]
 group           = "Applications/Archiving"
 # rpm 侧刻意 AutoReqProv: no + 显式 Requires（跨架构打包时宿主 rpm 库与目标不符，
 # 自动推导会得出错误结果）。
-requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, libxkbcommon, libwayland-client, libwayland-egl"
+requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, fontconfig, libxkbcommon, libwayland-client, libwayland-egl"
 
 [appimage]
 # 工具锁版本 + sha256（滚动 tag 的发布物也会变，校验失败即中止——升级步骤见 README）

@@ -10,16 +10,27 @@ runs:
   steps:
     # 为什么是这几样（build/README.md A 档）：
     #  build-essential  xz2 / bzip2 / zstd / unrar 的 C(++) 源码自编
-    #  pkg-config + libfreetype-dev   freetype-sys 找 freetype2
-    #  cmake + nasm + perl            aws-lc-sys（gpui-kit → reqwest → rustls 的 TLS 后端）
-    #                                 自带 cmake 构建脚本；x86_64 上还要 nasm 汇编
+    #  pkg-config       freetype-sys / yeslogic-fontconfig-sys 靠它找系统库
+    #  libfreetype-dev      freetype-sys（.pc: freetype2）
+    #  libfontconfig1-dev   yeslogic-fontconfig-sys（.pc: fontconfig）——**gpui 字体栈的硬依赖**：
+    #                       它的 build.rs 无条件 pkg-config 探测（除非设 RUST_FONTCONFIG_DLOPEN），
+    #                       CI 实测缺它直接 panic 在 build script 里（exit 101）。
+    #  cmake + nasm + perl   aws-lc-sys（gpui-kit → reqwest → rustls 的 TLS 后端）自带 cmake
+    #                       构建脚本；x86_64 上还要 nasm 汇编
+    # 刻意**不装**（装了会改变产物，与 metadata.toml 的运行时依赖推导对不上）：
+    #  libbz2-dev/liblzma-dev/libzstd-dev —— bzip2-sys/lzma-sys/zstd-sys 探测失败会回落自编源码
+    #                        （metadata.toml 明确写「C 库由 cc 自编静态链」）；
+    #  libwayland-dev/libx11-dev/libegl1-mesa-dev —— wayland-sys 的 dlopen feature 已开
+    #                        （wgpu-hal 启用）、khronos-egl 只在 static feature 下探 egl.pc、
+    #                        x11rb/xkbcommon 走 dlopen ⇒ 都不需要 -dev。
     - name: Linux 依赖（apt）
       if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential pkg-config cmake nasm perl libfreetype-dev
+          build-essential pkg-config cmake nasm perl \
+          libfreetype-dev libfontconfig1-dev
 
     # Windows：cmake 镜像自带，只缺 nasm（aws-lc-sys 的 x86_64 汇编）。
     # choco 对已安装的包是幂等的（打一行 already installed），故可重复调用。

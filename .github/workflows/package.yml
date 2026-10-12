@@ -155,6 +155,52 @@ jobs:
             Write-Host "::warning::未产出 hzip-shell.dll——MSI 将不含右键菜单扩展（见上一一步骤日志）"
           }
 
+      # 打包前先核对二进制真的依赖哪些系统库：metadata.toml 的 [deb]/[rpm] 是**手写**的
+      # 依赖清单（推导方法见 build/package/README.md），跨版本升级依赖树后最容易忘的就是它。
+      # 这里把 ldd 打进日志，人一眼就能比对；不做硬断言（soname→包名映射是发行版相关的，
+      # 写死映射反而会在换发行版时误报）。
+      - name: 动态依赖核对（ldd vs metadata.toml 的 [deb]/[rpm]）
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== ldd target/${{ matrix.targets }}/release/hzip-gui"
+          ldd "target/${{ matrix.targets }}/release/hzip-gui" || true
+
+      # 打包工具（各平台；依赖见 build/package/README.md「前置工具」）。
+      # Windows 镜像不带 WiX，Linux 镜像不带 rpmbuild/mksquashfs —— 不装就会在打包阶段
+      # 报「工具缺失」，所以这一步是硬需求（不是 best-effort）。
+      - name: 打包工具（WiX / dpkg / rpm / mksquashfs …）
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows)
+              # 版本读 metadata.toml（唯一来源；本地与 CI 用同一版 WiX）
+              wix=$(tr -d '\r' < build/package/metadata.toml | sed -n 's/^wix_version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p')
+              [ -n "$wix" ] || { echo "metadata.toml 里没找到 wix_version"; exit 1; }
+              # 镜像若某天自带 wix（版本可能不符），install 会报「already installed」——
+              # 于是退一步用 update 对齐到 pin 的版本；两条都失败才算错。
+              dotnet tool install --global wix --version "$wix" \
+                || dotnet tool update --global wix --version "$wix"
+              "$HOME/.dotnet/tools/wix.exe" --version
+              ;;
+            Linux)
+              sudo apt-get update
+              # dpkg-deb / rpmbuild / mksquashfs + 元数据校验工具（缺了只告警，装上是为了让校验真跑）
+              sudo apt-get install -y --no-install-recommends \
+                dpkg-dev rpm squashfs-tools desktop-file-utils appstream
+              # libfuse：驱动跑完 AppImage 后会执行产物自证（`<app>.AppImage --appimage-extract`）。
+              # 该模式设计上不需要 FUSE，但 24.04 镜像默认不带 libfuse2——装上作保（24.04 起包名带 t64）。
+              sudo apt-get install -y --no-install-recommends libfuse2t64 \
+                || sudo apt-get install -y --no-install-recommends libfuse2
+              ;;
+            macOS)
+              # hdiutil / iconutil / sips 由 Xcode CLT 自带
+              command -v hdiutil iconutil sips
+              ;;
+          esac
+
       - name: 打包（build/package/package.py）
         shell: bash
         run: |

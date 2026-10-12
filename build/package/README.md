@@ -102,6 +102,12 @@ cargo tree -p hzip-gui --target x86_64-unknown-linux-gnu -e normal -i aws-lc-sys
 动态只剩 glibc/libgcc + GUI 图形栈（`libvulkan1` 由 wgpu/ash dlopen、`libfreetype6` 由
 `freetype-sys` 动态链、`libxkbcommon0`/`libwayland-*` 保守声明）。
 
+**2026-10-12 补**：`libfontconfig1` 也在这条链上——`yeslogic-fontconfig-sys`（gpui 的字体栈，
+经 `zed-font-kit`）**无条件** pkg-config 探测 `fontconfig`，只有设 `RUST_FONTCONFIG_DLOPEN`
+才改走 dlopen（CI 未设）⇒ 产物 DT_NEEDED 里有 `libfontconfig.so.1`，`[deb]/[rpm]` 必须声明它。
+暴露路径：CI 的 Linux 腿因缺 `fontconfig.pc` 在 build script 里 panic（exit 101）。CI 现在会把
+Linux 腿的 `ldd` 打进日志（`package.yml`），换依赖树后照着它核清单，别靠记忆。
+
 ### AppImage 工具升级
 
 `metadata.toml` 的 `appimagetool_*` / `runtime_*` 是 **URL + sha256 双锁**（滚动 tag 的
