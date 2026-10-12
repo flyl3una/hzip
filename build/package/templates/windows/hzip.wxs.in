@@ -28,7 +28,11 @@
      例外：扩展名关联与许可文件的组件由驱动按 `uuid5(固定命名空间, ...)` 派生（仍确定）。
   7. GPL-3.0 随附义务：许可全文（`$(var.LicenseDir)`，由驱动从仓库根 LICENSE*/COPYING*
      收集）随安装落进 INSTALLFOLDER；`HasLicenses=0` 时不引用该组件组。
-     `WixUILicenseRtf`（`--license-rtf`）只是可选的安装前显示页，与此**独立**。
+     `WixUILicenseRtf`（驱动参数 `license-rtf`，即安装向导里的许可条款页）只是可选的
+     安装前显示页，与此**独立**。
+ 8. **本文件是 XML**：注释里不能出现两个连续连字符，否则 WiX 以 WIX0104 拒绝整个文件
+     （实测踩到：注释里写出命令行开关的完整写法，MSI 直接编不出来）。要提命令行开关，
+     写去掉连字符的短名，或指向驱动自己的帮助输出。
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"

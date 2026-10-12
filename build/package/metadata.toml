@@ -15,7 +15,7 @@
 #
 # [WARN] 发布前置（驱动会打印警告，不阻断本地打包）：
 #   1. 根 LICENSE 缺失时驱动警告：产物将不含许可文本（GPL 随附义务不满足，勿发布）。
-#      （homepage / issues_url / maintainer 已换成真实值：gitee.com/flyl3una/hzip）
+#      （homepage / issues_url / maintainer 已换成真实值：github.com/flyl3una/hzip；2026-10-12 由 Gitee 迁入）
 
 [package]
 # 应用身份：三处必须一致——.desktop 文件名 / AppStream <id> / 图标名
@@ -26,8 +26,8 @@ name            = "hzip"
 # deb 的 Maintainer、rpm 的 %packager、AppStream <developer><name>
 vendor          = "hzip"
 maintainer      = "flyl3una <l3una@outlook.com>"
-homepage        = "https://gitee.com/flyl3una/hzip"
-issues_url      = "https://gitee.com/flyl3una/hzip/issues"
+homepage        = "https://github.com/flyl3una/hzip"
+issues_url      = "https://github.com/flyl3una/hzip/issues"
 spdx            = "GPL-3.0-or-later"
 copyright       = "Copyright (c) hzip contributors"
 summary         = "Archive manager: zip/7z/tar/gz/bz2/xz/zst read-write, rar extract-only"

@@ -52,7 +52,7 @@ lang = "system"           # system/zh-CN/en
 show_dotdot = true        # 压缩文件中显示 .. 跳上级
 show_jobs = false         # 任务中心页签显隐（默认关：界面只有浏览页、不显示页签栏；
                           # 菜单「视图 ▸ 任务中心」/ 设置-查看器双入口同源）
-auto_update = false       # 自动更新（检查逻辑挂账 T43）
+auto_update = false       # 自动更新（检查逻辑挂账 T43；检查地址见下方 [update].check_url）
 #assoc_formats = []      # 文件关联勾选扩展名（GUI 设置页写入；空 = 未关联）
 #ctx_extract = []        # 上下文解压菜单勾选 key（GUI 设置页写入）
 #ctx_compress = []       # 上下文压缩菜单勾选 key
@@ -74,6 +74,15 @@ line_height = 1.2         # 文字行高倍率（× 字号 = 行框高；文件�
 #                         低于字体字形盒（ascent+|descent| ≈ 1.3em）时**夹到字形盒**：
 #                         再紧就会裁掉字形下降部（g 看起来像 a）。故本项只能让行更松。
 #                         只改行框高度；「行与行贴多紧」由上面的 density 决定。
+
+[update]
+# 在线更新检查地址（「帮助 ▸ 检查更新」/ 设置页按钮将来读它）。
+# 放在配置里 = 换更新源（自建镜像、别的托管仓库）不必重新打包。
+# ⚠ 检查流程本身挂账 T43：当前菜单项/按钮只弹「在线更新暂未接入」占位提示，
+#   不会向你填的这个地址发起任何请求。
+check_url = "https://api.github.com/repos/flyl3una/hzip/releases/latest"
+# ⚠ GitHub REST API 要求请求头带 User-Agent（缺它回 403）；换源时把端点换成
+#   自己那份 JSON 即可，键名与值域由 T43 的解析器定。
 
 [logging]
 level = "info"            # 日志级别（debug/info/warn/error）；GUI 基线 debug/CLI warn

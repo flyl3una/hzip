@@ -17,7 +17,7 @@ edition = "2024"                    # MSRV 1.95（04 §1；T-G00 Spike#9 评审�
 rust-version = "1.95"
 license = "GPL-3.0-or-later"         # 04 §9：本项目以 GPL-3.0-or-later 发布，正文见仓库根 LICENSE（唯一事实源）
                                      #（若要"仅 3.0"，改 GPL-3.0-only 并同步 04 §9 + deny.toml + metadata.toml）
-repository = "https://gitee.com/flyl3una/hzip"
+repository = "https://github.com/flyl3una/hzip"
 
 [workspace.dependencies]
 # —— workspace 内部（path + version，供发布时互相引用）——

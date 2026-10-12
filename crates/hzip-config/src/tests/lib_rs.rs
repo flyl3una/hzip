@@ -80,6 +80,35 @@ fn parses_line_height_from_toml() {
     assert_eq!(Config::load_from(&p2).ui.line_height, LINE_HEIGHT_DEFAULT);
 }
 
+/// 在线更新检查地址（用户口径：**由配置文件指定**——换源不必重新打包）。
+#[test]
+fn update_check_url_comes_from_config() {
+    // 默认指向本项目仓库的发布元数据端点（迁托管时这里必须跟着改，见 T-LIC §4.1）
+    assert_eq!(
+        Config::defaults().update.check_url,
+        "https://api.github.com/repos/flyl3una/hzip/releases/latest"
+    );
+    // 用户改写生效（原样读入，不做归一）
+    let d = tmp();
+    let p = d.path().join("c.toml");
+    std::fs::write(
+        &p,
+        "[update]\ncheck_url = \"https://mirror.example.org/hzip.json\"\n",
+    )
+    .expect("write");
+    assert_eq!(
+        Config::load_from(&p).update.check_url,
+        "https://mirror.example.org/hzip.json"
+    );
+    // 旧配置文件（无 `[update]` 节）回落默认
+    let p2 = d.path().join("c2.toml");
+    std::fs::write(&p2, "[ui]\ntheme = \"dark\"\n").expect("write");
+    assert_eq!(
+        Config::load_from(&p2).update.check_url,
+        Config::defaults().update.check_url
+    );
+}
+
 #[test]
 fn parses_toml_with_partial_keys() {
     let d = tmp();

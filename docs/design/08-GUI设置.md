@@ -201,7 +201,8 @@ sequenceDiagram
 #### 3) 自动更新 · `AutoUpdate`（`:368`）
 
 - **设置逻辑**：`Switch` → `[ui].auto_update`，镜像 `settings.auto_update`，默认 `false`。
-- **生效逻辑**：无。启动检查/在线更新挂账 T43（界面 desc 已写明）。
+- **生效逻辑**：无。启动检查/在线更新挂账 T43（界面 desc 已写明）。检查地址已落配置
+  `[update].check_url`（默认 = 本项目 GitHub 仓库的 releases/latest，B.1），T43 直接读它即可——**换源不必重新打包**。
 - **时机**：F。**现状：⛔ 未实现（声明非目标）**。
 
 #### 外观组增补：界面字体 / 字体大小 / 布局密度（2026-09-20，用户需求）

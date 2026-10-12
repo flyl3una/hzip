@@ -1,0 +1,36 @@
+name: rust-build-deps
+description: >-
+  编译 hzip Rust 产物的系统依赖（**单一来源**：ci / package 两个工作流都引用它，
+  改依赖只改这一个文件）。逐条依据见 build/README.md「编译环境依赖」A 档。
+  只管**编译**依赖；打包那一步的工具（WiX / dpkg-deb / rpmbuild / hdiutil /
+  appimagetool）由 build/package/package.py 自检并报错，见 build/package/README.md。
+
+runs:
+  using: composite
+  steps:
+    # 为什么是这几样（build/README.md A 档）：
+    #  build-essential  xz2 / bzip2 / zstd / unrar 的 C(++) 源码自编
+    #  pkg-config + libfreetype-dev   freetype-sys 找 freetype2
+    #  cmake + nasm + perl            aws-lc-sys（gpui-kit → reqwest → rustls 的 TLS 后端）
+    #                                 自带 cmake 构建脚本；x86_64 上还要 nasm 汇编
+    - name: Linux 依赖（apt）
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential pkg-config cmake nasm perl libfreetype-dev
+
+    # Windows：cmake 镜像自带，只缺 nasm（aws-lc-sys 的 x86_64 汇编）。
+    # choco 对已安装的包是幂等的（打一行 already installed），故可重复调用。
+    - name: Windows 依赖（choco）
+      if: runner.os == 'Windows'
+      shell: bash
+      run: choco install nasm --no-progress -y
+
+    # macOS：cmake / Xcode CLT（含 freetype）镜像自带；arm64 不需要 nasm。
+    # 这一步只做可见性标注，不装任何东西（避免给未来读者留下「漏了一行」的错觉）。
+    - name: macOS 依赖（镜像自带）
+      if: runner.os == 'macOS'
+      shell: bash
+      run: echo "macOS：cmake + Xcode CLT 由镜像自带（build/README.md A 档），无需安装"

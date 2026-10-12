@@ -35,7 +35,28 @@ pub struct Config {
     pub jobs: Jobs,
     pub preview: Preview,
     pub ui: Ui,
+    pub update: Update,
     pub logging: Logging,
+}
+
+/// 在线更新检查（`[update]`）。
+///
+/// 地址放配置里而非编进产物：换更新源（自建镜像、别的托管）**不必重新打包**，
+/// 与 `ui.auto_update` 同源（该开关的检查逻辑挂账 T43）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Update {
+    /// 更新检查地址（发布元数据端点；T43 的检查流程读它——当前「帮助 ▸ 检查更新」
+    /// 与设置页按钮仍是占位提示，尚未发起任何网络请求）。
+    pub check_url: String,
+}
+
+impl Default for Update {
+    fn default() -> Self {
+        Self {
+            check_url: "https://api.github.com/repos/flyl3una/hzip/releases/latest".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

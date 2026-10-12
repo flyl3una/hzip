@@ -172,6 +172,27 @@ Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile "$env:TEMP\dotn
 * `signtool` 与 `makeappx` 必须来自同一套较新 SDK（旧工具签 MSIX 会报
   `SignerSign() failed … 0x80080209`）。
 
+### 故障：`cargo clean` 删不掉 `target\<profile>\hzip-shell.dll`（拒绝访问）
+
+不是安装包的问题：**MSI 把 `hzip-shell.dll` 装进安装目录**（`filShellDll` 落 `INSTALLFOLDER`），
+安装版的 `hzip-gui.exe` 注册的也是那份（`validate_spec` 默认取 exe 同目录，`[ui].shell_ext_dll`
+可覆盖）。报错删不掉的那份在 `target\<profile>\` 下——它是**开发运行**的落位副本，由 `hzip-gui`
+的 `build.rs::stage_shell_ext` 从 `shell/hzip-shell/target/shell-ext/` 拷到 exe 旁边，好让
+`cargo run` 出来的 GUI 也能用右键菜单。开发机上点过「应用到系统」后，注册表里的 COM 服务器
+路径就指向**这份开发副本**；资源管理器用过一次就把它的映像锁住 → 删除/覆盖都失败。
+
+解锁（任选，按「谁该生效」挑）：
+
+```powershell
+# A. 想让**安装版**生效：从容器的 hzip-gui.exe 设置页再点一次「应用到系统」（注册指回安装目录），
+#    然后重启资源管理器让旧映像卸载；之后 cargo clean 不再失败
+Stop-Process -Name explorer -Force      # 桌面会闪一下，随后自动重启（或 taskkill /f /im explorer.exe & start explorer）
+
+# B. 只想立刻删掉开发副本：先解除注册（GUI 设置页「解除关联/卸载右键菜单」）再重启资源管理器
+```
+
+下次 `cargo build` 落位失败时不再静默：`build.rs` 会打 `cargo:warning=`（含上面两条解法）。
+
 ### 本机实测状态（2026-09-22，供对照）
 
 * **Windows 本机**：cargo 1.95 / VS Build Tools / cmake+nasm / Python 3.14 齐；
@@ -180,6 +201,27 @@ Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile "$env:TEMP\dotn
 * **WSL Ubuntu 22.04**：`dpkg-deb`/`rpmbuild`/`appstreamcli`/`desktop-file-validate`/`mksquashfs` 齐，deb/rpm/AppImage
   本地可产出并真装真卸；但**该环境 cargo 拉不到 crates.io 索引**（curl/Python 秒级可达而 cargo 超时，
   与本仓库无关）→ Linux 二进制在本机构建不出，交 CI。
+
+## CI（`.github/workflows`）
+
+| 工作流 | 触发 | 跑什么 |
+|---|---|---|
+| [`ci.yml`](../.github/workflows/ci.yml) | push / PR / 手动 | `quality`（fmt、`clippy -D warnings`、cargo-deny、`build/checks/*`、工具链↔MSRV 一致性）、`test`（三平台全工作区，**串行**执行）、`package-smoke`（打包相关文件一动就真打一遍包，不发布） |
+| [`package.yml`](../.github/workflows/package.yml) | 被 release / ci 调用 | 可复用的「构建 + 打包」作业；矩阵 5 格（见下） |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*` / 手动演练 | 全矩阵打包 → MSI 真装真卸校验 → 建 GitHub Release（汇总各格产物 + 重算全量 `sha256sums.txt`） |
+| [`actions/rust-build-deps`](../.github/actions/rust-build-deps/action.yml) | 被引用 | 上面「编译环境依赖」A 档的**唯一实现**（改依赖只改它，ci/package 都引它） |
+
+发布矩阵：Windows x86_64 / arm64（`msi,zip`）· macOS universal（`dmg,tar.gz`）· Linux x86_64 /
+arm64（`tar.gz,deb,rpm,appimage`）。**关掉某一格**用仓库变量（`HZIP_ARM64_RUNNER=off` 不做
+Linux arm64、`HZIP_WIN_ARM=off` 不做 Windows arm64）；被 `--skip` 的用例、以及各条与早期设计
+草稿的差异，逐条写在 workflow 注释与 [04 §6.1](../docs/design/04-编译与部署.md)。
+
+本地复现发版（CI 跑的同一对命令）：
+
+```bash
+cargo build --release --target <triple> -p hzip-cli -p hzip-gui
+python build/package/package.py --target <triple> --formats msi,zip --check-tag vX.Y.Z
+```
 
 ## 约定
 

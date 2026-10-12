@@ -1,0 +1,183 @@
+name: package
+
+# 可复用的打包工作流：release.yml（发版）与 ci.yml（package-smoke）**共用同一条
+# `build/package/package.py` 命令**，两处不会漂移（04 §6.1、T-PKG §2.1）。
+#
+# 「构建 + 打包」两段都用仓库里既有的命令：`cargo build --release --target <triple>
+# -p hzip-cli -p hzip-gui` 与 `python build/package/package.py …`。本地跑同样的两条
+# 就是发版预演（build/package/README.md）。
+#
+# 关掉某个矩阵格：把仓库变量设为 off（不需要它时别让它排队/发红）
+#   HZIP_ARM64_RUNNER=off   → 不做 Linux arm64（arm64 托管 runner 需账户支持该 label）
+#   HZIP_WIN_ARM=off        → 不做 Windows arm64（交叉编译，见 legs 表里该格注释）
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 检出的 git ref（tag / 分支 / SHA）；空 = 触发工作流的默认 ref
+        type: string
+        default: ""
+      version_tag:
+        description: 发版断言 vX.Y.Z（转成 package.py --check-tag）；空 = 不校验（PR 自检用）
+        type: string
+        default: ""
+      scope:
+        description: all = 全矩阵；smoke = 只跑 Linux/Windows 的 x86_64 格（PR 自检）
+        type: string
+        default: all
+      upload:
+        description: 是否上传产物 artifact（release 需要；smoke 不需要）
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # 矩阵**算出来**而不是写死在 strategy 里：job 级 `if` 拿不到 matrix 上下文
+  # （只能读 github/inputs/needs/vars），而「Linux arm64 的 runner label 账户里有没有」
+  # 「Windows arm64 交叉能不能编」这两件事必须在**调度前**决定——否则要么白排一次
+  # runner、要么让可选格把整条流水线拖红。故先算出 legs 列表，再交给 package 作业。
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        shell: bash
+        env:
+          SCOPE: ${{ inputs.scope }}
+          # 布尔表达式在这里先求值成字符串 true/false，脚本里只做字符串比较
+          # （避免把 vars 值直接插进 shell 里，将来值里有个引号就炸）。
+          ARM64_OFF: ${{ vars.HZIP_ARM64_RUNNER == 'off' }}
+          WINARM_OFF: ${{ vars.HZIP_WIN_ARM == 'off' }}
+        run: |
+          set -euo pipefail
+          # ---- 矩阵表（唯一来源；release 全量、PR smoke 取其中的 smoke:true 格）----
+          cat > legs.json <<'JSON'
+          [
+            {"label": "windows-x86_64",  "os": "windows-latest",   "targets": "x86_64-pc-windows-msvc",  "formats": "msi,zip",              "smoke": true,  "arm64": false, "winarm": false},
+            {"label": "windows-arm64",   "os": "windows-latest",   "targets": "aarch64-pc-windows-msvc", "formats": "msi,zip",              "smoke": false, "arm64": false, "winarm": true},
+            {"label": "macos-universal", "os": "macos-latest",     "targets": "x86_64-apple-darwin,aarch64-apple-darwin", "formats": "dmg,tar.gz", "smoke": false, "arm64": false, "winarm": false},
+            {"label": "linux-x86_64",    "os": "ubuntu-latest",    "targets": "x86_64-unknown-linux-gnu", "formats": "tar.gz,deb,rpm,appimage", "smoke": true,  "arm64": false, "winarm": false},
+            {"label": "linux-arm64",     "os": "ubuntu-24.04-arm", "targets": "aarch64-unknown-linux-gnu", "formats": "tar.gz,deb,rpm,appimage", "smoke": false, "arm64": true,  "winarm": false}
+          ]
+          JSON
+          python3 - "$SCOPE" "$ARM64_OFF" "$WINARM_OFF" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+
+          scope, arm64_off, winarm_off = sys.argv[1:4]
+          legs = json.load(open("legs.json"))
+          kept = [
+              l for l in legs
+              if (scope != "smoke" or l["smoke"])
+              and not (l["arm64"] and arm64_off == "true")
+              and not (l["winarm"] and winarm_off == "true")
+          ]
+          if not kept:
+              sys.exit("矩阵被关空了：检查 scope / HZIP_ARM64_RUNNER / HZIP_WIN_ARM")
+          # 单行 JSON（GITHUB_OUTPUT 的值必须单行）
+          print("matrix=" + json.dumps(kept, separators=(",", ":")))
+          PY
+          echo "--- 本次矩阵："
+          grep '^matrix=' "$GITHUB_OUTPUT"
+
+  package:
+    needs: plan
+    name: ${{ matrix.label }}
+    # matrix.os 上构建该架构：Linux/Windows 走 native（04 §4.3：win→任意 不支持交叉，
+    # Windows arm64 例外，见矩阵表注释），macOS universal 在 macos-latest 上双目标构建后 lipo。
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    env:
+      # 产物目录（04 §5：CI 用 dist-installers/；dist/ 是本地默认）
+      HZIP_OUT: dist-installers
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: ./.github/actions/rust-build-deps
+
+      # 工具链**不写死在 YAML 里**：rust-toolchain.toml 是唯一来源（1.95.0），
+      # 这里读它并顺带把交叉目标的 std 装上。rustup 代理认这个文件，故后续任何
+      # `cargo` 调用都走这条 channel（不必再挂 dtolnay/rust-toolchain）。
+      - name: 工具链（读 rust-toolchain.toml）+ 目标 std
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 先去 CR：本仓库这两个文件是 CRLF 文本，Windows runner 上 checkout 后仍带 \r，
+          # 直接塞给 rustup 会变成 "1.95.0\r"（实测本机复现）。
+          channel=$(tr -d '\r' < rust-toolchain.toml | sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p')
+          [ -n "$channel" ] || { echo "rust-toolchain.toml 里没找到 channel"; exit 1; }
+          targets=""
+          for t in $(echo "${{ matrix.targets }}" | tr ',' ' '); do targets="$targets --target $t"; done
+          rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy $targets
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.label }}
+
+      - name: 构建（cargo build --release）
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in $(echo "${{ matrix.targets }}" | tr ',' ' '); do
+            echo "== cargo build --release --target $t"
+            cargo build --release --target "$t" -p hzip-cli -p hzip-gui
+          done
+
+      # Windows：MSI 里的右键菜单载荷（hzip-shell.dll + 稀疏包 .msix），需 MSBuild +
+      # Windows SDK（镜像自带）。**失败不阻断**：驱动照常产出不含扩展的 MSI 并告警，
+      # 而不是让整条发布流水线因为一个可选件停摆。
+      - name: Windows 壳扩展载荷（可选）
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: ./build/shell-ext/build-shell-ext.ps1 -NoSign -Publisher "CN=hzip-dev"
+
+      # 载荷真产出了才要求它——否则 MSI 里静默少两个文件而没人知道。
+      - name: Windows 打包参数（有载荷就 --require-shell-ext）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path "shell/hzip-shell/target/shell-ext/hzip-shell.dll") {
+            "HZIP_SHELL_EXT=--require-shell-ext" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          } else {
+            "HZIP_SHELL_EXT=" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+            Write-Host "::warning::未产出 hzip-shell.dll——MSI 将不含右键菜单扩展（见上一一步骤日志）"
+          }
+
+      - name: 打包（build/package/package.py）
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ubuntu 镜像只有 python3；Windows 上是 python（build/package/README.md）
+          PY=python; command -v python >/dev/null 2>&1 || PY=python3
+          check=""
+          if [ -n "${{ inputs.version_tag }}" ]; then
+            check="--check-tag ${{ inputs.version_tag }}"
+          fi
+          "$PY" build/package/package.py \
+            --target "${{ matrix.targets }}" \
+            --formats "${{ matrix.formats }}" \
+            --out-dir "$HZIP_OUT" \
+            $check ${HZIP_SHELL_EXT:-}
+          echo "--- 产物："
+          ls -l "$HZIP_OUT"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.upload
+        with:
+          name: ${{ matrix.label }}
+          path: ${{ env.HZIP_OUT }}/
+          if-no-files-found: error
+          # 每格自带一份 sha256sums.txt；release job 汇总后会重算全量那份。
+          retention-days: 14

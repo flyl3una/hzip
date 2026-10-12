@@ -83,6 +83,17 @@ fn embed_windows_icon() {
 ///
 /// 落位目录从 `OUT_DIR` 反推（`target/<profile>/build/<pkg>-<hash>/out` →
 /// `target/<profile>`），因此 `CARGO_TARGET_DIR` 重定位也正确。
+///
+/// # 落位副本 ≠ 安装目录那份（同一台机器上两者会并存）
+///
+/// 安装包（MSI）把 `hzip-shell.dll` 装进**安装目录**（`filShellDll`），安装版的
+/// `hzip-gui.exe` 注册的就是那份——`validate_spec` 默认取 exe 同目录，只有
+/// `[ui].shell_ext_dll` 非空才改成它指向的路径。本函数落位的是**开发运行**那份，
+/// 于是开发机点过「应用到系统」后注册路径 = `target/<profile>`。
+///
+/// 两条注册后者覆盖前者，但资源管理器**一旦加载**某个副本就把映像锁住：
+/// 此后 `cargo clean` 会在 `target/<profile>\hzip-shell.dll` 上报「拒绝访问」
+/// （被锁的是开发副本，不是安装目录那份），且下一次落位会失败（见下方 warning）。
 fn stage_shell_ext() {
     const ARTIFACTS: [&str; 2] = ["hzip-shell.dll", "hzip-shellmenu.msix"];
     let manifest =
@@ -104,7 +115,23 @@ fn stage_shell_ext() {
         // 产物变化要触发重编译：否则复制的是上一版 DLL（右键菜单加载旧扩展）
         println!("cargo:rerun-if-changed={}", src.display());
         if src.is_file() {
-            let _ = std::fs::copy(&src, profile_dir.join(name));
+            let dst = profile_dir.join(name);
+            if let Err(e) = std::fs::copy(&src, &dst) {
+                // 复制失败**不得静默**。最常见成因：资源管理器已加载**这份落位副本**
+                // ——开发运行里点过「应用到系统」，注册的 COM 服务器路径就是
+                // `target/<profile>\hzip-shell.dll`；shell 用过一次即把映像锁住。
+                // 旧实现 `let _ = std::fs::copy(..)` 把它吞掉：exe 旁边留着上一版
+                // DLL、`cargo build` 一切正常（测试的东西 ≠ 被改的东西），同时
+                // `cargo clean` 报「拒绝访问」而无从解释。故至少要说出来 + 给出解法。
+                println!(
+                    "cargo:warning=shell 扩展落位失败（{} → {}）：{e}。\
+                     若为「另一个程序正在使用此文件」，多半是资源管理器已加载该 DLL：\
+                     结束并重启 explorer.exe（或注销重登）后重新构建；\
+                     或从容器的安装副本再点一次「应用到系统」，把注册指回安装目录（DLL 留旧版）。",
+                    src.display(),
+                    dst.display()
+                );
+            }
         }
     }
 }
@@ -175,10 +202,19 @@ fn derive_license() {
     // 用 `{:?}` 生成合法的 Rust 字符串字面量（自动转义）
     let rs = format!(
         "// 由 build.rs::derive_license 从仓库根 LICENSE 派生——勿手改（改 LICENSE 自动重生成）。\n\
+         // `#[allow(dead_code)]`：`NAME`/`VERSION`/`DATED` 的消费者是「派生一致性」测试\n\
+         // （`ui/dialogs/about.rs` 的 `mod tests`，cfg(test) 下才编译）。lib 目标本身\n\
+         // （不带 cfg(test)，集成测试与 `clippy --all-targets` 都会编它）用不到它们，\n\
+         // 少了这个 allow 就是 `-D warnings` 下 3 条 dead_code 硬错误。\n\
+         #[allow(dead_code)]\n\
          pub const SPDX: &str = {spdx:?};\n\
+         #[allow(dead_code)]\n\
          pub const NAME: &str = {name:?};\n\
+         #[allow(dead_code)]\n\
          pub const VERSION: &str = {version:?};\n\
+         #[allow(dead_code)]\n\
          pub const DATED: &str = {dated:?};\n\
+         #[allow(dead_code)]\n\
          pub const DISPLAY: &str = {display:?};\n"
     );
     std::fs::write(&out, rs).unwrap_or_else(|e| panic!("写 {} 失败：{e}", out.display()));

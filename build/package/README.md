@@ -73,7 +73,7 @@ Python ≥ 3.8（标准库即可，不需要 pip 包）。CI 上 `ubuntu-latest`
 * `metadata.toml` —— **打包元数据单一来源**：维护者、主页、SPDX、描述、deb/rpm 依赖、
   AppImage 工具与 runtime 的 URL+sha256、WiX 版本与 UpgradeCode。版本号**不在这里**
   （唯一来源是根 `Cargo.toml` 的 `[workspace.package].version`，02 §2.2）。
-  文件里的仓库地址与 maintainer 已换成真实值（`https://gitee.com/flyl3una/hzip` /
+  文件里的仓库地址与 maintainer 已换成真实值（`https://github.com/flyl3una/hzip` /
   `flyl3una <l3una@outlook.com>`）；驱动仍会扫描 `<org>`/`example.com`，用于拦截将来
   新引入的占位符。
   许可同为**单一事实源**：根 `LICENSE`（GPL-3.0 全文）+ 本文件 `[package] spdx`；
