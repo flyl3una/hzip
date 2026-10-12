@@ -56,6 +56,8 @@ META_FILE = PKG_DIR / "metadata.toml"
 
 # 程序图标逐尺寸源（04 §5.5）：Linux hicolor 目录与 macOS .iconset 都从这里取
 LOGO_SIZES = (16, 32, 48, 64, 128, 256)
+# lipo 的架构名与 rust triple 的架构名不完全同名（rust `aarch64` = lipo `arm64`）
+LIPO_ARCH = {"aarch64": "arm64"}
 # 组件 GUID 的固定命名空间——**永不修改**（改了等于换了组件身份，升级会留垃圾）
 GUID_NS = uuid.UUID("6f2b1d84-3c6a-4f57-9b1e-0d7c5a2e8f31")
 
@@ -563,6 +565,10 @@ def stage_bins(ctx: Ctx, targets: list[Target], dest: Path) -> tuple[Path, Path]
         merged = dest / f"{name}{exe}"
         if len(paths) > 1:
             run(["lipo", "-create", *[str(p) for p in paths], "-output", str(merged)])
+            # `lipo -create` 对「输入里没有的架构」是**静默忽略**：漏了 arm64 的包照样
+            # 是个合法 fat 文件，装到 M 系机器上才发现跑不了。故按目标逐个核验产物
+            # 真的含两个架构（universal 的验收口径，04 §4.2 / §5.3）。
+            run(["lipo", "-verify_arch", *[LIPO_ARCH.get(t.arch, t.arch) for t in targets], str(merged)])
         else:
             ctx.copy(paths[0], merged)
         merged.chmod(0o755)

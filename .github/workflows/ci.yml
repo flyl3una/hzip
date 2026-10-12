@@ -3,7 +3,7 @@ name: ci
 # PR/推送门禁（04 §6.1）。三件事：
 #   quality  格式 / clippy / 依赖许可审计 / 仓库级检查（build/checks）
 #   test     三平台（Windows / Linux / macOS）× 全 workspace 测试
-#   package-smoke  打包相关文件变动时，真跑一遍 Linux + Windows 打包（不发布）
+#   package-smoke  打包相关文件变动时，真跑一遍 Windows + macOS + Linux 打包（不发布）
 #
 # 发版流水线不在这里：打 tag vX.Y.Z 走 release.yml（它复用 package.yml 的同一套命令）。
 

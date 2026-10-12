@@ -15,6 +15,12 @@ use crate::context_menu::{
 /// 后端单例（[`crate::context_menu::backend`] 返回其 trait object）。
 static BACKEND: Linux = Linux;
 
+/// 本平台后端的 trait object 入口（`win`/`macos` 直接暴露 `BACKEND` 静态量；
+/// Linux 的后端要在**运行期**按探测到的桌面分派，故以函数形式给出同一个对象）。
+pub(crate) fn backend() -> &'static dyn ContextMenu {
+    &BACKEND
+}
+
 /// Linux 后端（按探测到的桌面分派）。
 pub(super) struct Linux;
 

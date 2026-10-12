@@ -9,7 +9,7 @@
 //! | `hidden` | `FILE_ATTRIBUTE_HIDDEN` | 名以 `.` 开头（约定，读取时判定，写入无操作） |
 //! | `system` | `FILE_ATTRIBUTE_SYSTEM` | 无（恒 false） |
 //! | `executable` | 无（按扩展名 .exe/.bat/.cmd 推断） | `mode & 0o111 != 0` |
-//! | `mtime` | FILETIME(100 ns) ↔ Unix ms（1601→1970 偏移 11644473600 s） | `st_mtim` / macOS `st_mtime`+`st_mtime_nsec` 纳秒；恢复 `utimensat` |
+//! | `mtime` | FILETIME(100 ns) ↔ Unix ms（1601→1970 偏移 11644473600 s） | std `MetadataExt::{mtime,mtime_nsec}` 纳秒；恢复 `utimensat` |
 
 use std::io;
 use std::path::Path;
@@ -241,33 +241,27 @@ mod win {
 mod unix_impl {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
 
     fn cstr(path: &Path) -> io::Result<std::ffi::CString> {
         std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "路径含 NUL"))
     }
 
-    fn stat_of(path: &Path) -> io::Result<libc::stat> {
-        let c = cstr(path)?;
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: CString 无内嵌 NUL；输出结构由内核填充。
-        let r = unsafe { libc::lstat(c.as_ptr(), &mut st) };
-        if r != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(st)
+    /// 读取属性用的元数据（`lstat` 语义，不跟随符号链接）。
+    ///
+    /// 为什么不直接摸 `libc::stat`：其时间字段名按 ABI 而异（macOS/Linux 是
+    /// `st_mtime` + `st_mtime_nsec`、BSD 是 `st_mtim`），取错字段**换个目标就编不过**
+    /// （CI Ubuntu 实测 E0609）；std 的 `MetadataExt` 是各 unix 目标的统一视图。
+    fn lmeta_of(path: &Path) -> io::Result<std::fs::Metadata> {
+        std::fs::symlink_metadata(path)
     }
 
     pub(super) fn read_meta_unix(path: &Path) -> io::Result<FileMeta> {
-        let st = stat_of(path)?;
-        let mode = st.st_mode;
+        let md = lmeta_of(path)?;
+        let mode = md.mode();
         let mtime = {
-            // macOS：libc 把 `struct stat` 的 `st_mtimespec` 暴露为
-            // `st_mtime` + `st_mtime_nsec`（同一存储，`_DARWIN_C_SOURCE` 视图差异）。
-            #[cfg(target_os = "macos")]
-            let (sec, nsec) = (st.st_mtime, st.st_mtime_nsec);
-            #[cfg(not(target_os = "macos"))]
-            let (sec, nsec) = (st.st_mtim.tv_sec, st.st_mtim.tv_nsec);
+            let (sec, nsec) = (md.mtime(), md.mtime_nsec());
             let dt = OffsetDateTime::from_unix_timestamp_nanos(
                 sec as i128 * 1_000_000_000 + nsec as i128,
             )
@@ -309,8 +303,7 @@ mod unix_impl {
     }
 
     pub(super) fn apply_meta_unix(path: &Path, meta: &FileMeta) -> io::Result<()> {
-        let st = stat_of(path)?;
-        let mut mode = st.st_mode;
+        let mut mode = lmeta_of(path)?.mode();
         if meta.read_only {
             mode &= !0o222;
         } else {

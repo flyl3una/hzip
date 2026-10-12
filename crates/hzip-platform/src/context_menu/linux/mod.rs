@@ -22,6 +22,12 @@ mod nautilus;
 mod script;
 mod thunar;
 
+// 非测试构建唯一的跨文件取用方：`crate::context_menu::backend()`（Linux 分支）。
+// 门控条件与那个调用点一致——`cross-check`（在非 Linux 主机上编译本模块）时
+// 没人取用它，留着会是 unused import。
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) use facade::backend;
+
 // 搬进 `facade` 的项在此再导出：当前唯一的跨文件取用方是 `tests/mod_rs.rs`
 // （`use super::*`），故只随测试编译存在——非测试构建里这些名字在 `linux`
 // 命名空间中没有使用者（`-D warnings` 会以 unused import 拦下）。

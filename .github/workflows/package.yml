@@ -23,7 +23,7 @@ on:
         type: string
         default: ""
       scope:
-        description: all = 全矩阵；smoke = 只跑 Linux/Windows 的 x86_64 格（PR 自检）
+        description: all = 全矩阵；smoke = 只跑 smoke:true 的格（Windows/Linux x86_64 + macOS universal，PR 自检）
         type: string
         default: all
       upload:
@@ -59,7 +59,7 @@ jobs:
           [
             {"label": "windows-x86_64",  "os": "windows-latest",   "targets": "x86_64-pc-windows-msvc",  "formats": "msi,zip",              "smoke": true,  "arm64": false, "winarm": false},
             {"label": "windows-arm64",   "os": "windows-latest",   "targets": "aarch64-pc-windows-msvc", "formats": "msi,zip",              "smoke": false, "arm64": false, "winarm": true},
-            {"label": "macos-universal", "os": "macos-latest",     "targets": "x86_64-apple-darwin,aarch64-apple-darwin", "formats": "dmg,tar.gz", "smoke": false, "arm64": false, "winarm": false},
+            {"label": "macos-universal", "os": "macos-latest",     "targets": "x86_64-apple-darwin,aarch64-apple-darwin", "formats": "dmg,tar.gz", "smoke": true,  "arm64": false, "winarm": false},
             {"label": "linux-x86_64",    "os": "ubuntu-latest",    "targets": "x86_64-unknown-linux-gnu", "formats": "tar.gz,deb,rpm,appimage", "smoke": true,  "arm64": false, "winarm": false},
             {"label": "linux-arm64",     "os": "ubuntu-24.04-arm", "targets": "aarch64-unknown-linux-gnu", "formats": "tar.gz,deb,rpm,appimage", "smoke": false, "arm64": true,  "winarm": false}
           ]
@@ -218,6 +218,27 @@ jobs:
             $check ${HZIP_SHELL_EXT:-}
           echo "--- 产物："
           ls -l "$HZIP_OUT"
+
+      # macOS 自证（build/package/README.md「验收锚点」2c）：打好的产物里，二进制
+      # 既要真是 x86_64 + arm64 双架构（驱动已用 `lipo -verify_arch` 断言，这里在
+      # **打好的 tar.gz** 上复核一遍），又要真能跑（不是个同名空壳）。
+      # 只跑 CLI：hzip-gui 起来就是一个窗口，无头 runner 上没法判定成功。
+      - name: macOS 产物自证（universal + CLI 可跑）
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          tar -xzf "$HZIP_OUT"/*.tar.gz -C "$tmp"
+          bin=$(find "$tmp" -type f -name hzip | head -1)
+          gui=$(find "$tmp" -type f -name hzip-gui | head -1)
+          if [ -z "$bin" ] || [ -z "$gui" ]; then
+            echo "tar.gz 里没有 hzip / hzip-gui：$(find "$tmp" -type f)"
+            exit 1
+          fi
+          lipo -verify_arch x86_64 arm64 "$bin"
+          lipo -verify_arch x86_64 arm64 "$gui"
+          "$bin" --version
 
       - uses: actions/upload-artifact@v4
         if: inputs.upload

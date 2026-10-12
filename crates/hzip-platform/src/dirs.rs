@@ -89,7 +89,7 @@ pub fn temp_root() -> PathBuf {
     {
         std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir)
             .join(crate::consts::TEMP_SESSION_DIR)
     }
 }
@@ -104,10 +104,10 @@ pub fn desktop_dir() -> Option<PathBuf> {
 /// Linux XDG state home（02 §5.3.10 自实现：`$XDG_STATE_HOME` 缺省 `~/.local/state`）。
 #[cfg(all(unix, not(target_os = "macos")))]
 fn xdg_state_home() -> PathBuf {
-    if let Some(v) = std::env::var_os("XDG_STATE_HOME") {
-        if !v.is_empty() {
-            return PathBuf::from(v);
-        }
+    if let Some(v) = std::env::var_os("XDG_STATE_HOME")
+        && !v.is_empty()
+    {
+        return PathBuf::from(v);
     }
     fallback_home().join(".local").join("state")
 }

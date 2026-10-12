@@ -342,8 +342,9 @@ pub fn open_with_program(target: &Path, program: &str) -> io::Result<()> {
 /// - **win**：`select=true` → `explorer.exe /select,"path"`；否则 `explorer.exe dir`。
 /// - **macOS**：`select=true` → `open -R path`；否则 `open 目录`（首层实现；
 ///   Finder 精确选中用 objc `NSWorkspace activateFileViewerSelectingURLs:` 为增强分支）。
-/// - **Linux**：优先 dbus `org.freedesktop.FileManager1` `ShowItems`（dbus-send/busctl
-///   探测调用），回退 `xdg-open 父目录`。
+/// - **Linux**：`select=true` 时优先 dbus `org.freedesktop.FileManager1` `ShowItems`
+///   （dbus-send/busctl 探测调用；该 API 语义就是「显示**并选中**」，故 `select=false`
+///   不用它），回退/兜底 `xdg-open 父目录`（目录则打开目录本身）。
 pub fn reveal_in_file_manager(path: &Path, select: bool) -> io::Result<()> {
     #[cfg(windows)]
     {
@@ -418,7 +419,9 @@ pub fn reveal_in_file_manager(path: &Path, select: bool) -> io::Result<()> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if reveal_via_dbus(path) {
+        // `ShowItems` 的语义是「显示**并选中**」——`select=false`（如「打开日志目录」）
+        // 不该选中条目，故只走 xdg-open 打开目录本身（与 win `explore` 同语义）。
+        if select && reveal_via_dbus(path) {
             return Ok(());
         }
         let parent = if path.is_dir() {

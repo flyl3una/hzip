@@ -193,10 +193,10 @@ fn boot_time_ms() -> u64 {
         Err(_) => return 0,
     };
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("btime ") {
-            if let Ok(secs) = rest.trim().parse::<u64>() {
-                return secs.saturating_mul(1000);
-            }
+        if let Some(rest) = line.strip_prefix("btime ")
+            && let Ok(secs) = rest.trim().parse::<u64>()
+        {
+            return secs.saturating_mul(1000);
         }
     }
     0
