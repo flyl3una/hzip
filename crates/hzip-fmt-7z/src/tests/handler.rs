@@ -3,12 +3,13 @@ use hzip_format::Signature;
 
 #[test]
 fn caps_decl() {
-    // T46 caps 升级（feature 全开时）：encryption=AesHeader、split=true（02 §7.2）；
-    // feature 裁剪时回落。断言按编译 feature 展开。
+    // 能力如实声明：encryption=AesHeader（`aes` feature 门控）、write=True；
+    // feature 裁剪时回落。
     //
-    // **solid 不在其中**（09 §15.7 超声明修正）：7z 固实块打包尚未接通，能力
-    // 如实声明为 false —— 与之配套的 `solid_request_is_rejected` 断言请求会被
-    // 显式拒绝（而非接受后静默忽略）。
+    // **solid / split 都不在其中**（超声明修正：09 §15.7 与 02 §7.2）：7z 固实块打包
+    // 与写侧分卷都尚未接通（`solid.rs`/`split.rs` 已编译但 writer 未接），能力必须
+    // 如实声明为 false —— 配套断言 `solid_request_is_rejected` / `split_request_is_rejected`
+    // 钉住「请求被显式拒绝，而非接受后静默忽略」。
     let mut want = FormatCaps {
         read: true,
         write: true,
@@ -27,11 +28,35 @@ fn caps_decl() {
         want.encryption = EncryptionCaps::AesHeader;
         want.write_encryption = &[EncryptionRequest::Aes(AesKey::Bits256)];
     }
-    #[cfg(feature = "split")]
-    {
-        want.split = true;
-    }
     assert_eq!(crate::handler::caps(), want);
+}
+
+/// 分卷请求**必须被显式拒绝**，不得接受后静默忽略（与 `solid_request_is_rejected` 同款）。
+///
+/// 守的是一个同类的「超声明」缺陷：`caps.split` 曾为 true（`split` feature 全开时）
+/// 而 writer 对 `Sink::Split` 直接 `Err Unsupported` ⇒ CLI/GUI 以为能分卷，一路走到
+/// 落盘才失败（CLI 实测 `hzip c -f 7z --split 100m` → HZ-5001）。现 caps 恒为 false，
+/// 这里再钉住 writer 侧的拒绝行为。
+#[test]
+fn split_request_is_rejected() {
+    let h = SevenZipFormatHandler::new();
+    let area = tempfile::TempDir::new().unwrap();
+    let err = h
+        .create_writer(
+            Sink::Split {
+                prefix: area.path().join("vol.7z"),
+                bytes_per_volume: 1024,
+            },
+            &CreateOptions::default(),
+        )
+        .err()
+        .expect("分卷请求应被拒绝（写侧分卷未接通，T46）");
+    // 断言文案而非错误码：`Unsupported`（HZ-5001）的 Display 只带 what 文本，不带码。
+    let msg = err.to_string();
+    assert!(
+        msg.contains("写入目标不支持") && msg.contains("Split"),
+        "拒绝原因应指向「分卷写入目标未接通」: {msg}"
+    );
 }
 
 /// 固实请求**必须被显式拒绝**，不得接受后静默忽略。

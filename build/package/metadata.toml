@@ -30,8 +30,8 @@ homepage        = "https://github.com/flyl3una/hzip"
 issues_url      = "https://github.com/flyl3una/hzip/issues"
 spdx            = "GPL-3.0-or-later"
 copyright       = "Copyright (c) hzip contributors"
-summary         = "Archive manager: zip/7z/tar/gz/bz2/xz/zst read-write, rar extract-only"
-summary_zh      = "归档压缩/解压工具：zip/7z/tar/gz/bz2/xz/zst 读写，rar 仅解压"
+summary         = "Archive manager: zip/7z/tar/gz/bz2/xz/zst read-write, rar/cpio extract-only"
+summary_zh      = "归档压缩/解压工具：zip/7z/tar/gz/bz2/xz/zst 读写，rar/cpio 仅解压"
 # .desktop Categories / AppStream <categories>
 categories      = ["Utility", "Archiving", "Compression"]
 # .desktop MimeType、.deb/.rpm 的关联注册、macOS CFBundleTypeExtensions
@@ -49,13 +49,13 @@ mime_types      = [
 # （tgz 也要列——macOS 按扩展名匹配；Linux 的关联走 mime_types）
 extensions      = ["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst"]
 description     = [
-  "hzip browses, creates and extracts archives from a native GUI or a scriptable CLI. It reads and writes zip, 7z, tar, gz, bz2, xz and zst, and extracts rar, iso and cab archives, with safety defaults for untrusted input.",
-  "Supported read-write: zip, 7z, tar, gz, bz2, xz, zst. Supported extract-only: rar, iso, cab.",
+  "hzip browses, creates and extracts archives from a native GUI or a scriptable CLI. It reads and writes zip, 7z, tar, gz, bz2, xz and zst, and extracts rar (incl. multi-volume/solid) and cpio archives, with safety defaults for untrusted input.",
+  "Supported read-write: zip, 7z, tar, gz, bz2, xz, zst. Extract-only: rar (multi-volume/solid), cpio.",
   "Safety defaults: path-traversal sanitising, zip-bomb ratio/entry limits, atomic writes.",
 ]
 description_zh  = [
   "hzip 用原生界面或可脚本化命令行浏览、创建、解压归档。",
-  "读写支持：zip、7z、tar、gz、bz2、xz、zst；仅解压：rar、iso、cab。",
+  "读写支持：zip、7z、tar、gz、bz2、xz、zst；仅解压：rar（含多卷/固实）、cpio。",
   "安全默认值：路径穿越净化、压缩炸弹比率/条目上限、原子写入。",
 ]
 

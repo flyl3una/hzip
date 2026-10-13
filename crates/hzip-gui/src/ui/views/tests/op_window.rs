@@ -521,8 +521,8 @@ fn param_face_follows_format(cx: &mut gpui_kit::TestAppContext) {
 
     assert_eq!(
         face("7z"),
-        (false, true, true, true, true, false, true),
-        "7z（加密区随写侧接通露出，设计稿 11）"
+        (false, true, true, true, false, false, true),
+        "7z：**分卷区不露出**——写侧分卷未接通（caps.split=false，T46），声称支持会让用户点到一个必然失败的控件；加密区随写侧接通露出（设计稿 11）"
     );
     assert_eq!(
         face("tar"),

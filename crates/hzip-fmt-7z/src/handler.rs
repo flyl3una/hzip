@@ -33,36 +33,44 @@ pub static SIGNATURE: Signature = Signature {
 
 /// 能力矩阵（02 §8.2 / T25 §1 逐字对照，见模块文档）。
 ///
-/// T46 caps 升级（feature 全开时，02 §7.2）：`split=true`、`solid=true`、
-/// `encryption=AesHeader`（头加密读写已交付）；feature 裁剪时逐项回落
-/// （`aes` 关 → `encryption=None` 等）。
+/// **能力如实声明**：`encryption=AesHeader`（头加密读写已交付，`aes` feature 门控）；
+/// `split` / `solid` **恒为 false**——两个 feature 仍门控各自模块的编译，但 writer
+/// 尚未接入（写侧分卷归 T46、固实块打包归 T46），能力不得先行声明（09 §15.7 / 02 §7.2）。
 pub(crate) fn caps() -> FormatCaps {
-    let mut c = FormatCaps {
+    // `cfg!` 而非 `#[cfg]` 块：本函数在**非默认 feature 组合**（如合规构建
+    // `--no-default-features --features default-formats`）下也要干净编译——
+    // `#[cfg]` + `let mut c` 的写法会在唯一可变点（aes）被裁掉时触发 `unused_mut`。
+    let aes = cfg!(feature = "aes");
+    // 两条「能力不得先行声明」的说明（与 `solid` 的 09 §15.7 超声明修正同款）：
+    // * `split` 恒为 false：`split` feature 仍门控 `split.rs`（`SplitSink`）的编译，
+    //   但 **writer 尚未接入**——`writer.rs` 对 `Sink::Split` 直接 `Err Unsupported`
+    //   （HZ-5001，写侧分卷归 T46）。声明成 true 会让调用方以为可用：CLI 实测
+    //   `hzip c -f 7z --split 100m` 一路走到 writer 才报错，GUI 也会在 7z 上显示一个
+    //   必然失败的「分卷」控件。接通后改回 `#[cfg(feature = "split")] { c.split = true; }`。
+    // * `solid` 恒为 false：`solid.rs` 已编译但 writer 未接固实块打包，配套断言
+    //   `solid_request_is_rejected` 守住「显式拒绝，而非接受后静默忽略」。
+    FormatCaps {
         read: true,
         write: true,
         append: false,
         edit: true,
-        encryption: EncryptionCaps::None,
+        // aes 关 → None（feature 回落口径，02 §7.2）
+        encryption: if aes {
+            EncryptionCaps::AesHeader
+        } else {
+            EncryptionCaps::None
+        },
         split: false,
         solid: false,
         comment: false,
         // 7z 唯一写侧编码器 = LZMA2（sevenz-rust 装配点见 writer.rs；多编码器为后续扩展）
         methods: &[hzip_codec::traits::CodecMethod::Lzma2],
-        write_encryption: &[],
-    };
-    #[cfg(feature = "aes")]
-    {
-        c.encryption = EncryptionCaps::AesHeader;
-        c.write_encryption = &[EncryptionRequest::Aes(AesKey::Bits256)];
+        write_encryption: if aes {
+            &[EncryptionRequest::Aes(AesKey::Bits256)]
+        } else {
+            &[]
+        },
     }
-    #[cfg(feature = "split")]
-    {
-        c.split = true;
-    }
-    // solid **恒为 false**（09 §15.7 超声明修正）：`solid` feature 仍门控
-    // `solid.rs` 模块的编译，但 writer 尚未接入固实块打包——能力不得先行声明。
-    // 接通后（`push_archive_entries`）再把本行改回 `#[cfg(feature = "solid")]`。
-    c
 }
 
 /// 7z handler（`Send + Sync`，无内部状态）。

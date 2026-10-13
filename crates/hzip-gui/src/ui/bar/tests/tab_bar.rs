@@ -115,3 +115,58 @@ fn switching_active_tab_keeps_strip_geometry(cx: &mut gpui_kit::TestAppContext) 
     }
     drop(host);
 }
+
+/// 悬停时**文字颜色必须与常态不同**，且取的是与悬停底色成对的 token
+/// （`accent_foreground`——与 kit `ButtonVariant::Ghost` 同源，工具栏/菜单项
+/// 也正是这么配的）。
+///
+/// 为什么值得锁（2026-10-13 用户报障）：页签悬停原先写
+/// `.hover(|s| s.bg(hover_bg).text_color(tab_active_foreground))`，而
+/// **`tab_foreground` 与 `tab_active_foreground` 在深浅两套主题下都是同一个颜色**
+/// （实测：浅色 l≈0.12 / 深色 l≈0.91）⇒ 那句 `text_color` 实际是**空操作**：
+/// 底色变了、文字一字不变。用户把 `[ui].theme_color` 设成饱和色（#16A34A）后，
+/// 悬停底色成了饱和绿、文字仍是深色 ⇒「鼠标移上去还是深字，看不清」；
+/// 而菜单栏/工具栏悬停文字看着正常，差别正在这里——它们走 Ghost 的成对 token。
+///
+/// 四条组合（浅/深 × 默认/自定义主题色）都断言，是因为两类 token 的关系在两套
+/// 主题下正好相反：浅色下常态文字深、`accent_foreground` 是白；深色下常态文字
+/// 浅、`accent_foreground` 是深。只测一套会漏掉另一半（该 bug 在浅色下最先暴露，
+/// 但同一句空操作在深色下同样存在）。
+#[gpui_kit::test]
+fn hover_foreground_is_paired_and_differs_from_idle(cx: &mut gpui_kit::TestAppContext) {
+    use crate::ui::theme::{ThemeModeChoice, apply_theme_cfg};
+    use gpui_kit::component::ActiveTheme as _;
+    cx.update(|cx: &mut gpui_kit::App| {
+        gpui_kit::component::init(cx);
+        for (mode, color) in [
+            (ThemeModeChoice::Light, ""),
+            (ThemeModeChoice::Light, "#16A34A"), // 用户实机主题色
+            (ThemeModeChoice::Dark, ""),
+            (ThemeModeChoice::Dark, "#16A34A"),
+        ] {
+            let mut cfg = hzip_config::Config::defaults();
+            cfg.ui.theme_color = color.to_string();
+            apply_theme_cfg(mode, &cfg, cx);
+            let theme = cx.theme();
+            let (idle_fg, active_fg, accent_fg) = (
+                theme.tab_foreground,
+                theme.tab_active_foreground,
+                theme.accent_foreground,
+            );
+            let (_, hover_fg) = hover_style(cx);
+            assert_eq!(
+                hover_fg, accent_fg,
+                "{mode:?} color={color:?}：悬停前景必须取 `accent_foreground`（与悬停底色 \
+                 `tokens.accent` 成对 = kit Ghost 按钮同款，工具栏/菜单项也这么配）"
+            );
+            assert_ne!(
+                hover_fg, idle_fg,
+                "{mode:?} color={color:?}：悬停前景不得等于常态前景（写成一个空操作正是本 bug）"
+            );
+            assert_ne!(
+                hover_fg, active_fg,
+                "{mode:?} color={color:?}：悬停前景不得等于「活动页签」前景（同上，空操作）"
+            );
+        }
+    });
+}

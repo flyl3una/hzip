@@ -31,8 +31,17 @@
 //!   Large `h_8/px_3`）+ 同一个 `component_size()` ⇒ 页签与按钮逐像素等高；
 //!   字号同 `button_text_size(size)`。
 //! - **悬停浅底**：跟 `ButtonVariant::Ghost` 的悬停口径同源——0.7.1 起是主题 token
-//!   `tokens.accent`（暗色再压 0.5 透明度，见 [`hover_surface`]）
-//!   ⇒ 与工具按钮的悬停底色同源，不会「按钮一种灰、页签另一种灰」。
+//!   `tokens.accent`（暗色再压 0.5 透明度，见 [`hover_surface`]），**前景同源取
+//!   `accent_foreground`**（Ghost 的悬停前景就是它：kit `button.rs` 的
+//!   `Self::Ghost => cx.theme().accent_foreground`）⇒ 与工具按钮的悬停底色+文字
+//!   完全同款，不会「按钮一种灰、页签另一种灰」，也不会出现下一条那种事故。
+//! - **2026-10-13 修：悬停文字曾经是空操作**。原实现
+//!   `.hover(|s| s.bg(hover).text_color(tab_active_foreground))`——而
+//!   `tab_foreground` 与 `tab_active_foreground` 在深浅两套主题下**是同一个颜色**
+//!   ⇒ 底色变了、文字一字不变；用户把 `[ui].theme_color` 设成饱和色（#16A34A）后
+//!   就是「鼠标移上去仍是深字、看不清」（菜单栏/工具栏悬停正常，因为它们是成对 token）。
+//!   现取 [`hover_style`] 的（底色, 前景）成对值，并由 `tests/tab_bar.rs` 的
+//!   `hover_foreground_is_paired_and_differs_from_idle` 按四种主题组合钉住。
 //! - **没有自己的边框**：一个边框都不画，整行唯一那条线是工具栏自己的 `border_b_1`；
 //!   聚焦项 = 底部 2px `theme().primary` 下划线，用**绝对定位**画（不占内容盒 ⇒
 //!   出现/消失都不会让文字上下跳 1px，也不会撑高这一栏）。
@@ -127,6 +136,15 @@ fn hover_surface(cx: &App) -> Hsla {
     }
 }
 
+/// 页签悬停的「底色 + 前景」**成对**返回（渲染与测试共用同一份取值）。
+///
+/// 抽出来是为了让测试能按**真实主题**求值并算对比度（`tests/tab_bar.rs` 的
+/// `hover_pair_keeps_text_readable`）——若渲染路径自己再拼一次，测试就会变成
+/// 「测另一次实现」。
+pub(crate) fn hover_style(cx: &App) -> (Hsla, Hsla) {
+    (hover_surface(cx), cx.theme().accent_foreground)
+}
+
 /// 关闭钮（页签内右侧槽位；点它只关页签，别顺带触发切页签）。
 fn close_button(tab: MainTab, on_close: TabClose) -> Button {
     Button::new(close_id(tab))
@@ -163,7 +181,7 @@ pub fn tab_row(
     let total = tabs.len();
     let idle_fg = cx.theme().tab_foreground;
     let active_fg = cx.theme().tab_active_foreground;
-    let hover_bg = hover_surface(cx);
+    let (hover_bg, hover_fg) = hover_style(cx);
     let underline = cx.theme().primary;
     // 圆角走**全局主题**（用户口径 2026-09-23）：`gpui-base` 的 `Tabs`/`Tab` 是
     // 无样式原语，自己不画圆角——悬停底色与聚焦下划线要跟 `theme.radius` 走，必须
@@ -202,11 +220,13 @@ pub fn tab_row(
                 .whitespace_nowrap()
                 .button_text_size(size)
                 .text_color(if selected { active_fg } else { idle_fg })
-                // 悬停：浅底 + 文字转「活动态」前景色（与工具按钮的悬停观感一致）；
+                // 悬停：浅底（`tokens.accent`，同 Ghost 按钮）+ 文字转**成对**前景
+                // `accent_foreground`（同 Ghost 按钮）——两者必须成组换，否则自定义
+                // 主题色下会出现「深字 + 饱和底」（见上方 `hover_fg` 注释）。
                 // 底色圆角跟主题（工具按钮的悬停底色也是这个弧度——kit `Button`
                 // 取 `theme.radius`）。
                 .rounded(radius)
-                .hover(move |this| this.bg(hover_bg).text_color(active_fg))
+                .hover(move |this| this.bg(hover_bg).text_color(hover_fg))
                 .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| on_click(tab, cx))
                 .child(label);
             let item = content_gap(item);
