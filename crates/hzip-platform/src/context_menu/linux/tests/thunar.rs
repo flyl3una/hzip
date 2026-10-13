@@ -40,8 +40,21 @@ fn merge_preserves_user_actions_verbatim() {
     assert!(merged.contains("exo-open --launch TerminalEmulator %f"));
     assert!(merged.contains("<unique-id>hzip-extract_here</unique-id>"));
     assert!(merged.contains("<unique-id>hzip-add_zip</unique-id>"));
-    // 用户块原文（含缩进）不应被重排
-    assert!(merged.contains("  <action>\n    <icon>utilities-terminal</icon>"));
+    // 用户块**逐字**保留（含缩进原貌）。比对的就是模板里的原文——`merge` 只做
+    // 「在 </actions> 前插入」，从不重排用户缩进（thunar.rs:104 的注释即此契约，
+    // 隔壁 `install_then_uninstall_roundtrips_to_original_user_content` 也依赖它）。
+    //
+    // 这里原先写的是 `"  <action>\n    <icon>utilities-terminal</icon>"`——那要求
+    // merge 把用户块**重新缩进**成 4 空格，与模板（`<icon>` 在列 0）和上面那条契约
+    // 都对不上。本模块是 `#[cfg(target_os = "linux")]`，开发机（Windows）根本不编译它，
+    // 于是这条错断言一路带到 Linux CI 才红（2026-10-13 在 WSL 上复现：98 passed / 1 failed）。
+    let user_block = USER_TEMPLATE
+        .trim_start_matches("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<actions>\n")
+        .trim_end_matches("</actions>\n");
+    assert!(
+        merged.contains(user_block),
+        "用户块必须逐字保留（含缩进原貌）\n期望包含:\n{user_block}\n实际:\n{merged}"
+    );
 }
 
 #[test]

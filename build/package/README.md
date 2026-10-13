@@ -164,6 +164,7 @@ spec），模板里只留 `{{RPM_RECOMMENDS}}`。
 # 2b) 许可：每个产物都含根 LICENSE 全文——deb/rpm/AppImage: usr/share/doc/hzip/LICENSE；
 #     tar.gz/zip: 包根 LICENSE；dmg: hzip.app/Contents/Resources/LICENSE；msi: 安装目录 LICENSE
 # 2c) macOS：universal 双架构由驱动内建自证（对 lipo 后的 hzip / hzip-gui 跑
-#     `lipo -verify_arch x86_64 arm64`）；dmg 内为 hzip.app + Applications 软链 + README.txt
+#     `lipo -archs` 核对架构集合——**不要**用 `-verify_arch <arch…> <file>`，那是
+#     Xcode 26 会拒绝的参数顺序）；dmg 内为 hzip.app + Applications 软链 + README.txt
 # 3) 全平台：dist/sha256sums.txt 覆盖每个产物（04 §5.4）
 ```

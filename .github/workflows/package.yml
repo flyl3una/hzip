@@ -220,9 +220,15 @@ jobs:
           ls -l "$HZIP_OUT"
 
       # macOS 自证（build/package/README.md「验收锚点」2c）：打好的产物里，二进制
-      # 既要真是 x86_64 + arm64 双架构（驱动已用 `lipo -verify_arch` 断言，这里在
-      # **打好的 tar.gz** 上复核一遍），又要真能跑（不是个同名空壳）。
+      # 既要真是 x86_64 + arm64 双架构（驱动内部已断言一次，这里在**打好的 tar.gz**
+      # 上再复核一遍），又要真能跑（不是个同名空壳）。
       # 只跑 CLI：hzip-gui 起来就是一个窗口，无头 runner 上没法判定成功。
+      #
+      # ⚠ 架构核验**必须**用 `lipo -archs`（信息命令）而不是 `lipo -verify_arch`：
+      #   `-verify_arch` 吃的是**变长架构列表**，写成 `lipo -verify_arch x86_64 arm64 <file>`
+      #   会被当成三个架构名 → Xcode 26 直接报
+      #   `unknown architecture specification flag: <file>`（2026-10-13 CI 实测，本步骤红在这里）。
+      #   两种参数顺序都试，避免绑死某个 Xcode 的解析习惯（与 package.py::_lipo_archs 同款写法）。
       - name: macOS 产物自证（universal + CLI 可跑）
         if: runner.os == 'macOS'
         shell: bash
@@ -236,8 +242,16 @@ jobs:
             echo "tar.gz 里没有 hzip / hzip-gui：$(find "$tmp" -type f)"
             exit 1
           fi
-          lipo -verify_arch x86_64 arm64 "$bin"
-          lipo -verify_arch x86_64 arm64 "$gui"
+          for f in "$bin" "$gui"; do
+            arches=$(lipo -archs "$f" 2>/dev/null || lipo "$f" -archs)
+            for want in x86_64 arm64; do
+              case " $arches " in
+                *" $want "*) ;;
+                *) echo "::error::$f 缺架构 $want（实得：$arches）"; exit 1 ;;
+              esac
+            done
+            echo "$(basename "$f") 架构：$arches"
+          done
           "$bin" --version
 
       - uses: actions/upload-artifact@v4
