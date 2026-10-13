@@ -4,44 +4,77 @@
 //! （open_reader → entries → 预检 → smart → 净化 → 流拷贝 → QuotaGuard
 //! checkpoint），验证配额在真实流式解压中触发、已写文件清理、正当样本不误伤。
 //!
-//! 样本（tests-assets/malicious，T02 产物）与管道语义：
+//! 样本与管道语义（**样本在测试内自造**：`tests-assets/` 是独立生成器的产物
+//! 且不入库，干净克隆里不存在 ⇒ 用例自己构造等价档案，见 `build_ratio_bomb` /
+//! `build_total_bomb`）：
 //! - `ratio_bomb.zip`：512 KiB 全零 deflate，ratio ≈ 817 > 200 → 4503
 //!   （单层解压即触发——TC-SEC-005 等价真实半场）；
-//! - `total_bomb.zip`：zip-of-zip 自相似（d=11, f=10）。**hzip 管道不递归解压
-//!   嵌套档案**（与 7-Zip 一致——外层条目以普通文件落盘），故 4.2 PB 总量在
-//!   单层解压不可达；以「降低 QuotaLimits 对照断言」驱动（任务卡 §6.3 注：
-//!   自构造等价样本 + 人为调低限额的对照语义）——外层 10×34KB 条目累计越过
-//!   低 max_total 触发 4502（管道级总量检查点语义验证）；
+//! - `total_bomb.zip`：10 × 34 KiB 词典文本（单条目 ratio ≈ 4、外层总量 ≈ 340 KiB；
+//!   hzip 管道不递归解压嵌套档案（与 7-Zip 一致——外层条目以普通文件落盘），故
+//!   原「zip-of-zip 自相似 4.2 PB 总量」在单层解压不可达 ⇒ 以「自造等价样本 +
+//!   人为调低 max_total 的对照断言」驱动：外层 10×34KB 累计越过低 max_total
+//!   触发 4502（管道级总量检查点语义验证）；
 //! - `legit` 自构造随机词典文本 zip（ratio ≈ 4 < 200）→ **不误伤** Done +
 //!   字节一致（sha256 等价断言）。
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod common;
 
+use std::io::Write as _;
 use std::path::Path;
 
 use hzip_core::jobs::JobSpec;
 use hzip_core::services::extract::ExtractOptions;
-use hzip_format::{ConflictPolicy, FormatHandler, QuotaLimits};
+use hzip_format::{ConflictPolicy, EntryMeta, FormatHandler, PasswordRef, QuotaLimits, Sink};
 use hzip_progress::Outcome;
 use tempfile::TempDir;
 
 use common::engine;
 
-/// 定位恶意样本：从 manifest dir 逐级向上找仓库根（cargo test cwd = crate 目录）。
-fn malicious(name: &str) -> std::path::PathBuf {
-    let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let cand = dir.join("tests-assets/malicious").join(name);
-        if cand.exists() {
-            return cand;
-        }
-        match dir.parent() {
-            Some(parent) if parent != dir => dir = parent.to_path_buf(),
-            _ => break,
-        }
+/// 在测试内构造 `ratio_bomb` 等价样本：单条目 512 KiB 全零 + deflate（ratio ≫ 200）。
+///
+/// # 为什么自造（2026-10-13）
+///
+/// 样本原先是 `tests-assets/malicious/ratio_bomb.zip`（T02 生成器产物），而
+/// `tests-assets/` **不入库**（`.gitignore`）⇒ 干净克隆里必然缺失：CI 只能靠
+/// `--skip` 遮住，而 README 里那条 `cargo test --workspace` 会直接红。
+/// 自造等价样本（参数与样本族语义一致）后，这两条用例在任何环境都能跑，
+/// `--skip` 随之删除。
+fn build_ratio_bomb(path: &Path) {
+    let h = hzip_fmt_zip::ZipFormatHandler::new();
+    let mut w = h
+        .create_writer(Sink::File(path.to_path_buf()), &Default::default())
+        .unwrap();
+    let meta = EntryMeta {
+        name: "zeros.bin".into(),
+        size_raw: Some(512 * 1024),
+        ..Default::default()
+    };
+    let mut s = w.next_entry(&meta, PasswordRef::none()).unwrap();
+    s.write_all(&vec![0u8; 512 * 1024]).unwrap();
+    s.finish().unwrap();
+    w.finish().unwrap();
+}
+
+/// 在测试内构造 `total_bomb` 等价样本：`entries × entry_bytes` 的词典文本
+/// （单条目 ratio ≈ 4、外层总量 ≈ 340 KiB——配合调低的 `max_total_bytes` 驱动 4502）。
+fn build_total_bomb(path: &Path, entries: usize, entry_bytes: usize) {
+    let h = hzip_fmt_zip::ZipFormatHandler::new();
+    let mut w = h
+        .create_writer(Sink::File(path.to_path_buf()), &Default::default())
+        .unwrap();
+    for i in 0..entries {
+        let data = random_dict_text(entry_bytes);
+        let meta = EntryMeta {
+            name: format!("part{i:02}.txt").into(),
+            size_raw: Some(data.len() as u64),
+            ..Default::default()
+        };
+        let mut s = w.next_entry(&meta, PasswordRef::none()).unwrap();
+        s.write_all(&data).unwrap();
+        s.finish().unwrap();
     }
-    panic!("样本缺失: tests-assets/malicious/{name}——需先 python tests-assets/malicious/build.py");
+    w.finish().unwrap();
 }
 
 /// 跑一次完整解压并返回 Outcome。
@@ -63,8 +96,9 @@ fn extract_to(source: &Path, dest: &Path, quota: QuotaLimits) -> Outcome {
 /// 半写文件清理（失败条目删除，dest 无残留）。
 #[test]
 fn sec_005_ratio_bomb_pipeline() {
-    let bomb = malicious("ratio_bomb.zip");
     let dir = TempDir::new().unwrap();
+    let bomb = dir.path().join("ratio_bomb.zip");
+    build_ratio_bomb(&bomb);
     let dest = dir.path().join("dest");
     std::fs::create_dir_all(&dest).unwrap();
     let r = extract_to(&bomb, &dest, QuotaLimits::default());
@@ -94,8 +128,9 @@ fn sec_005_ratio_bomb_pipeline() {
 /// 4501/4503 不误触发（外层 ratio ≈ 8.8 < 200、单条目 34KB < max_file）。
 #[test]
 fn sec_006_total_bomb_pipeline_low_quota() {
-    let bomb = malicious("total_bomb.zip");
     let dir = TempDir::new().unwrap();
+    let bomb = dir.path().join("total_bomb.zip");
+    build_total_bomb(&bomb, 10, 34 * 1024);
     let dest = dir.path().join("dest");
     std::fs::create_dir_all(&dest).unwrap();
     // 低总量限：外层 10 × ~34KB ≈ 340KB → 累计越 100KB 即 4502（对照语义）

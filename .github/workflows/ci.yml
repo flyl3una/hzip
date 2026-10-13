@@ -150,18 +150,19 @@ jobs:
       # （实测两次全量并行各挂 1 条、且挂的用例每次不同；串行 468/468 全过，
       #  反而更快：8s vs 20s）。故这里串行执行，不是「为了稳而变慢」。
       #
-      # 为什么 --skip 四条：**都是仓库已有记录的问题，不是 CI 想绕过的红灯**——
-      #   ① `sec_005_ratio_bomb_pipeline` / `sec_006_total_bomb_pipeline_low_quota`
-      #      读 `tests-assets/malicious/*.zip`；该目录是独立生成器的产物且被 .gitignore
-      #      排除（与 Cargo.toml 的 exclude 同源），干净克隆里必然 panic。
-      #      恢复：把生成器或样本入库，删掉这两个 --skip。
-      #   ② `rename_and_new_folder_commands_enter_inline_edit`：既有**文档化 flake**
+      # 为什么 --skip 两条：**都是仓库已有记录的 flake，不是 CI 想绕过的红灯**——
+      #   ① `rename_and_new_folder_commands_enter_inline_edit`：既有**文档化 flake**
       #      （docs/tasks/T-OPT/README.md §0/§6 项 16、T-KIT071 §7、T-BAR §7「双向偶发」）。
       #      本轮复测：隔离跑 8 次 **4 过 4 败**（每次都烧满 20 s 期限）——留在门禁里
       #      就是让 CI 有一半概率变红，毫无信号。修好（等任务终态而非轮询截断）后删除本行。
-      #   ③ `cancel_mid_extract_cleans_partial`：既有竞态 flake（取消 vs 完成的赛跑，
+      #   ② `cancel_mid_extract_cleans_partial`：既有竞态 flake（取消 vs 完成的赛跑，
       #      docs/tasks/T-STD/README.md §7.3 记录「隔离跑 5 次 4 过 1 败，未改」）。
-      # 这四条在本地手工跑（不带 --skip）仍可复现，改动相关代码时请单跑它们。
+      # 这两条在本地手工跑（不带 --skip）仍可复现，改动相关代码时请单跑它们。
+      #
+      # 注：`sec_005_ratio_bomb_pipeline` / `sec_006_total_bomb_pipeline_low_quota`
+      # 原先也在这份 --skip 名单里（样本在 `tests-assets/`，而那目录不入库）。
+      # 2026-10-13 起样本改为**测试内自造**（`malicious_extract.rs::build_*_bomb`），
+      # 两条用例在任何环境都能跑 ⇒ 已从名单删除。
       - name: cargo test（workspace，串行）
         shell: bash
         env:
@@ -174,8 +175,6 @@ jobs:
           # 日志界面翻不动、也不方便贴给别人时，可从 Artifacts 下 test-log-<os> 取全文。
           cargo test --workspace --no-fail-fast -- \
             --test-threads=1 \
-            --skip sec_005_ratio_bomb_pipeline \
-            --skip sec_006_total_bomb_pipeline_low_quota \
             --skip rename_and_new_folder_commands_enter_inline_edit \
             --skip cancel_mid_extract_cleans_partial 2>&1 | tee test.log
 

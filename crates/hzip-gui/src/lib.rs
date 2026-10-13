@@ -83,3 +83,27 @@ pub mod ui;
 // 含 `#[ignore]` 占位）；各业务文件的单元测试在同目录 `tests/` 子目录下。
 #[cfg(test)]
 mod tests;
+
+// 界面锚点用例只能在 **debug** 构建下跑，release 下直接编译失败把原因说清楚。
+//
+// # 事实链（2026-10-13 实测）
+//
+// - 本 crate 的界面用例一律靠 `VisualTestContext::debug_bounds("锚点名")` 取
+//   元素边界（`debug_selector` 注册的 `FxHashMap`，见 gpui-pre `window.rs`）；
+// - 而 gpui-pre 的 `Div::debug_selector` 是
+//   `#[cfg(any(test, all(debug_assertions, feature = "test-support")))]`——
+//   **release 里有意实现为 no-op**（其注释原文：selectors are only recorded in
+//   debug builds… 以免每帧记边界的运行时开销 ⇒ `test-support` 可以留在 release 依赖图里）;
+//   注意 `cfg(test)` 对**依赖 crate** 恒为 false，所以起作用的是 `debug_assertions`。
+// - ⇒ `cargo test --release -p hzip-gui` 下 `debug_bounds` 恒为 `None`：
+//   实测 55 条用例整片报「锚点缺失/…未绘制」，而那与产品代码无关。
+//
+// 与其让人对着几十条假红灯找根因（找上来的概率不低：release 档测试是常见诉求），
+// 不如在编译期一句话说清「这个组合不支持、为什么、怎么办」。想看 release 档行为就
+// `cargo build --release` 后手工跑 GUI；release 档下要跑的非界面用例用 `-p <crate>`。
+#[cfg(all(test, not(debug_assertions)))]
+compile_error!(
+    "hzip-gui 的界面锚点用例需要 debug 构建：gpui-pre 在 release 下把 debug_selector 变成 no-op，\
+     debug_bounds 恒为 None（55 条用例会整片报“锚点缺失”）。请用 `cargo test -p hzip-gui`（去掉 --release）；\
+     其它 crate 的 release 档测试请用 `cargo test --release -p <crate>`。"
+);

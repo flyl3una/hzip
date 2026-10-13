@@ -482,7 +482,7 @@
 | 现象 | 根因 | 建议 |
 |---|---|---|
 | `hzip-cli::e2e::tc_cli_009_password_channels`、`hzip-fmt-zip::zipcrypto::zipcrypto_correct_password` 断言「明文不一致」 | 期望值文件是**文本夹具**，仓库内为 LF（blob 2720 B），而工作区因 `core.autocrlf=true` 且无 `.gitattributes` 被检出为 CRLF（2760 B，+40 个 CR）；解出的档案内容是 LF → 逐字节比较必然不等 | 加 `.gitattributes` 把夹具目录标为 `-text`（如 `crates/*/tests/fixtures/** -text`、`*.bin -text`），并 `git add --renormalize` 后重新检出。**夹具必须逐字节稳定**，行尾转换会破坏「档案内字节 == 期望字节」这类断言 |
-| `hzip-core::malicious_extract::{sec_005,sec_006}` panic「样本缺失」 | `tests-assets/` 被 `.gitignore` 忽略，样本需 `python tests-assets/malicious/build.py` 生成 | 在测试前置说明/CI 步骤里补生成命令（现有 panic 文案已写明） |
+| ~~`hzip-core::malicious_extract::{sec_005,sec_006}` panic「样本缺失」~~ | `tests-assets/` 被 `.gitignore` 忽略，样本需 `python tests-assets/malicious/build.py` 生成 | **已修（2026-10-13）**：两条用例改为**在测试内自造等价样本**（`build_ratio_bomb`/`build_total_bomb`），不再依赖 `tests-assets/`；CI 里对应的 `--skip` 已删除 |
 | `hzip-platform --lib` 5 个 assoc/context_menu 用例 | 写 `HKCU\Software\Classes` 被拒（os error 5）——注册表权限受限环境 | 环境相关；CI 需可写 HKCU 或跳过 |
 
 本次交付的验证口径：**排除上述 4 项**（均与改动无关）后，`cargo test --workspace` 64 个测试结果行全绿、0 失败；`cargo clippy --workspace --all-targets` 无警告。
