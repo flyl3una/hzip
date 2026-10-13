@@ -236,7 +236,14 @@ flowchart TD
 > 行高/左右内边距/字号走**与工具按钮同一套映射**（`button.rs`：XSmall `h_5/px_1`、
 > Small `h_6/px_2`、Medium `h_8/px_2p5`、Large `h_8/px_3` + `button_text_size`）
 > ⇒ 两边逐像素同高；悬停底色直接抄 `ButtonVariant::Ghost` 的悬停口径
-> （`secondary` 提亮/压暗 0.1 再压 0.8 透明度）⇒ 与按钮同源；边框一个不画，整行唯一
+> （0.7.1 起 = 主题 token `tokens.accent`，暗色再压 0.5 透明度）⇒ 与按钮同源；
+> **悬停前景也必须同源取 `accent_foreground`**（Ghost 的悬停前景就是它）——
+> 2026-10-13 用户报障：原先写的是 `tab_active_foreground`，而它与 `tab_foreground`
+> 在深浅两套主题下**是同一个颜色** ⇒ 那句 `.hover(text_color(..))` 是**空操作**，
+> 用户把 `[ui].theme_color` 设成饱和色（#16A34A）后就成了「悬停底色变绿、文字仍深、
+> 看不清」（菜单栏/工具栏悬停正常，正因为它们用成对 token）；回归断言
+> `tab_bar::tests::hover_foreground_is_paired_and_differs_from_idle`（浅/深 × 默认/自定义
+> 四组合）。边框一个不画，整行唯一
 > 的线是工具栏自己的 `border_b_1`，聚焦项 = 底部 2px `theme().primary` 下划线用
 > **绝对定位**画（不占内容盒 ⇒ 出现/消失不让文字跳 1px、也不把这一栏顶高）。
 > **页签圆角也跟着主题**（2026-09-23 用户实测补充）：`gpui-base` 的 `Tabs`/`Tab`

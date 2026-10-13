@@ -443,7 +443,32 @@ fn rename_replace(tmp: &Path, dst: &Path) -> io::Result<()> {
 /// `.` / `..` 不出现（read_dir 语义保证）。
 pub fn remove_all_no_follow(root: &Path) -> io::Result<()> {
     let md = std::fs::symlink_metadata(root)?;
-    if md.file_type().is_symlink() || md.is_file() {
+    let ft = md.file_type();
+    // 链接自身：**按「链接指向目录还是文件」选删除 API**。
+    //
+    // Windows 的目录链接（目录符号链接 / 联接点）是「**目录**属性 + reparse 点」的对象
+    // ⇒ `fs::remove_file`（DeleteFileW）删它得到 **ERROR_ACCESS_DENIED(5)**，必须用
+    // `fs::remove_dir`（RemoveDirectoryW）。2026-10-13 CI 实测踩到：管理员身份的 runner
+    // 能建目录符号链接，这条路径必然走到；开发机未开开发者模式时用例走的是
+    // 「创建被拒 → 跳过」分支，所以一直没暴露（回归用例改用**目录联接点**，普通用户可建）。
+    //
+    // 判定不能靠 `md.file_type().is_dir()`——std 对 **reparse 点恒返回 false**（与 unix
+    // `lstat` 语义对齐，实测联接点 is_symlink=true / is_dir=false / is_file=false），
+    // 只能看原始属性位。unix 侧链接恒为链接对象 ⇒ 直接 `remove_file` ✓。
+    // 两者都只删链接本身、不动目标（目标存不存在都不影响）。
+    if ft.is_symlink() {
+        #[cfg(windows)]
+        {
+            /// `FILE_ATTRIBUTE_DIRECTORY`（winnt.h）：目录链接的自身属性里有这一位。
+            const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+            use std::os::windows::fs::MetadataExt as _;
+            if md.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                return std::fs::remove_dir(root);
+            }
+        }
+        return std::fs::remove_file(root);
+    }
+    if ft.is_file() {
         return std::fs::remove_file(root);
     }
     if md.is_dir() {

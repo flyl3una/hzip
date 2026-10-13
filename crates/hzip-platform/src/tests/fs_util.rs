@@ -85,3 +85,53 @@ fn remove_no_follow() {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// `remove_all_no_follow` 删**目录链接**（Windows 目录符号链接/联接点、unix 符号链接）
+/// 必须成功，且不碰链接目标。
+///
+/// 为什么单列一条（2026-10-13 CI 实测失败）：目录链接在 Windows 是「**目录**属性 +
+/// reparse 点」的对象，用 `fs::remove_file`（DeleteFileW）删它 ⇒ **ERROR_ACCESS_DENIED(5)**，
+/// 必须走 `fs::remove_dir`（RemoveDirectoryW）。上一条 `remove_no_follow` 在**没有符号链接
+/// 特权**的机器上会走「创建被拒 → 跳过」分支，于是这条路径在开发机（未开开发者模式、
+/// 非管理员）从未被执行，只在**管理员身份的 CI runner** 上暴露；本用例改用 **目录联接点**
+/// （`mklink /J`，普通用户即可创建，且同为 DIRECTORY+REPARSE_POINT）⇒ 任何 Windows
+/// 开发机都能挡住这个回归。unix 侧走 `symlink`（链接恒为链接对象，`remove_file` 正确）。
+#[test]
+fn remove_all_no_follow_removes_directory_link() {
+    let dir = crate::testutil::temp_dir("fs-util-rmnf-dirlink");
+    let root = dir.join("root");
+    let outside = dir.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), b"keep").unwrap();
+
+    let link = root.join("dirlink");
+    #[cfg(windows)]
+    {
+        // 分开传参（不要自己拼引号：cmd 会把整串再解析一遍，路径带引号反而报语法错）
+        let out = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .expect("cmd 应可执行");
+        assert!(
+            out.status.success() && link.exists(),
+            "建立目录联接点失败（普通用户即可建 /J）：{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+    // 修前这里就是 CI 上的 `Access is denied. (os error 5)`
+    remove_all_no_follow(&root).unwrap();
+    assert!(!root.exists(), "整棵 root 应被删除（含目录链接本身）");
+    assert_eq!(
+        std::fs::read(outside.join("keep.txt")).unwrap(),
+        b"keep",
+        "链接目标（外部目录）不得被删"
+    );
+}
