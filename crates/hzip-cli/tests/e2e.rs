@@ -385,6 +385,15 @@ fn tc_cli_008_stdin_stream() {
 fn tc_cli_009_password_channels() {
     // 加密 zip 样本（hzip-fmt-zip fixtures 内置黄金档；密码 hzip-pw-test）
     let crypto = include_bytes!("../../hzip-fmt-zip/tests/fixtures/zipcrypto-7z.zip");
+    let plain = include_bytes!("../../hzip-fmt-zip/tests/fixtures/zipcrypto-7z.plain.txt");
+    // 样本被 EOL 转换（CRLF）时，下面那条「正确密码解出明文」会以字节数组差失败，
+    // 看起来像解密错了——先自检一句话说清（同因的兄弟自检：
+    // `hzip-fmt-zip/tests/zipcrypto.rs::fixture_is_delivered_verbatim`）。
+    assert!(
+        !plain.contains(&b'\r'),
+        "样本 zipcrypto-7z.plain.txt 被 EOL 转换成了 CRLF（档案里存的是 LF）——\
+         检查 .gitattributes 是否覆盖 `crates/*/tests/fixtures/**`（标 `-text`）与 core.autocrlf"
+    );
     let dir = tmpdir("cli009");
     let zip = dir.path().join("crypto.zip");
     std::fs::write(&zip, crypto).unwrap();
@@ -398,8 +407,8 @@ fn tc_cli_009_password_channels() {
     cmd.env("HZIP_TST_PW", "hzip-pw-test").assert().success();
     assert_eq!(
         std::fs::read(dir.path().join("o1/secret.txt")).unwrap(),
-        include_bytes!("../../hzip-fmt-zip/tests/fixtures/zipcrypto-7z.plain.txt"),
-        "正确密码解出明文"
+        plain,
+        "正确密码解出明文（与样本逐字节一致）"
     );
     // ① 变量缺失 → 2 + HZ-5003 文案（提交前即时退出）
     Command::cargo_bin("hzip")

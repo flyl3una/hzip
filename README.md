@@ -110,6 +110,17 @@ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warni
 python build/checks/deps-direction.py && python build/checks/layout-conventions.py
 ```
 
+> 两条**已记录的 flake**（`ui::views::browse::tests::rename_and_new_folder_commands_enter_inline_edit`、
+> `hzip-fmt-single::cancel_mid_extract_cleans_partial`）是既有的竞态用例，隔离跑也可能随机报红：
+> CI 里对它们加了 `--skip`，逐条理由与恢复条件见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+> 的注释与 [`docs/tasks/`](docs/tasks) 下的 T-OPT / T-STD 记录。
+>
+> **别加 `--release` 跑 GUI 用例**：界面用例靠 gpui-pre 的 `debug_bounds` 取锚点边界，而
+> `debug_selector` 在 release 下是**有意的 no-op**（上游注释：省掉每帧记边界的开销）⇒ `cargo test
+> --release -p hzip-gui` 会整片报「锚点缺失/未绘制」（实测 55 条，与产品代码无关）。这一组合现在是
+> **编译期错误**，原因写在同一处（`crates/hzip-gui/src/lib.rs` 的 `compile_error!`）；要看 release
+> 档行为请 `cargo build --release` 后手工跑，release 档下要跑非界面用例用 `cargo test --release -p <crate>`。
+
 **打包安装包**（一条命令出一个平台的全部产物，不构建二进制）：
 
 ```bash

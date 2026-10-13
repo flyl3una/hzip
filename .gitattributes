@@ -1,1 +1,16 @@
 Cargo.lock text eol=lf
+# 测试样本 = 字节，禁止 EOL 转换。
+#
+# 为什么必须显式写 `-text`：不写时 Windows 检出（`core.autocrlf=true`，GitHub 的
+# windows runner 即如此）会把**文本型样本**改写成 CRLF，而档案内部存的是 LF ⇒
+# 「解压结果 == 样本字节」的断言必然失败。2026-10-13 CI Windows 腿实测正是如此：
+#   crates/hzip-fmt-zip/tests/fixtures/zipcrypto-7z.plain.txt 被检出成 CRLF ⇒
+#   `hzip-fmt-zip --test zipcrypto::zipcrypto_correct_password`（左 LF/右 CRLF）
+#   与 `hzip-cli --test e2e::tc_cli_009_password_channels` 同因失败；
+#   Linux/macOS runner 不转换 ⇒ 那两腿全绿——「只在 Windows 红」的典型指纹。
+# 本机复现：`git clone` 到任意机器（autocrlf=true）后该样本即 CRLF，两条用例即红；
+# 改 `-text` 后同一克隆取样为 LF。
+# （另一条路是仓库级 `* text=auto eol=lf`：更彻底，但会让既有检出的文本文件全部
+#   变成「已修改」，对在场工作区太吵；这里按「样本目录」精确兜底。）
+crates/*/tests/fixtures/** -text
+crates/*/src/tests/data/** -text

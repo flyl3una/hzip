@@ -17,6 +17,31 @@ const CRYPTO_PLAIN: &[u8] = include_bytes!("fixtures/zipcrypto-7z.plain.txt");
 
 const PW: &str = "hzip-pw-test";
 
+/// 样本必须**逐字节**按仓库里的样子到位——EOL 转换会毁掉字节比对。
+///
+/// # 为什么单独立一条（2026-10-13）
+///
+/// `zipcrypto-7z.plain.txt` 是纯 ASCII，git 按「文本」入库；若 `.gitattributes`
+/// 不标 `-text`，Windows 检出（`core.autocrlf=true`，GitHub 的 windows runner 即如此）
+/// 会把它写成 CRLF，而档案内部存的是 **LF** ⇒ 下面 `zipcrypto_correct_password` 的
+/// `assert_eq!(buf, CRYPTO_PLAIN)` 会以「左 LF / 右 CRLF」的几百字节数组差炸开，
+/// 看起来像「解密错了」——极难查（CI 上表现为「只有 Windows 腿红」，Linux/macOS 不转换）。
+/// 这里先把「样本被 EOL 转换了」这件事单独说清（e2e 侧同因的前置自检见
+/// `hzip-cli/tests/e2e.rs::tc_cli_009_password_channels`）。
+#[test]
+fn fixture_is_delivered_verbatim() {
+    assert!(
+        !CRYPTO_PLAIN.contains(&b'\r'),
+        "样本 zipcrypto-7z.plain.txt 被 EOL 转换成了 CRLF（档案里存的是 LF）——\
+         检查 .gitattributes 是否覆盖 `crates/*/tests/fixtures/**`（标 `-text`）与 core.autocrlf；\
+         已污染的检出先删文件再 `git checkout -- crates/hzip-fmt-zip/tests/fixtures/zipcrypto-7z.plain.txt`"
+    );
+    assert!(
+        CRYPTO_PLAIN.ends_with(b"\n"),
+        "样本应以换行结尾（防被编辑器/工具截断）"
+    );
+}
+
 /// 固定密码源。
 struct FixedPw(String);
 impl hzip_format::PasswordSource for FixedPw {
