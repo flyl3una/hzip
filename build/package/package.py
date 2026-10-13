@@ -552,6 +552,23 @@ def label_for(targets: list[Target]) -> str:
     return "universal" if len(targets) > 1 else targets[0].triple
 
 
+def _lipo_archs(binary: Path) -> list[str] | None:
+    """取（fat 或 thin）Mach-O 里的架构列表；两种调用形式都试，任一成功即返回。
+
+    `lipo` 的参数顺序在 Xcode 版本间不一致：老 lipo 容忍 `-verify_arch <arch…> <file>`，
+    Xcode 26 的 `<file>` 会被当成**第三个架构名**并直接报
+    `unknown architecture specification flag: <file>`（CI 实测，打包在这条命令上失败）。
+    用法串是 `<input_file> <command>`，`-archs` 本身不吃参数——两种写法都试最省事，
+    也不必把打包成败绑在某个 Xcode 版本的解析习惯上。
+    """
+    for cmd in (["lipo", "-archs", str(binary)], ["lipo", str(binary), "-archs"]):
+        log("  $ " + " ".join(cmd))
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            return r.stdout.split()
+    return None
+
+
 def stage_bins(ctx: Ctx, targets: list[Target], dest: Path) -> tuple[Path, Path]:
     """把二进制放进 dest 并返回 (cli, gui)。
 
@@ -567,8 +584,18 @@ def stage_bins(ctx: Ctx, targets: list[Target], dest: Path) -> tuple[Path, Path]
             run(["lipo", "-create", *[str(p) for p in paths], "-output", str(merged)])
             # `lipo -create` 对「输入里没有的架构」是**静默忽略**：漏了 arm64 的包照样
             # 是个合法 fat 文件，装到 M 系机器上才发现跑不了。故按目标逐个核验产物
-            # 真的含两个架构（universal 的验收口径，04 §4.2 / §5.3）。
-            run(["lipo", "-verify_arch", *[LIPO_ARCH.get(t.arch, t.arch) for t in targets], str(merged)])
+            # 真的含全部架构（universal 的验收口径，04 §4.2 / §5.3）——失败信息里带上
+            # 「实得 vs 期望」，比 lipo 自己那句更可读。
+            want = [LIPO_ARCH.get(t.arch, t.arch) for t in targets]
+            got = _lipo_archs(merged)
+            if got is None:
+                die(f"lipo -archs 两种调用形式都失败，无法核验 {merged} 的架构")
+            missing = [a for a in want if a not in got]
+            if missing:
+                die(
+                    f"universal 产物缺架构 {missing}（实得 {got}，期望 {want}）："
+                    f"先确认两个目标的二进制都构建过（lipo -create 对缺失架构是静默忽略）"
+                )
         else:
             ctx.copy(paths[0], merged)
         merged.chmod(0o755)

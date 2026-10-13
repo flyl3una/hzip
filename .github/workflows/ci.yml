@@ -62,9 +62,12 @@ jobs:
 
       # 「禁止某类许可进入链接边界」的策略在 deny.toml；这里跑与设计一致的
       # licenses + advisories 两类（bans/sources 未纳入——见 04 §9.2 的放行口径）。
+      # 版本 pin：cargo-deny 的配置 schema 换过几轮（0.18.4 起 [licenses] 的
+      # default/deny/copyleft/… 直接被删、配了就报 deprecated 硬错误），不 pin 就等于
+      # 让上游某天的 schema 变更把我们的门禁搞红。升级时先本地跑一遍再改这里。
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - name: cargo deny（许可 + 安全公告）
         run: cargo deny check licenses advisories
 
@@ -98,17 +101,49 @@ jobs:
         with:
           key: test-${{ matrix.os }}
 
-      # 外部压缩器：部分用例拿它们做交叉基线（7z/unrar/xz/zstd）。装不上不阻断——
-      # 缺工具的用例自己会跳过或按契约断言失败，比整条 CI 因镜像差异变红更好定位。
-      - name: 外部压缩器（best-effort）
+      # 外部压缩器：仓库里唯一外呼外部工具做交叉基线的是
+      # `crates/hzip-fmt-7z/tests/format.rs::external_sevenzip_lzma2_read`（`Command::new("7z")`），
+      # 且它探不到 7z 时**直接返回**（既有约定：缺工具就跳过）。所以这一步不是硬需求，
+      # 但既然装了就把 PATH 配对——上一版 Windows 侧 `choco install 7zip.install` 只落盘、
+      # 没把 `C:\Program Files\7-Zip` 放进 PATH（还带 continue-on-error），结果是「装了等于没装」：
+      # 那条用例在 CI 上永远走跳过分支，本地却真跑。这里把它修好，让 CI 与本地口径一致。
+      #   Linux：p7zip-full 提供 `7z`；**不装 unrar-free**——它读不了 rar5，装上反而让
+      #          「有 unrar」的分支走到失败；真 rar 样本用例本就 #[ignore]。
+      #   macOS：brew 的 p7zip 提供 `7z`；tar/gzip/bzip2 系统自带。
+      # 装完把体检结果打进日志：缺哪个工具一眼可见，不用去猜测试为什么红。
+      - name: 外部压缩器（7z/xz/zstd…）
         shell: bash
-        continue-on-error: true
         run: |
+          set -euo pipefail
           case "$RUNNER_OS" in
-            Linux)   sudo apt-get install -y p7zip-full xz-utils zstd bzip2 gzip unrar-free ;;
-            macOS)   brew install p7zip xz zstd ;;
-            Windows) choco install 7zip.install --no-progress -y ;;
+            Windows)
+              choco install 7zip.install --no-progress -y
+              echo 'C:\Program Files\7-Zip' >> "$GITHUB_PATH"
+              ;;
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y p7zip-full xz-utils zstd bzip2 gzip
+              ;;
+            macOS)
+              brew install p7zip xz zstd
+              ;;
           esac
+
+      # 装完在**下一个步骤**做体检：$GITHUB_PATH 只对后续步骤生效，同一步里 `command -v`
+      # 看不到 Windows 刚加的目录（误报「缺」）。
+      # 缺 7z **不红**：仓库里用到外部 7z 的用例（`hzip-fmt-7z/tests/format.rs` 的
+      # `external_sevenzip_lzma2_read`）检测不到就直接返回——这是既有约定，CI 不该
+      # 因为一个可选工具把整条测试门禁搞红。缺了就告警，方便对照日志排查。
+      - name: 外部压缩器体检
+        shell: bash
+        run: |
+          for t in 7z tar xz zstd bzip2 gzip; do
+            printf '%-6s ' "$t"
+            command -v "$t" || command -v "$t.exe" || echo '(缺)'
+          done
+          if ! { command -v 7z >/dev/null || command -v 7z.exe >/dev/null; }; then
+            echo "::warning::PATH 上没有 7z——依赖外部 7-Zip 的用例会自行跳过（既有约定）"
+          fi
 
       # 为什么 --test-threads=1：hzip-gui 的用例共用一个进程，而 gpui-pre 的测试调度器
       # 断言「同一时刻只有测试线程在动」。并行跑时两条用例的后台线程会互相踩
@@ -128,13 +163,29 @@ jobs:
       #      docs/tasks/T-STD/README.md §7.3 记录「隔离跑 5 次 4 过 1 败，未改」）。
       # 这四条在本地手工跑（不带 --skip）仍可复现，改动相关代码时请单跑它们。
       - name: cargo test（workspace，串行）
-        run: >-
-          cargo test --workspace --no-fail-fast --
-          --test-threads=1
-          --skip sec_005_ratio_bomb_pipeline
-          --skip sec_006_total_bomb_pipeline_low_quota
-          --skip rename_and_new_folder_commands_enter_inline_edit
-          --skip cancel_mid_extract_cleans_partial
+        shell: bash
+        env:
+          # 失败时给 panic 带 backtrace：CI-only 的失败（本机全绿）最缺的就是「在哪一行炸的」，
+          # 而这段输出会连同 test.log 一起留在日志/artifact 里。
+          RUST_BACKTRACE: "1"
+        run: |
+          set -o pipefail
+          # 输出同时落 test.log：CI 上这种「N 个 target 失败」的失败必须能整段留存——
+          # 日志界面翻不动、也不方便贴给别人时，可从 Artifacts 下 test-log-<os> 取全文。
+          cargo test --workspace --no-fail-fast -- \
+            --test-threads=1 \
+            --skip sec_005_ratio_bomb_pipeline \
+            --skip sec_006_total_bomb_pipeline_low_quota \
+            --skip rename_and_new_folder_commands_enter_inline_edit \
+            --skip cancel_mid_extract_cleans_partial 2>&1 | tee test.log
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-log-${{ matrix.os }}
+          path: test.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: cargo test --doc
         run: cargo test --workspace --doc

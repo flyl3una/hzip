@@ -38,9 +38,15 @@ fn io_code_mapping() {
     // ENOSPC(28, unix) / ERROR_DISK_FULL(112, win) → 1002（按 raw os code 双平台判定）
     assert_eq!(io_variant(io_err(28)).code(), 1002);
     assert_eq!(io_variant(io_err(112)).code(), 1002);
-    // 其余 → 1001
+    // 其余 → 1001。
+    //
+    // ⚠ 兜底分支**不能**拿 `io_err(1)` 来试：raw code 的语义按平台不同，而 `kind()`
+    //   判定在 raw code 之前——unix 上 1 = EPERM ⇒ kind = PermissionDenied ⇒ 1003。
+    //   （Windows 上 1 = ERROR_INVALID_FUNCTION，才会落到 1001。）该断言原先只在
+    //   Windows 上过，macOS CI 实测红在 `hzip-error --test error_model`。故这里用一个
+    //   三个平台都没有特殊语义的 raw code。
     assert_eq!(io_variant(io::Error::other("boom")).code(), 1001);
-    assert_eq!(io_variant(io_err(1)).code(), 1001);
+    assert_eq!(io_variant(io_err(9_999_999)).code(), 1001);
 }
 
 /// 用例 2：format_kind_codes

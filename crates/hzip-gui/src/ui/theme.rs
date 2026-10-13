@@ -211,9 +211,9 @@ pub fn theme_json(mode: ThemeModeChoice) -> serde_json::Value {
 ///
 /// 为什么必须显式声明：kit 的 `scrollbar_thumb` 语义槽 **fallback = `accent`**
 /// （主题色），不声明就会随主题色染色。
-const SCROLLBAR_THUMB: &str = "#A3A3A3E6";
+const SCROLLBAR_THUMB: &str = "#DCDCDCE6";
 /// 滚动条滑块**悬停灰**（比常态深一档；同样固定值）。
-const SCROLLBAR_THUMB_HOVER: &str = "#A3A3A3";
+const SCROLLBAR_THUMB_HOVER: &str = "#DCDCDC";
 
 /// 兼容名（T-GUI T01 引入；T25 重构后为 [`theme_json`] 特例）。
 pub fn light_theme_json() -> serde_json::Value {

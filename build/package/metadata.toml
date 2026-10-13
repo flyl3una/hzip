@@ -70,7 +70,13 @@ priority        = "optional"
 #                          它的 build.rs 只在设了 RUST_FONTCONFIG_DLOPEN（或 dlopen feature）
 #                          时才改走 dlopen，CI 两者都没有 ⇒ 产物 DT_NEEDED 里一定有它。
 #                          （2026-10-12 补：Linux 构建因缺 fontconfig.pc 失败时才暴露本项缺失）
-#   · libxkbcommon0 / libwayland-* —— 依赖树里没有 -sys/-dl 包（纯 Rust 或 dlopen），
+#   · libxkbcommon0 / libxkbcommon-x11-0 / libxcb1 —— **链接期就定了**，不是保守声明：
+#                          2026-10-13 CI 的 link 行里确有 `-lxkbcommon -lxkbcommon-x11 -lxcb`
+#                          （crate 用 `#[link]` 声明，不经 pkg-config，缺 -dev 包时报
+#                          `unable to find library -lx…`）⇒ 构建要 libxkbcommon-dev/
+#                          libxkbcommon-x11-dev/libxcb1-dev（.github/actions/rust-build-deps），
+#                          运行要这三个 so。
+#   · libwayland-*       —— dlopen（wayland-sys 的 dlopen feature 由 wgpu-hal 打开），
 #                          属**保守声明**：多装几个桌面库无害，少装会让 GUI 起不来
 #   · libegl1/libgles2   —— wgpu 的 GLES 回落路径，列为 Recommends
 #   · fonts-noto-cjk     —— **界面中文可读性**：产品文案默认跟随系统语言，而本仓库
@@ -79,14 +85,14 @@ priority        = "optional"
 #                          apt 默认装 Recommends ⇒ 中文用户开箱即得；--no-install-recommends
 #                          的最小安装仍可用（英文界面）。
 # CI 的 Linux 腿会打印 `ldd`（package.yml），用来核对本清单与实际 DT_NEEDED，而不是靠记忆。
-depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libfontconfig1, libxkbcommon0, libwayland-client0, libwayland-egl1"
+depends         = "libc6 (>= 2.31), libgcc-s1, libvulkan1, libfreetype6, libfontconfig1, libxkbcommon0, libxkbcommon-x11-0, libxcb1, libwayland-client0, libwayland-egl1"
 recommends      = "libegl1, libgles2, mesa-vulkan-drivers, fonts-noto-cjk"
 
 [rpm]
 group           = "Applications/Archiving"
 # rpm 侧刻意 AutoReqProv: no + 显式 Requires（跨架构打包时宿主 rpm 库与目标不符，
 # 自动推导会得出错误结果）。
-requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, fontconfig, libxkbcommon, libwayland-client, libwayland-egl"
+requires        = "glibc >= 2.31, libgcc, vulkan-loader, freetype, fontconfig, libxkbcommon, libxkbcommon-x11, libxcb, libwayland-client, libwayland-egl"
 # 中文字体（Fedora/RHEL 系的包名）。**弱依赖**：dnf/zypper 默认会装，装不上也不阻断
 # ——此时界面按「缺中文字体则回退英文」处理（见 deb 段同一项的注释与 02 §12.2）。
 # 其他 RPM 系发行版包名可能不同（如 openSUSE 的 noto-sans-cjk-fonts），未匹配到只是
