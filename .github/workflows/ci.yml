@@ -239,4 +239,8 @@ jobs:
       # push/PR 的 smoke 只为「早点红」，不留产物（04 §6.1）；手动触发时由输入决定是否
       # 把 3 格产物留成 artifact（14 天）——那才是「从 CI 拿安装包」的路
       # （想连 arm64 两格一起要，就走 release.yml：打 tag 或手动演练）。
-      upload: ${{ inputs.upload_packages || false }}
+      #
+      # 布尔比较写两份（`== true` 与 `== 'true'`）：`workflow_dispatch` 的 `inputs.*`
+      # 在不同触发路径下既可能给布尔也可能给字符串，写单边会在另一条路静默变 false
+      # （=「勾了却不上传」）。push/PR 触发时 `inputs` 为空 ⇒ 两个比较都是 false ⇒ 不上传。
+      upload: ${{ inputs.upload_packages == true || inputs.upload_packages == 'true' }}
