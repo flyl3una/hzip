@@ -22,8 +22,9 @@
 //! 改名 `AllAssets`（同 crate `src/lib.rs`：「`Assets` for the default component
 //! bundle, or `AllAssets` for the full catalog」）。回落取默认子集，因为当前
 //! **没有一处需要子集之外的图标**：
-//! - 全仓唯一直接使用 kit `IconName` 的位置是 `ui/widgets/breadcrumb.rs` 的
-//!   `ChevronRight`（`default-icons.txt` 内）；
+//! - 应用代码**不再直接使用 kit `IconName`**：唯一一处（`ui/widgets/breadcrumb.rs` 的
+//!   `ChevronRight` 分隔符）在 2026-10-14 按用户口径改成文本 `/`；回落链本身仍必须
+//!   可用（断言在 `ui/tests/assets.rs`）；
 //! - 46 个 [`crate::ui::widgets::AppIcon`] 路径全部命中自有 [`HzipAssets`]；
 //! - gpui-component 自身引用的图标枚举由同一份 `default-icons.txt` 生成。
 //!

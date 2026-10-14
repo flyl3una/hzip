@@ -51,7 +51,10 @@ fn chained_assets_serves_the_default_subset_not_full_catalog() {
     use gpui_kit::component::{IconName, IconNamed as _};
 
     let a = ChainedAssets;
-    // 子集内且在用的图标：必须能回落命中（`ChevronRight` 是面包屑的图标）
+    // 默认子集内的图标必须能回落命中。注意：应用代码当前**没有**直接使用 kit
+    // `IconName`（面包屑 2026-10-14 起改用文本 `/` 分隔），这条链仍必须可用——
+    // gpui-component 自身引用的图标枚举就是同一份 `default-icons.txt`，且
+    // `ui/assets.rs` 选默认子集（而非全量 `AllAssets`）的前提正是这条回落。
     let path = IconName::ChevronRight.path().to_string();
     assert!(
         a.load(&path).expect("load err").is_some(),

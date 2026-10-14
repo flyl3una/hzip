@@ -1,4 +1,4 @@
-//! 面包屑（目录导航栏：`档案名 > 层级路径`；段点击 → `on_crumb` 上行）。
+//! 面包屑（目录导航栏：`档案名 / 层级路径`；段点击 → `on_crumb` 上行）。
 //!
 //! # 段渲染用 kit `Button`（`Text` 变体）而不是 `BreadcrumbItem`
 //!
@@ -24,11 +24,9 @@
 
 use crate::ui::spacing::sp;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, h_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, Size, h_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, SharedString, WeakEntity};
+use gpui_kit::{AnyElement, App, SharedString, WeakEntity, div, relative};
 
 use crate::ui::contracts::{Crumb, ShellHandlers};
 use crate::ui::views::browse::BrowseHandlerSource;
@@ -40,13 +38,20 @@ use crate::ui::views::browse::BrowseHandlerSource;
 pub const CRUMB_MAX_CHARS: usize = 24;
 
 /// 面包屑（档案根 + 逐段链；段点击 → handlers.on_crumb）。
+///
+/// 分隔符是**文本 `/`**（不是图标）：与段名同字号、同行高 ⇒ 共用基线、视觉居中
+/// （2026-10-14 用户口径，缘由写在分隔符那一段的注释里）。
 pub fn breadcrumb<T: BrowseHandlerSource + 'static>(
-    _cx: &App,
+    cx: &App,
     crumbs: &[Crumb],
     shell: &WeakEntity<T>,
 ) -> AnyElement {
     let last = crumbs.len().saturating_sub(1);
-    let mut row = h_flex().gap(sp(1.5)).text_sm().items_center();
+    let mut row = h_flex()
+        .debug_selector(|| "crumb-row".into())
+        .gap(sp(1.5))
+        .text_sm()
+        .items_center();
     for (ix, crumb) in crumbs.iter().enumerate() {
         let seg = crumb.seg.clone();
         let level = crumb.level;
@@ -75,11 +80,23 @@ pub fn breadcrumb<T: BrowseHandlerSource + 'static>(
         }
         row = row.child(btn);
         if !is_last {
-            // 分隔符（与 kit `Breadcrumb` 同款：ChevronRight + muted 前景）
+            // 分隔符：文本 `/`（用户口径 2026-10-14）。
+            //
+            // # 为什么不再用 kit `ChevronRight` 图标（原实现）
+            //
+            // 图标是 14px 方盒，`items_center` 只保证**盒**居中；chevron 的 SVG 墨迹
+            // 在盒内偏上 ⇒ 「>` 看着比段名高一截」。换成文本 `/` 后与段名**同字号、
+            // 同行高**（`text_sm` + `line_height(relative(1.25))`，即 kit `Button`
+            // `Size::Small` 的那套——见 gpui-component `sizing.rs::button_text_size`
+            // 与 `button.rs` 的 `.line_height(relative(1.25))`）⇒ 与段名共用同一基线，
+            // 视觉上天然居中；改任一侧字号/行高都会立刻错开，故两者写在一起。
             row = row.child(
-                Icon::new(IconName::ChevronRight)
-                    .size_3p5()
-                    .text_color(_cx.theme().muted_foreground),
+                div()
+                    .debug_selector(move || format!("crumb-sep-{ix}"))
+                    .text_sm()
+                    .line_height(relative(1.25))
+                    .text_color(cx.theme().muted_foreground)
+                    .child("/"),
             );
         }
     }
