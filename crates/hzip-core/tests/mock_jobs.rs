@@ -99,46 +99,56 @@ fn conflict_waiting_cancel() {
     assert_eq!(std::fs::read(dest.join("a.txt")).unwrap(), b"old");
 }
 
-/// TC-CORE-011：级联取消——cancel_all 后 Running 任务取消、Queued 直接移除。
+/// TC-CORE-011：级联取消——cancel_all 后**在飞任务**取消、Queued 直接移除。
+///
+/// 同步点用**稳定的** `WaitingInput`，不用转瞬即逝的 `Running`：池 1 且任务很短时，
+/// 「轮询采样 Running」可能一次都采不到（任务已 Done）——CI `macos-latest` 实测 flake
+/// （`assertion left: Done, right: Running`）。做法与同文件
+/// [`conflict_ask_callback`] 一致：h1 落点预置同名文件 + `Ask` → 冲突上抛 → h1 停在
+/// `WaitingInput` 等应答（**保持**到被应答或取消），且占住池唯一名额 ⇒ h2/h3 必 Queued。
+/// 取消路径对 `Running` / `WaitingInput` 同语义（`apply_finish` 与协作式取消令牌），
+/// 故本用例覆盖的级联取消语义不变，只是不再依赖调度快慢。
 #[test]
 fn cascade_cancel() {
     let dir = TempDir::new().unwrap();
-    // 慢任务（大 tar 解压）
-    let mk_slow = || {
-        let p = dir.path().join(format!("slow-{}.tar", std::process::id()));
-        common::make_big_tar(&p, "big.bin", 128);
-        p
-    };
-    let a1 = mk_slow();
-    let a2 = mk_slow();
-    let a3 = mk_slow();
+    let archive = dir.path().join("data.tar");
+    make_tar(&archive, &[("a.txt".into(), b"hello".to_vec())]);
+    // h1 落点预置同名文件 → Ask 冲突上抛（停在 WaitingInput，稳定可观测）
+    let d1 = dir.path().join("d1");
+    std::fs::create_dir_all(&d1).unwrap();
+    std::fs::write(d1.join("a.txt"), b"old").unwrap();
     let eng = engine(1, 1);
+    let ask = hzip_core::services::extract::ExtractOptions {
+        conflict: ConflictPolicy::Ask,
+        ..overwrite_opts(&d1)
+    };
     let h1 = eng
-        .submit(JobSpec::extract_job(
-            a1,
-            overwrite_opts(&dir.path().join("d1")),
-        ))
+        .submit(JobSpec::extract_job(archive.clone(), ask))
         .unwrap();
     let h2 = eng
         .submit(JobSpec::extract_job(
-            a2,
+            archive.clone(),
             overwrite_opts(&dir.path().join("d2")),
         ))
         .unwrap();
     let h3 = eng
         .submit(JobSpec::extract_job(
-            a3,
+            archive,
             overwrite_opts(&dir.path().join("d3")),
         ))
         .unwrap();
-    // 池 1：等 h1 Running（h2/h3 必 Queued）
+    // 池 1：等 h1 进入在飞态（WaitingInput 会保持，不是瞬时态）⇒ h2/h3 必 Queued
     for _ in 0..200 {
-        if h1.state() == JobState::Running {
+        if h1.state() == JobState::WaitingInput {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(h1.state(), JobState::Running, "h1 应 Running");
+    assert_eq!(
+        h1.state(),
+        JobState::WaitingInput,
+        "h1 应 WaitingInput（在飞、等应答）"
+    );
     assert_eq!(
         h2.state(),
         JobState::Queued,
@@ -151,15 +161,12 @@ fn cascade_cancel() {
         "h3 应 Queued（池 1 被 h1 占），实得 {:?}",
         h3.state()
     );
-    // 级联取消：h1 Running 取消；h2/h3 Queued 直接移除
+    // 级联取消：h1 在飞取消；h2/h3 Queued 直接移除
     eng.cancel_all();
     let r1 = h1.wait().unwrap();
     let r2 = h2.wait().unwrap();
     let r3 = h3.wait().unwrap();
-    assert!(
-        matches!(r1, Outcome::Cancelled | Outcome::Done(_)),
-        "h1 {r1:?}"
-    );
+    assert!(matches!(r1, Outcome::Cancelled), "h1（在飞）{r1:?}");
     assert!(matches!(r2, Outcome::Cancelled), "h2（Queued 移除）{r2:?}");
     assert!(matches!(r3, Outcome::Cancelled), "h3（Queued 移除）{r3:?}");
 }
