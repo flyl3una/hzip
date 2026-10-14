@@ -141,6 +141,16 @@ python3 build/package/package.py --target x86_64-apple-darwin,aarch64-apple-darw
 CI 上打 tag（`vX.Y.Z`）即自动跑全平台矩阵并建 Release；用法与「关掉某一格」的开关见
 [build/package/README.md](build/package/README.md) 与 [04-编译与部署.md](docs/design/04-编译与部署.md) §6。
 
+> **想拿安装包但不发版**：GitHub → Actions → **ci** → Run workflow，勾上
+> `upload_packages` ⇒ 三平台 smoke 安装包（Windows `msi,zip` / macOS `dmg,tar.gz` /
+> Linux `tar.gz,deb,rpm,appimage`）会作为 artifact 留下（14 天）。要走全矩阵（含两个
+> arm64 格）就是 **release** 工作流：push tag `vX.Y.Z`，或 Actions → release → Run
+> workflow 填一个**已存在**的 tag + `dry_run` 演练（不建 Release）。
+> **注意 tag 必须与 `Cargo.toml` 的 `[workspace.package].version` 一致**（当前 `0.1.2`
+> ⇒ `v0.1.2`），不一致会在建 Release 之前就炸掉——文件名里的版本号只有这一处来源。
+> 另外：`ci` 的 `package-smoke` **只在打包相关文件变动时才自动跑**（`build/package/**`
+> 等，见 `ci.yml` 的 `changes` 过滤），所以普通代码提交看不到它。
+
 ---
 
 ## 使用

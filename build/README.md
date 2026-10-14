@@ -15,6 +15,10 @@
 ## 常用命令
 
 ```bash
+
+# 先编译
+cargo build --release --target x86_64-unknown-linux-gnu
+
 # 依赖方向红线（CI 的 quality job 跑的就是它）
 python build/checks/deps-direction.py
 
