@@ -8,6 +8,7 @@
 | `package/` | **跨平台安装包**：Windows MSI/zip、macOS dmg/tar.gz、Linux deb/rpm/AppImage/tar.gz | `python build/package/package.py --target <triple> --formats <…>`（详见 [`package/README.md`](package/README.md)） | 04 §5、§6.1 |
 | `icons/` | 程序图标：ICO（9 档）+ 稀疏包磁贴；lucide 图标资产入库 | `./build/icons/make-icons.ps1`、`./build/icons/fetch-lucide-icons.sh` | 04 §5.5 |
 | `shell-ext/` | 资源管理器右键菜单扩展：`hzip-shell.dll` + `hzip-shellmenu.msix` | `./build/shell-ext/build-shell-ext.ps1 -Publisher "CN=hzip"` | 04 §5.1、05 T43 |
+| `../shell/hzip-findersync/` | **macOS Finder 右键菜单扩展**（`hzipFinderSync.appex`）：`swiftc` 编译 + `lipo`；由打包驱动内嵌进 `hzip.app/Contents/PlugIns/` 并签名 | `./shell/hzip-findersync/build.sh --out <dir> --version <V>`（**由驱动的 `dmg` 格式自动调用**，不必手工跑） | 04 §5.3 |
 | `checks/` | 仓库级质量检查（CI 门禁） | `python build/checks/deps-direction.py`（02 §2.1 五条依赖红线） | 04 §3.1、§6.1 |
 | `../script/cli-test/` | CLI 端到端测试运行器（**不在本层**，见上） | `./script/cli-test/run-cli-tests.sh` | 03 |
 
@@ -73,7 +74,9 @@ cargo tree -p hzip-gui --target x86_64-unknown-linux-gnu -e normal -i aws-lc-sys
 | Linux 元数据校验（建议装） | `desktop-file-validate`、`appstreamcli` | `apt install desktop-file-utils appstream` |
 | Linux AppImage | `mksquashfs`（`squashfs-tools`）+ appimagetool/runtime | `apt install squashfs-tools`；**后两者由驱动按版本+sha256 自动下载**到 `~/.cache/hzip-package` |
 | macOS dmg | `hdiutil` / `iconutil` / `sips`（Xcode CLT 自带） | `xcode-select --install` |
-| macOS 签名+公证（可选） | `codesign` + `xcrun notarytool` + 凭据 | 见 04 §5.3 |
+| macOS Finder 右键菜单扩展 | `swiftc`（Xcode CLT 自带；缺则驱动**告警并跳过** appex，.app 仍产出但不含右键菜单） | `xcode-select --install` |
+| macOS 签名（可选） | `codesign`：给身份就 Developer ID 签，缺省则 ad-hoc 签（内嵌 appex 时**必做**，否则整包 `--deep` 校验失败） | 系统自带 |
+| macOS 公证（可选） | `xcrun notarytool` + 凭据 | 见 04 §5.3 |
 #### WiX 两步装法（用户级，免管理员、免 `sudo`）
 
 ```powershell

@@ -265,6 +265,55 @@ pub trait ContextMenu: Send + Sync {
     fn refresh_capabilities(&self, _archive_exts: &[String]) -> Result<bool, MenuError> {
         Ok(false)
     }
+
+    /// 消费扩展进程写入的**意图队列**（macOS FinderSync appex / Services provider）。
+    ///
+    /// # 为什么扩展不直接拼 argv
+    ///
+    /// appex 与 Services provider 运行在**沙盒**内，既读不到宿主私有配置，也
+    /// 无法用 `NSWorkspace` 的 `arguments` 向宿主注入命令行（均已真机实证）。
+    /// 故两侧的**唯一**通道是 App Group 容器里的一个追加式队列文件：扩展只写
+    /// `{key, paths}`，由宿主（本方法调用方）用**同一个** [`VERBS`] 表展开成
+    /// argv，再走与命令行、转发队列完全相同的意图解析路径。
+    ///
+    /// 幂等：整体读取后**清空内容但保留文件**（`inotify`/FSEvents 监听依附于
+    /// 该路径，删文件会破坏监听——与 `hzip-forward-queue` 同款语义）。
+    ///
+    /// 默认恒空（非 macOS 无此通道）。
+    fn take_extension_intents(&self) -> Vec<ExtensionIntent> {
+        Vec::new()
+    }
+
+    /// 追加一条扩展意图（宿主进程内的 Services provider 用；appex 侧由 Swift
+    /// 直接写文件，不经此方法）。
+    ///
+    /// 默认不支持（非 macOS 无此通道）。
+    fn append_extension_intent(&self, _intent: &ExtensionIntent) -> Result<(), MenuError> {
+        Err(MenuError::new(
+            MenuErrorKind::Unsupported,
+            "当前平台无 Finder 扩展意图通道",
+        ))
+    }
+
+    /// 扩展意图队列的文件路径（macOS = App Group 容器内 `intents.jsonl`）。
+    ///
+    /// 供调用方挂**文件监听**（appex 在宿主已运行时写入队列后无其他通知手段——
+    /// 它无法向宿主注入 argv，故只能靠宿主监听该文件）。默认 `None`。
+    fn extension_intents_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+}
+
+/// FinderSync appex / Services provider 投递的一次动作意图。
+///
+/// 字段名即 `intents.jsonl` 的线上字段（appex 侧 Swift 按同名字段编码）。
+/// `key` ∈ [`VERBS`] 的 key；`paths` = 选中项绝对路径。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExtensionIntent {
+    /// verb key（落盘 key，永不翻译）。
+    pub key: String,
+    /// 选中项绝对路径（appex 用 `URL.path`，Services 用 pasteboard 文件名）。
+    pub paths: Vec<String>,
 }
 
 /// 全部 verb 定义（**argv 的单一事实源**；按 key 查表，见 [`super::backend::entry_for`]）。

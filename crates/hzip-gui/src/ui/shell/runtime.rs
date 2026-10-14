@@ -106,6 +106,51 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
         })
         .flatten();
 
+    // —— macOS Finder 扩展意图轨（appex / Services → 宿主）——
+    //
+    // appex 与 Services provider 在**沙盒**内运行：既读不到宿主私有配置，也无法
+    // 向宿主注入 argv（均真机实证），只能把 `{key, paths}` 追加进 App Group 容器
+    // 的 `intents.jsonl`。宿主在此消费它——与启动意图、二实例转发**共用同一条**
+    // 意图队列，故三种入口的行为天然一致。仅 macOS、仅主界面模式（直接模式是
+    // 独立进程，不消费队列）。
+    //
+    // 两半场都要：① 启动时先 drain 一次（覆盖「宿主启动前 appex 已写入」的窗口）；
+    // ② 运行期 watch 队列文件（覆盖「宿主已运行时 appex 写入」——appex 无法唤醒
+    //    一个已运行实例，只能靠宿主自己监听）。缺 ② 则运行期点击是死信
+    //    （与 `hzip-forward-queue` 的历史缺陷同源）。
+    #[cfg(target_os = "macos")]
+    let _extension_watch = (mode == UiMode::Main)
+        .then(|| {
+            use hzip_platform::context_menu::backend;
+            // ① 启动窗口：先消费一次。
+            let initial = intents_of_extension(&backend().take_extension_intents());
+            if !initial.is_empty() {
+                let _ = intent_tx.try_send(initial);
+            }
+            // ② 运行期：监听队列文件（容器目录可能尚不存在——watch 内部监听父目录
+            //    +路径过滤，故先建父目录与空文件）。
+            let tx = intent_tx.clone();
+            let cache = password_cache.clone();
+            hzip_platform::context_menu::watch_extension_intents(move |_| {
+                let intents = intents_of_extension(&backend().take_extension_intents());
+                if !intents.is_empty() {
+                    cache.clear();
+                    let _ = tx.try_send(intents);
+                }
+            })
+        })
+        .flatten();
+
+    // —— macOS Services 轨：注册 provider（让「服务」子菜单项真正可点）——
+    //
+    // Info.plist 声明 NSServices 只让条目出现；点击时系统调用的 selector 必须在
+    // 宿主进程内注册（NSRegisterServicesProvider，NSPortName = "hzip"）。放在
+    // NSApplication 起来之前注册会静默无效，故晚于此处的 app 构造之后。
+    #[cfg(target_os = "macos")]
+    if mode == UiMode::Main {
+        hzip_platform::context_menu::register_services_provider();
+    }
+
     // —— 临时缓冲自愈（启动一次）——
     //
     // 组合档（`.cpio.gz` 等）打开/解压要把解压后的内层容器落临时文件（cpio/tar
@@ -1554,6 +1599,63 @@ fn intents_of_argv(argv: &[String]) -> Vec<LaunchIntent> {
         // 帮助/版本不产生意图（二实例永不转发它们：main 在仲裁前就返回）
         ArgvParse::Help | ArgvParse::Version => Vec::new(),
     }
+}
+
+/// 扩展意图（`{key, paths}`）→ 意图序列。
+///
+/// macOS FinderSync appex 与 Services provider 运行在**沙盒**内，既读不到宿主
+/// 私有配置，也无法向宿主注入 argv（均已真机实证）；它们只能把 `{key, paths}`
+/// 写进 App Group 容器的 `intents.jsonl`。宿主在此把 `key` 经 [`VERBS`] 表展开
+/// 成 argv（`%SEL` 逐路径各一条、`%SELS` 一条收全批），再走**同一个**
+/// [`LaunchArgs::parse`]/[`args_intents`] 路径——动词语义与命令行、转发队列完全
+/// 同源，扩展侧绝不自己拼 argv。
+///
+/// [`VERBS`]: hzip_platform::context_menu::VERBS
+pub(crate) fn intents_of_extension(
+    intents: &[hzip_platform::context_menu::ExtensionIntent],
+) -> Vec<LaunchIntent> {
+    use hzip_platform::context_menu::entry_for;
+    let mut out = Vec::new();
+    for intent in intents {
+        let Some(spec) = entry_for(&intent.key) else {
+            tracing::warn!(key = %intent.key, "扩展意图的 verb key 不在白名单，忽略");
+            continue;
+        };
+        if intent.paths.is_empty() {
+            continue;
+        }
+        // argv 展开：`%SEL` → 每条路径各一条 argv；`%SELS` → 一条 argv 收全批。
+        let expand = |template: &[&'static str], paths: &[String]| -> Vec<Vec<String>> {
+            if template.contains(&"%SEL") {
+                paths
+                    .iter()
+                    .map(|p| {
+                        template
+                            .iter()
+                            .map(|a| if *a == "%SEL" { p.clone() } else { (*a).to_string() })
+                            .collect()
+                    })
+                    .collect()
+            } else {
+                vec![
+                    template
+                        .iter()
+                        .flat_map(|a| {
+                            if *a == "%SELS" {
+                                paths.to_vec()
+                            } else {
+                                vec![(*a).to_string()]
+                            }
+                        })
+                        .collect(),
+                ]
+            }
+        };
+        for argv in expand(spec.argv, &intent.paths) {
+            out.extend(intents_of_argv(&argv));
+        }
+    }
+    out
 }
 
 /// 启动模式（argv → 模式；见本模块文档）。

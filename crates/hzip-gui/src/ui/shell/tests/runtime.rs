@@ -323,3 +323,53 @@ fn font_size_click_applies_immediately_without_disk(cx: &mut gpui_kit::TestAppCo
         );
     });
 }
+
+// —— macOS Finder 扩展意图（appex/Services → 宿主）的 argv 展开 ——
+//
+// 扩展侧（沙盒）只发 `{key, paths}`，绝不自己拼 argv；宿主按 verb 表的占位符
+// 展开成 argv 再走同一个解析器。这条展开是右键动作能落到正确语义的**唯一**
+// 环节——错一个占位符，`%SEL` 就会被当成字面量路径、或整批只剩第一个。
+#[test]
+fn extension_intent_expands_per_verb_placeholder() {
+    use hzip_platform::context_menu::ExtensionIntent;
+
+    // `%SEL`（逐项各一条 argv）：两个档案 → 两条 ExtractHere 意图。
+    let per = intents_of_extension(&[ExtensionIntent {
+        key: "extract_here".into(),
+        paths: vec!["/a.zip".into(), "/b.7z".into()],
+    }]);
+    assert_eq!(per.len(), 2, "%SEL 应逐路径展开成两条 argv");
+    assert!(matches!(&per[0], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/a.zip"));
+    assert!(matches!(&per[1], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/b.7z"));
+
+    // `%SELS`（一条 argv 收全批，用于压缩/参数窗）：两个输入 → 一条批次意图。
+    let batch = intents_of_extension(&[ExtensionIntent {
+        key: "add_zip".into(),
+        paths: vec!["/a".into(), "/b".into()],
+    }]);
+    assert_eq!(batch.len(), 1, "%SELS 应合并成一条批次意图");
+    match &batch[0] {
+        LaunchIntent::Compress { paths, format, .. } => {
+            assert_eq!(paths.len(), 2, "批次须收下全部输入（漏一个 = 少打一个包）");
+            assert_eq!(format.as_deref(), Some("zip"));
+        }
+        other => panic!("应为 Compress，实得 {other:?}"),
+    }
+}
+
+// 白名单外的 key 与空路径都被安全忽略（扩展是外部输入面）。
+#[test]
+fn extension_intent_ignores_unknown_key_and_empty_paths() {
+    use hzip_platform::context_menu::ExtensionIntent;
+    let out = intents_of_extension(&[
+        ExtensionIntent {
+            key: "definitely_not_a_verb".into(),
+            paths: vec!["/a.zip".into()],
+        },
+        ExtensionIntent {
+            key: "extract_here".into(),
+            paths: vec![],
+        },
+    ]);
+    assert!(out.is_empty(), "未知 key 与空路径不应产生任何意图");
+}

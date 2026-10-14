@@ -61,6 +61,13 @@ LIPO_ARCH = {"aarch64": "arm64"}
 # 组件 GUID 的固定命名空间——**永不修改**（改了等于换了组件身份，升级会留垃圾）
 GUID_NS = uuid.UUID("6f2b1d84-3c6a-4f57-9b1e-0d7c5a2e8f31")
 
+# macOS FinderSync 扩展（右键菜单）：源码与编译都在这个目录，打包驱动只调用+内嵌
+# （04 §5.3）。appex 的 bundle id / App Group / 可执行名由 shell/hzip-findersync 决定，
+# 驱动侧只认路径与名字。
+FINDERSYNC_DIR = ROOT / "shell/hzip-findersync"
+FINDERSYNC_APPEX = "hzipFinderSync.appex"
+FINDERSYNC_EXECUTABLE = "hzipFinderSync"
+
 # 目标三元组 -> (系统, 架构)。只列发布矩阵用到的（04 §5）
 TARGETS = {
     "x86_64-pc-windows-msvc": ("windows", "x86_64"),
@@ -1012,6 +1019,85 @@ def build_msi(ctx: Ctx, targets: list[Target]) -> None:
     ctx.artifact(out)
 
 
+def build_findersync_appex(ctx: Ctx, universal: bool = False) -> Path | None:
+    """编译 FinderSync appex 并返回 bundle 路径；不可用时 warn 返回 None（不阻断打包）。
+
+    源码与编译逻辑都在 `shell/hzip-findersync/`（04 §5.3）——驱动**只调用**那个脚本，
+    不在 Python 里重复 Swift 编译。appex 是可选增强：缺脚本/缺 swiftc 时 .app 仍可产出，
+    但日志会**明确**说明右键菜单轨失效（不静默降级）。
+
+    `universal=True` 时请求 `--universal`（lipo 出 x86_64+arm64）。**必须与 .app 的
+    架构一致**：universal `.app` 里嵌一个单架构 appex，在另一架构上插件加载即失败
+    （`pluginkit` 找不到可执行的切片）——而 CI 的 macOS 格正是 universal。
+    """
+    script = FINDERSYNC_DIR / "build.sh"
+    if not script.exists():
+        warn(
+            f"未找到 {script.relative_to(ROOT)}：.app 不含 FinderSync 扩展"
+            "（Finder 右键菜单轨失效，04 §5.3）"
+        )
+        return None
+    if not optional_tool("swiftc"):
+        warn("找不到 swiftc（装 Xcode 或 Command Line Tools）：.app 不含 FinderSync 扩展")
+        return None
+    out = ctx.work / "fsx"
+    args = ["bash", str(script), "--out", str(out), "--version", ctx.version]
+    if universal:
+        args.append("--universal")
+    run(args)
+    appex = out / FINDERSYNC_APPEX
+    if not appex.is_dir():
+        warn(f"{script.relative_to(ROOT)} 未产出 {FINDERSYNC_APPEX}：.app 不含 FinderSync 扩展")
+        return None
+    return appex
+
+
+def sign_macos_app(ctx: Ctx, app: Path, appex: Path | None) -> str | None:
+    """**由内向外**签名 .app（appex 内可执行 → appex → 宿主内可执行 → 宿主 app）。
+
+    返回实际使用的签名身份（`-` = ad-hoc），没签则 None。顺序不可颠倒：外层先签、
+    内层后动会让外层签名作废，`codesign --verify --deep` 必然失败（04 §5.3）。
+
+    无签名身份时：内嵌了 appex **必须** ad-hoc 签——未签名的内嵌 appex 会让整包
+    `codesign --verify --deep` 报 `code has no resources but signature indicates they
+    must be present`；纯宿主（无 appex）保持原语义：产 unsigned 并告警（04 §9）。
+    """
+    sign_id = ctx.args.macos_sign_id or os.environ.get("HZIP_MACOS_SIGN_ID")
+    if not sign_id and appex is None:
+        # 原语义（对外行为）：没凭据、也没扩展要签 → unsigned .app + 告警
+        warn("未提供 --macos-sign-id / HZIP_MACOS_SIGN_ID：产 unsigned .app（04 §9）")
+        return None
+    if not optional_tool("codesign"):
+        if sign_id:
+            die(f"给了签名身份 {sign_id} 但找不到 codesign")
+        warn("找不到 codesign：产 unsigned .app（04 §9）")
+        return None
+    if sign_id:
+        # 真实身份：硬化运行时 + 可信时间戳（公证与 Gatekeeper 的前提）
+        flags = ["--force", "--options", "runtime", "--timestamp", "--sign", sign_id]
+    else:
+        # ad-hoc：`--options runtime` / `--timestamp` 需真实身份，去掉（04 §5.3）。
+        # 实证 ad-hoc 签的 appex **可被 pluginkit 注册并加载**。
+        log("未提供签名身份，但内嵌了 FinderSync appex → 对整包做 **ad-hoc 签名**（`--sign -`）")
+        log("  （未签名的内嵌 appex 会让 `codesign --verify --deep` 失败；ad-hoc 足以注册，04 §5.3）")
+        flags = ["--force", "--sign", "-"]
+    if appex is not None:
+        ent = FINDERSYNC_DIR / "hzipFinderSync.entitlements"
+        if not ent.exists():
+            die(f"找不到 {ent.relative_to(ROOT)}：appex 必须带 app-sandbox/App-Group entitlement（04 §5.3）")
+        # (a) appex 内可执行 (b) appex 包本身——两层都带 entitlements
+        for layer in (appex / "Contents/MacOS" / FINDERSYNC_EXECUTABLE, appex):
+            run(["codesign", *flags, "--entitlements", str(ent), str(layer)])
+    # (c) 宿主内可执行
+    for name in ("hzip", "hzip-gui"):
+        run(["codesign", *flags, str(app / "Contents/MacOS" / name)])
+    # (d) 宿主 app 最外层
+    run(["codesign", *flags, str(app)])
+    # 自证：整条签名链（含 appex）逐层校验
+    run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
+    return sign_id or "-"
+
+
 def build_dmg(ctx: Ctx, targets: list[Target]) -> None:
     require_host("dmg", "hdiutil/iconutil 是 macOS 工具")
     for tool in ("hdiutil", "iconutil", "sips"):
@@ -1024,6 +1110,14 @@ def build_dmg(ctx: Ctx, targets: list[Target]) -> None:
     res.mkdir(parents=True, exist_ok=True)
     macos_bin.mkdir(parents=True, exist_ok=True)
     stage_bins(ctx, targets, macos_bin)
+    # FinderSync appex（右键菜单，04 §5.3）：编译 → 内嵌进 Contents/PlugIns/。
+    # 先于签名落地：由内向外签名要求 appex 在签宿主之前就位。
+    plugins = app / "Contents/PlugIns"
+    appex = build_findersync_appex(ctx, universal=univ)
+    if appex is not None:
+        plugins.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(appex, plugins / FINDERSYNC_APPEX, symlinks=True)
+        log(f"  内嵌 FinderSync 扩展：Contents/PlugIns/{FINDERSYNC_APPEX}")
     # GPL-3.0 随二进制附许可全文的义务：放进 Contents/Resources（macOS 约定位置），
     # 用户把 .app 拖进「应用程序」即带走全文。
     for lic in ctx.licenses:
@@ -1051,16 +1145,8 @@ def build_dmg(ctx: Ctx, targets: list[Target]) -> None:
     run(["iconutil", "-c", "icns", str(iconset), "-o", str(res / "AppIcon.icns")])
     ext_lines = "\n".join(f"                <string>{e}</string>" for e in ctx.meta["package"]["extensions"])
     ctx.write(app / "Contents/Info.plist", ctx.render("macos/Info.plist.in", EXT_LIST=ext_lines, **fmt_ctx(ctx)), 0o644)
-    sign_id = ctx.args.macos_sign_id or os.environ.get("HZIP_MACOS_SIGN_ID")
-    if sign_id and not optional_tool("codesign"):
-        die(f"给了签名身份 {sign_id} 但找不到 codesign")
-    if sign_id:
-        for name in ("hzip", "hzip-gui"):
-            run(["codesign", "--force", "--options", "runtime", "--timestamp", "--sign", sign_id, str(macos_bin / name)])
-        run(["codesign", "--force", "--options", "runtime", "--timestamp", "--sign", sign_id, str(app)])
-        run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
-    else:
-        warn("未提供 --macos-sign-id / HZIP_MACOS_SIGN_ID：产 unsigned .app（04 §9）")
+    # FinderSync appex **也是** app 的一部分：签名由内向外（appex 及其内可执行 → 宿主内可执行 → 宿主 app）
+    sign_id = sign_macos_app(ctx, app, plugins / FINDERSYNC_APPEX if appex is not None else None)
     staging = ctx.work / "dmg/staging"
     staging.mkdir(parents=True, exist_ok=True)
     if (staging / "hzip.app").exists():

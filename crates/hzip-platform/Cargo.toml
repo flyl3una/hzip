@@ -31,6 +31,8 @@ notify-rust = "4"
 dirs = { workspace = true }
 # T-CM：右键菜单配置 shell-menu.json（GUI 写 / Windows DLL 读）构造与转义
 serde_json = { workspace = true }
+# T-CM macOS：扩展意图队列 intents.jsonl 的 (de)serialize（ExtensionIntent）
+serde = { workspace = true }
 # T-ICON A2：Linux 图标后端解码主题里的 PNG（只启 png 解码器，不拉全套格式依赖）
 image = { version = "0.25", default-features = false, features = ["png"] }
 
@@ -76,6 +78,10 @@ objc2-app-kit = { workspace = true }
 objc2-foundation = { workspace = true }
 objc2-core-foundation = { workspace = true }
 objc2-uniform-type-identifiers = { workspace = true }
+
+[dev-dependencies]
+# T-CM macOS：扩展意图队列的单测用临时目录（不得污染真实数据目录）
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

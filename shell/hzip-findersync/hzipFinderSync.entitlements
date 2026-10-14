@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sandboxing is mandatory: pkd/pluginkit rejects non-sandboxed
+	     FinderSync extensions ("plug-ins must be sandboxed"). -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The App Group is the only channel shared with the (non-sandboxed)
+	     host: menu.json is read from it, intents.jsonl is appended to it. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.github.hzip.hzip</string>
+	</array>
+</dict>
+</plist>

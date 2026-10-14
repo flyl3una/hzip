@@ -66,5 +66,96 @@
             </array>
         </dict>
     </array>
+    <!-- Services（右键 ▸ 服务）。宿主**必须**自己声明，否则服务轨静默失效：
+         NSRegisterServicesProvider(provider, "hzip") 注册的端口要能被系统找到，
+         前提是 Info.plist 里有 NSPortName = hzip 的服务条目。
+         NSPortName 必须逐字等于 hzip-gui 调用 NSRegisterServicesProvider 时用的端口名；
+         NSMenuItem.default 必须与 crates/hzip-platform/src/context_menu/macos.rs 的
+         `service_identifiers()` 逐字一致（设置页据此写 pbs 的 NSServicesStatus 启用项）。
+         NSRequiredContext 把菜单项限制在 Finder 里（不污染其他应用的「服务」菜单）。
+         声明**硬编码在此**（而非 metadata.toml）：驱动那个极简 TOML 解析器不支持
+         数组-of-表，塞进去会直接 die。 -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Extract Here with hzip</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>extractHereWithHzip</string>
+            <key>NSPortName</key>
+            <string>hzip</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>public.file-url</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSApplicationIdentifier</key>
+                <string>com.apple.finder</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Extract To with hzip</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>extractToWithHzip</string>
+            <key>NSPortName</key>
+            <string>hzip</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>public.file-url</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSApplicationIdentifier</key>
+                <string>com.apple.finder</string>
+            </dict>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Compress with hzip</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>compressWithHzip</string>
+            <key>NSPortName</key>
+            <string>hzip</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSFilenamesPboardType</string>
+                <string>public.file-url</string>
+            </array>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSApplicationIdentifier</key>
+                <string>com.apple.finder</string>
+            </dict>
+        </dict>
+    </array>
+    <!-- URL scheme：hzip://（可选保留）。宿主侧暂不靠它派发动作（04 §5.3：`open <scheme>://`
+         不可靠；动作走 App Group 文件队列），这里只做登记，避免 LaunchServices 把
+         hzip:// 判给别的应用。 -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>{{BUNDLE_ID}}</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>hzip</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>

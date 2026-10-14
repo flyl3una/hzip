@@ -52,6 +52,7 @@ python3 build/package/package.py --list
 | Linux | 打包前元数据校验 | `apt install appstream desktop-file-utils`（缺失只告警，`--no-validate` 可跳过） |
 | Linux | appimagetool | **驱动自动下载**（版本+sha256 锁在 `metadata.toml`，缓存 `~/.cache/hzip-package`） |
 | macOS | `hdiutil`/`iconutil`/`sips` | 系统自带（Xcode CLT） |
+| macOS | FinderSync 右键菜单扩展的内嵌 | `swiftc`（Xcode CLT；驱动缺它则跳过 appex，.app 仍产出） |
 | macOS | 签名与公证（可选） | `codesign` + `xcrun notarytool`（04 §5.3） |
 
 Python ≥ 3.8（标准库即可，不需要 pip 包）。CI 上 `ubuntu-latest` / `macos-latest` /
@@ -147,8 +148,17 @@ spec），模板里只留 `{{RPM_RECOMMENDS}}`。
   组件 GUID 是固定字面量（扩展名关联的 GUID 由 `uuid5(固定命名空间, "hzip.installer.ext.<ext>")`
   派生），**发布后不得改动**。
 * **macOS**：`.app` 的 `CFBundleDocumentTypes` 只登记 Viewer + `LSHandlerRank=Alternate`
-  （不抢系统默认程序）；dmg 里放 `Applications` 软链 + 安装说明；签名/公证按 04 §5.3
-  （不给凭据就产 unsigned，**不会**假装签过）。
+  （不抢系统默认程序）；dmg 里放 `Applications` 软链 + 安装说明；驱动自动调用
+  `shell/hzip-findersync/build.sh` 编出 `hzipFinderSync.appex` 并内嵌进
+  `Contents/PlugIns/`，然后**由内向外**签名（appex 内可执行 → appex → 宿主内可执行 →
+  宿主 app，见 04 §5.3）。
+  签名身份经 `--macos-sign-id` / `HZIP_MACOS_SIGN_ID`：给了身份就用 Developer ID
+  （`--options runtime --timestamp`），**没给但内嵌了 appex 就 ad-hoc 签整包**
+  （`--sign -`，实证可被 `pluginkit` 注册加载）——未签名的内嵌 appex 会让
+  `codesign --verify --deep` 失败。既没身份、也没 appex 时才产 unsigned 并告警。
+  公证按 04 §5.3（`--macos-notary-profile`，仅 Developer ID 身份可公证）。
+  宿主 `Info.plist` 的 `NSServices`/`CFBundleURLTypes`（Services 轨 + `hzip://` scheme）
+  **硬编码在模板**——`metadata.toml` 的极简 TOML 解析器不支持数组-of-表。
 * **Linux**：`.desktop` / AppStream 元数据在打包时**先校验再进包**；`.desktop` 名、
   AppStream `<id>`、图标名三者都是 `metadata.toml` 的 `app_id`（GNOME 按 app-id 找图标）。
 * **失败即停**：工具缺失、模板占位符漏填、校验失败、产物缺文件都是硬错误。
@@ -166,5 +176,9 @@ spec），模板里只留 `{{RPM_RECOMMENDS}}`。
 # 2c) macOS：universal 双架构由驱动内建自证（对 lipo 后的 hzip / hzip-gui 跑
 #     `lipo -archs` 核对架构集合——**不要**用 `-verify_arch <arch…> <file>`，那是
 #     Xcode 26 会拒绝的参数顺序）；dmg 内为 hzip.app + Applications 软链 + README.txt
+# 2d) macOS 右键菜单：`hzip.app/Contents/PlugIns/hzipFinderSync.appex` 存在，
+#     `codesign -d --entitlements - <appex>` 有 app-sandbox + App Group；
+#     整包 `codesign --verify --deep --strict --verbose=2 hzip.app` rc=0（含 appex 层）；
+#     宿主 Info.plist 有 NSServices(3 条) 与 CFBundleURLTypes(hzip)
 # 3) 全平台：dist/sha256sums.txt 覆盖每个产物（04 §5.4）
 ```
