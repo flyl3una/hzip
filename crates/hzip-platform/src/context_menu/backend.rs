@@ -1,6 +1,14 @@
-//! 右键菜单的**后端分发**：`backend()` 按编译期选定本平台实现，另有 verb 查表与配置路径。
+//! 右键菜单的**后端分发**：`backend()` 按编译期选定本平台实现，另有 verb 查表、
+//! 配置路径与**宿主侧入口**（扩展意图 watch / macOS Services provider 注册）。
 //!
 //! 类型与 trait 在 `api.rs`；各平台后端同目录 `win.rs` / `macos.rs` / `linux/`。
+//!
+//! # 为什么宿主侧入口放在这里（而不是 `mod.rs`）
+//!
+//! `mod.rs` 按仓库红线 L1 只做模块声明与再导出（`build/checks/layout-conventions.py`）；
+//! 而这两个入口都是「按平台分发」的薄壳——`watch_extension_intents` 取
+//! [`backend()`] 的意图队列路径，`register_services_provider` 转发到 macOS 实现——
+//! 与本文件的职责同源。模块路径（`crate::context_menu::*`）由 `mod.rs` 的再导出保持不变。
 
 use std::path::PathBuf;
 
@@ -44,6 +52,56 @@ pub fn backend() -> &'static dyn ContextMenu {
     {
         &Unsupported
     }
+}
+
+/// 监听 Finder 扩展意图队列（macOS appex/Services → 宿主）。
+///
+/// # 为什么宿主必须自己监听
+///
+/// appex（沙盒）无法向**已运行**的宿主注入 argv，也无法发通知——它只能把意图
+/// 追加进 App Group 容器的 `intents.jsonl`。故宿主必须监听该文件：变更 → 去抖
+/// 回调 → 调用方消费（[`ContextMenu::take_extension_intents`]）。这是「宿主已
+/// 运行时点右键菜单依然生效」的唯一途径（对应 `hzip-forward-queue` 的运行期
+/// watch；缺它则运行期点击是死信）。
+///
+/// 非 macOS 恒 `None`。返回 `None` 也意味着「该平台无此轨」，调用方据此 no-op。
+pub fn watch_extension_intents(
+    on_change: impl Fn(std::path::PathBuf) + Send + 'static,
+) -> Option<crate::watch::FileWatch> {
+    let path = backend().extension_intents_path()?;
+    // watch 目标可能尚不存在（容器目录也可能不存在）：先建目录 + 空文件。
+    // `FileWatch` 监听父目录 + 路径过滤，目标不存在时事件匹配不上。
+    if let Some(dir) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        tracing::warn!("创建 Finder 扩展意图容器失败（watch 不生效）: {e}");
+        return None;
+    }
+    if !path.exists()
+        && let Err(e) = std::fs::File::create(&path)
+    {
+        tracing::warn!("创建 Finder 扩展意图队列失败（watch 不生效）: {e}");
+        return None;
+    }
+    match crate::watch::FileWatch::new(&path, Box::new(on_change)) {
+        Ok(w) => {
+            tracing::debug!("Finder 扩展意图 watch 已挂载: {}", path.display());
+            Some(w)
+        }
+        Err(e) => {
+            tracing::warn!("Finder 扩展意图 watch 挂载失败: {e}");
+            None
+        }
+    }
+}
+
+/// 注册 macOS Services provider（幂等；仅主界面模式、`NSApplication` 起来后调用）。
+///
+/// 必须在 Info.plist 声明 `NSServices` 之后才有意义——否则系统不会派发这些
+/// selector（条目不存在，注册了也没人调）。非 macOS 为 no-op。
+pub fn register_services_provider() {
+    #[cfg(target_os = "macos")]
+    super::macos_services::register_services_provider();
 }
 
 /// 无后端平台（`cross-check` 语法校验期占位；正常运行期不可达）。

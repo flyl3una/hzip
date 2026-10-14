@@ -106,6 +106,13 @@ cargo run --release -p hzip-cli -- --help   # 命令行
 
 ```bash
 cargo test --workspace          # 全工作区测试（gui 用例需串行：-- --test-threads=1）
+
+# push 前一条命令跑完 CI「quality」作业的全部门禁（fmt / clippy -D warnings /
+# cargo deny / 两项仓库红线）。这些门禁都不是「编译不过」级别的问题，cargo test
+# 全绿也照样会红——故建议挂成 pre-push 钩子（脚本头部有一行安装命令）。
+python build/checks/quality-gate.py
+
+# 想单独跑：
 cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings
 python build/checks/deps-direction.py && python build/checks/layout-conventions.py
 ```
