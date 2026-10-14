@@ -14,6 +14,12 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      upload_packages:
+        description: 手动触发时把三平台 smoke 安装包作为 artifact 上传（只想拿安装包时勾它；push/PR 行为不变）
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -189,8 +195,11 @@ jobs:
       - name: cargo test --doc
         run: cargo test --workspace --doc
 
-  # 打包相关文件一动就真打一次包（Linux + Windows x86_64），模板/驱动坏了在 PR 就红；
-  # 不发布、不上传产物（04 §6.1）。矩阵与命令与发版**同源**（都调 package.yml）。
+  # 打包相关文件一动就真打一次包（Windows x86_64 + macOS universal + Linux x86_64，
+  # 即 package.yml 里 smoke:true 的格），模板/驱动坏了在 PR 就红。矩阵与命令与发版
+  # **同源**（都调 package.yml）。
+  # 产物默认**不留**（push/PR 只为「早点红」）；要下载安装包就手动触发本工作流并勾
+  # `upload_packages`（见下面的 package-smoke）。全平台矩阵 + Release 只由 release.yml 产出。
   changes:
     runs-on: ubuntu-latest
     # paths-filter 在 PR 上要读改动文件列表：显式 permissions 会让未列出的 scope 归零，
@@ -218,8 +227,16 @@ jobs:
 
   package-smoke:
     needs: changes
-    if: needs.changes.outputs.package == 'true'
+    # 两个入口：
+    #   ① 打包相关文件变动（`changes` 的 paths-filter）→ 真打一遍包，模板/驱动坏了在 PR 就红；
+    #   ② **手动触发**（workflow_dispatch）→ 放行，且可由 `upload_packages` 决定是否留产物。
+    # 为什么手动要单独放行：paths-filter 在手动触发时没有可比对的 diff（改动集恒空 ⇒
+    # 恒 false），而「我只想下载一份安装包」的人不该被迫先去改一个 build/package 的文件。
+    if: needs.changes.outputs.package == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/package.yml
     with:
       scope: smoke
-      upload: false
+      # push/PR 的 smoke 只为「早点红」，不留产物（04 §6.1）；手动触发时由输入决定是否
+      # 把 3 格产物留成 artifact（14 天）——那才是「从 CI 拿安装包」的路
+      # （想连 arm64 两格一起要，就走 release.yml：打 tag 或手动演练）。
+      upload: ${{ inputs.upload_packages || false }}

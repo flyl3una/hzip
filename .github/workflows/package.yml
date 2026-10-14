@@ -27,7 +27,7 @@ on:
         type: string
         default: all
       upload:
-        description: 是否上传产物 artifact（release 需要；smoke 不需要）
+        description: 是否上传产物 artifact；release 恒 true，ci 的 smoke 由手动触发的 upload_packages 决定
         type: boolean
         default: true
 
