@@ -150,11 +150,7 @@ fn parse_intents_ignores_blank_lines_and_empty_input() {
 fn take_intents_truncates_but_keeps_file() {
     let dir = tempfile::tempdir().expect("tmpdir");
     let q = dir.path().join("intents.jsonl");
-    std::fs::write(
-        &q,
-        "{\"key\":\"extract_here\",\"paths\":[\"/a.zip\"]}\n",
-    )
-    .unwrap();
+    std::fs::write(&q, "{\"key\":\"extract_here\",\"paths\":[\"/a.zip\"]}\n").unwrap();
 
     let first = take_intents_at(&q);
     assert_eq!(first.len(), 1, "首次消费应读到 1 条");

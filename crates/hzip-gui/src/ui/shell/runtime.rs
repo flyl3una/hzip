@@ -1611,6 +1611,13 @@ fn intents_of_argv(argv: &[String]) -> Vec<LaunchIntent> {
 /// 同源，扩展侧绝不自己拼 argv。
 ///
 /// [`VERBS`]: hzip_platform::context_menu::VERBS
+//
+// 非 macOS 主机上（Windows/Linux）本函数的唯一两处调用都在同一文件里被
+// `#[cfg(target_os = "macos")]` 关掉了 ⇒ 它会「存在但没人调」，`clippy -D warnings`
+// 的 dead_code 直接判红。按仓库既有口径（见 `hzip-platform/src/context_menu/mod.rs`
+// 的 macos/linux 模块）用 `cfg_attr` **精确**放行：只对非 macOS 构建关掉这条 lint，
+// 函数本体照样参与编译与类型检查（不留覆盖空洞）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn intents_of_extension(
     intents: &[hzip_platform::context_menu::ExtensionIntent],
 ) -> Vec<LaunchIntent> {
@@ -1632,7 +1639,13 @@ pub(crate) fn intents_of_extension(
                     .map(|p| {
                         template
                             .iter()
-                            .map(|a| if *a == "%SEL" { p.clone() } else { (*a).to_string() })
+                            .map(|a| {
+                                if *a == "%SEL" {
+                                    p.clone()
+                                } else {
+                                    (*a).to_string()
+                                }
+                            })
                             .collect()
                     })
                     .collect()

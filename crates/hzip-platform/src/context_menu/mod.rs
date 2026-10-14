@@ -37,8 +37,8 @@ mod api;
 mod backend;
 
 pub use api::{
-    COMPONENT_CLSID, ContextMenu, EntrySpec, ExtensionIntent, InstallMode, InstallReport, MenuEntry,
-    MenuError, MenuErrorKind, MenuScope, MenuSpec, MenuStatus, VERBS, entry_for,
+    COMPONENT_CLSID, ContextMenu, EntrySpec, ExtensionIntent, InstallMode, InstallReport,
+    MenuEntry, MenuError, MenuErrorKind, MenuScope, MenuSpec, MenuStatus, VERBS, entry_for,
 };
 pub use backend::{backend, menu_config_path};
 

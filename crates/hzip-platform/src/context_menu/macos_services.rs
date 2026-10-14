@@ -32,9 +32,7 @@ use std::sync::LazyLock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{
-    NSPasteboard, NSPasteboardTypeFileURL, NSRegisterServicesProvider,
-};
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL, NSRegisterServicesProvider};
 use objc2_foundation::{NSArray, NSString, NSURL};
 
 use super::{ExtensionIntent, backend};

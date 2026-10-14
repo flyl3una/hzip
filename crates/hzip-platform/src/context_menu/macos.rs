@@ -231,9 +231,8 @@ impl ContextMenu for Mac {
     }
 
     fn append_extension_intent(&self, intent: &ExtensionIntent) -> Result<(), MenuError> {
-        append_intent_at(&intents_path(), intent).map_err(|e| {
-            MenuError::new(MenuErrorKind::Io, format!("写入扩展意图队列失败: {e}"))
-        })
+        append_intent_at(&intents_path(), intent)
+            .map_err(|e| MenuError::new(MenuErrorKind::Io, format!("写入扩展意图队列失败: {e}")))
     }
 
     fn extension_intents_path(&self) -> Option<PathBuf> {
@@ -262,7 +261,10 @@ impl ContextMenu for Mac {
         let json = serde_json::to_string_pretty(&value)
             .map_err(|e| MenuError::new(MenuErrorKind::Io, format!("序列化菜单配置失败: {e}")))?;
         std::fs::write(&path, json).map_err(|e| {
-            MenuError::new(MenuErrorKind::Io, format!("回写 {} 失败: {e}", path.display()))
+            MenuError::new(
+                MenuErrorKind::Io,
+                format!("回写 {} 失败: {e}", path.display()),
+            )
         })?;
         Ok(true)
     }
@@ -352,8 +354,12 @@ fn write_menu_file(spec: &MenuSpec) -> Result<(), MenuError> {
         )
     })?;
     let path = menu_path();
-    std::fs::write(&path, json)
-        .map_err(|e| MenuError::new(MenuErrorKind::Io, format!("写 {} 失败: {e}", path.display())))
+    std::fs::write(&path, json).map_err(|e| {
+        MenuError::new(
+            MenuErrorKind::Io,
+            format!("写 {} 失败: {e}", path.display()),
+        )
+    })
 }
 
 /// 删除菜单配置与意图队列（幂等）。

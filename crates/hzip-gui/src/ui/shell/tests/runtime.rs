@@ -339,8 +339,12 @@ fn extension_intent_expands_per_verb_placeholder() {
         paths: vec!["/a.zip".into(), "/b.7z".into()],
     }]);
     assert_eq!(per.len(), 2, "%SEL 应逐路径展开成两条 argv");
-    assert!(matches!(&per[0], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/a.zip"));
-    assert!(matches!(&per[1], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/b.7z"));
+    assert!(
+        matches!(&per[0], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/a.zip")
+    );
+    assert!(
+        matches!(&per[1], LaunchIntent::ExtractHere { path } if path.to_string_lossy() == "/b.7z")
+    );
 
     // `%SELS`（一条 argv 收全批，用于压缩/参数窗）：两个输入 → 一条批次意图。
     let batch = intents_of_extension(&[ExtensionIntent {
