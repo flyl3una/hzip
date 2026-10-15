@@ -752,6 +752,206 @@ fn open_flow_installs_session_then_enters_and_leaves_container(cx: &mut gpui_kit
     );
 }
 
+/// 组合档（`.tar.gz`/`.tgz`）**退回外层再进**：进到的必须还是那一层（用户实测
+/// 2026-10-14，测试包 `bh_auto_ops.itr2.x86_64.tgz`）。
+///
+/// 复现路径：① 打开 `.tgz`（延迟展开 = 单行内层容器 `….tar`）→ ② 双击那一行
+/// 进内层 tar 会话 → ③ 从内层 `..` 退回外层 → ④ **再双击那一行**。
+///
+/// 修前：② 把外层帧的浏览器摘走后**再没放回**（`is_open()` 为假、
+/// `deferred_layer()` 为 `None`），④ 于是不走延迟展开、走「按条目物化」兜底——
+/// 合成行的 `id = 0` 撞上重开 reader 的**内层容器条目空间**，解出来的是那个 tar
+/// 的**首个条目**（用户包里正是 `ops.tgz`）⇒ 父层直接显示子压缩包的 `ops/`
+/// 层级，父层自己的结构反倒看不见也进不去。
+///
+/// 断言面：③ 后外层仍是「有浏览态 + 延迟层」；④ 进到的是那一层**自身**的内容
+/// （`mid.tar` + `keep.txt`），而不是它某个条目的内容（`ops/`）。
+#[gpui_kit::test]
+fn composite_parent_reenter_keeps_its_own_layer(cx: &mut gpui_kit::TestAppContext) {
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let data_for_window = data.clone();
+    let shell_slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = shell_slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let app_shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_for_window.clone()),
+            Some(tx.clone()),
+        );
+        let app_shell = cx.new(|_| app_shell);
+        *slot2.borrow_mut() = Some(app_shell.clone());
+        let view: gpui_kit::AnyView = app_shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = shell_slot.borrow().clone().expect("shell 实体");
+    let wait = |vtcx: &mut gpui_kit::VisualTestContext, what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}：10s 内未完成");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            vtcx.run_until_parked();
+        }
+    };
+    let gz = |raw: &[u8]| -> Vec<u8> {
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut enc, raw).expect("gzip 写");
+        enc.finish().expect("gzip 收尾")
+    };
+    let row_names = |d: &crate::app::state::AppData| -> Vec<String> {
+        let mut names: Vec<String> = d.dir_rows.iter().map(|r| r.name.to_string()).collect();
+        names.sort();
+        names
+    };
+    // 夹具形状照抄用户包：`outer.tar.gz` = gzip(tar)，tar 的**首个条目**是内层
+    // 压缩包（`mid.tar` 里是 `ops/x.txt`）——首条目正是修前被误当成那一行的东西。
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let mid = dir.path().join("mid.tar");
+    crate::viewmodel::testutil::write_ustar(&mid, &[("ops/x.txt", b"x")]);
+    let mid_bytes = std::fs::read(&mid).expect("读 mid");
+    let outer_tar = dir.path().join("outer.tar");
+    crate::viewmodel::testutil::write_ustar(
+        &outer_tar,
+        &[("mid.tar", &mid_bytes), ("keep.txt", b"k")],
+    );
+    let outer = dir.path().join("outer.tar.gz");
+    std::fs::write(
+        &outer,
+        gz(&std::fs::read(&outer_tar).expect("读 outer.tar")),
+    )
+    .expect("写 .tar.gz");
+
+    // ① 打开外层（`--open` 那条路；组合档延迟展开 → 单行 `outer.tar`）
+    let task = vtcx.update(|_, cx| {
+        crate::ui::shell::open_archive_task(cx, data.clone(), outer.clone(), false)
+    });
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    {
+        let probe = data.clone();
+        wait(vtcx, "打开外层档案", &|| {
+            probe.lock().map(|d| d.main.is_open()).unwrap_or(false)
+        });
+    }
+    vtcx.run_until_parked();
+    {
+        let mut d = data.lock().unwrap();
+        d.rebuild_browse_rows();
+        assert_eq!(
+            row_names(&d),
+            vec!["outer.tar".to_string()],
+            "延迟展开：列表只有那一行内层容器"
+        );
+        assert_eq!(d.main.deferred_layer(), Some("outer.tar"));
+    }
+
+    // ② 双击那一行 → 进内层 tar 会话（外层帧压栈）
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.open_container("outer.tar", cx));
+    });
+    {
+        let probe = data.clone();
+        wait(vtcx, "进入延迟层", &|| {
+            probe
+                .lock()
+                .map(|d| d.export_snapshot().nested)
+                .unwrap_or(false)
+        });
+    }
+    {
+        let mut d = data.lock().unwrap();
+        d.rebuild_browse_rows();
+        assert_eq!(
+            row_names(&d),
+            vec!["keep.txt".to_string(), "mid.tar".to_string()],
+            "内层会话 = 这个 tar 自己的条目"
+        );
+        // 就地展开出的这一层没有自己的文件 —— 面包屑根必须显示**这一层**的名字
+        // （`outer.tar.gz › outer.tar`），不是把外层档案名重复一遍
+        let snap = d.export_snapshot();
+        assert_eq!(snap.archive_name, "outer.tar");
+        assert_eq!(
+            snap.crumbs
+                .iter()
+                .map(|c| (c.label.as_str(), c.level))
+                .collect::<Vec<_>>(),
+            vec![("outer.tar.gz", 1), ("outer.tar", 0)],
+            "面包屑 = 外层组合档 › 内层容器（与「双击内层压缩包」同构）"
+        );
+    }
+
+    // ③ 退回外层：外层帧必须是**活的**（有浏览态 + 仍是延迟层）
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.leave_container(cx));
+    });
+    vtcx.run_until_parked();
+    {
+        let mut d = data.lock().unwrap();
+        assert!(!d.export_snapshot().nested, "已退回外层");
+        assert!(
+            d.main.is_open(),
+            "退回后外层必须有浏览态（修前：浏览器被摘走再没放回）"
+        );
+        assert_eq!(
+            d.main.deferred_layer(),
+            Some("outer.tar"),
+            "退回后外层仍停在延迟层（同一行要能再进）"
+        );
+        d.rebuild_browse_rows();
+        assert_eq!(row_names(&d), vec!["outer.tar".to_string()]);
+    }
+
+    // ④ 再双击那一行：必须进到「这一层」，而不是它某个条目的内容
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.open_container("outer.tar", cx));
+    });
+    {
+        let probe = data.clone();
+        wait(vtcx, "再次进入延迟层", &|| {
+            probe
+                .lock()
+                .map(|d| d.export_snapshot().nested)
+                .unwrap_or(false)
+        });
+    }
+    {
+        let mut d = data.lock().unwrap();
+        d.rebuild_browse_rows();
+        let names = row_names(&d);
+        assert_eq!(
+            names,
+            vec!["keep.txt".to_string(), "mid.tar".to_string()],
+            "再进 = 那一层自身的内容（修前：解出首条目 mid.tar 的内容 = `ops/`）"
+        );
+        assert!(
+            !d.dir_rows.iter().any(|r| r.path == "ops"),
+            "父层绝不该显示子压缩包内部的 `ops/`"
+        );
+    }
+}
+
 /// 工具栏/菜单「设置」→ **设置页签**（2026-09-23：设置由弹层改为页签）。
 ///
 /// 断言面：① 页签打开态 + 当前页签 = Settings + 面板实体已装配；② **不再

@@ -1584,7 +1584,15 @@ impl AppData {
     }
 
     /// **当前会话**的源档案名（嵌套层 = 内层档案名；空 = 未打开）。
+    ///
+    /// 组合档**就地展开**出的那一层（`a.cpio.gz` → `a.cpio`）没有自己的文件：
+    /// 名字取展开链末段，否则面包屑/标题会把外层档案名重复一遍
+    /// （`a.cpio.gz / a.cpio.gz`），而设计口径是与「双击内层压缩包」同构的
+    /// `a.cpio.gz / a.cpio`（03 TC-GUI-115/116）。
     pub fn current_archive_name(&self) -> String {
+        if let Some(name) = self.main.in_place_layer() {
+            return name.to_string();
+        }
         self.main
             .source_path()
             .and_then(|p| p.file_name())
@@ -1622,11 +1630,9 @@ impl AppData {
         // 档案名/路径取**当前会话**的源档案：嵌套会话下 `self.archive` 仍是
         // 顶层档案（解压目标/MRU 的语义要它），而标题与面包屑根要的是内层名。
         let source = self.main.source_path().map(|p| p.to_path_buf());
-        let archive_name = source
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        // 标题/面包屑根 = 本会话层名（就地展开的延迟层没有自己的文件，名字取自
+        // 展开链——见 `current_archive_name`）
+        let archive_name = self.current_archive_name();
         // 路径（标题 tooltip）用**外层实体档案**：嵌套会话的源是临时文件，
         // 把它塞进 tooltip 只会让人一头雾水；嵌套层级由面包屑负责表达。
         let archive_path = if self.open_stack.is_empty() {

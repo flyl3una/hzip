@@ -379,7 +379,7 @@ impl AppShell {
                     use crate::viewmodel::MainViewModel;
                     detail.set_phase(crate::tr("openprogress.phase_expand_layer"));
                     // ① 锁内（微秒）：把浏览器**摘出** AppData + 引擎/源路径
-                    let (engine, mut browser, src) = {
+                    let (engine, browser, src) = {
                         let mut d = data.lock().map_err(|_| "state 锁中毒".to_string())?;
                         let browser = d
                             .main
@@ -394,17 +394,10 @@ impl AppShell {
                     };
                     // ② **锁外、后台线程**：唯一耗时的一步（装配解码链 → 内层容器
                     //    落 spool → 索引）。此前这一步在锁内跑，界面整体冻住。
+                    //    `enter_deferred` 是只读借用（本层延迟态不消费）——于是
+                    //    ③ 能把这一层浏览器**原样放回**帧里（见下）。
                     match browser.enter_deferred(engine.registry()) {
                         Ok(child_browser) => {
-                            // 落账前比对代数：已被更新的换会话顶替 → 丢弃结果
-                            // （否则旧档案的内层会盖掉用户刚打开的新档案）
-                            let current = data
-                                .lock()
-                                .map(|d| d.session_switch_is_current(epoch))
-                                .unwrap_or(false);
-                            if !current {
-                                return Err(SESSION_SUPERSEDED.to_string());
-                            }
                             // ③ 锁内落账：先在子 VM 上装好（失败可回退），再一次性换
                             //    会话——不留下「已压栈但会话为空」的半成品
                             let mut child = MainViewModel::new();
@@ -416,12 +409,25 @@ impl AppShell {
                                 return Err(hz_reason(&e));
                             }
                             let mut d = data.lock().map_err(|_| "state 锁中毒".to_string())?;
+                            // 落账前比对代数（与常规嵌套路径同款）：期间被更新的换
+                            // 会话顶替 → 丢弃结果，**且不得**把外层浏览器放进新会话
+                            // （它属于旧档案）
+                            if !d.session_switch_is_current(epoch) {
+                                return Err(SESSION_SUPERSEDED.to_string());
+                            }
+                            // **外层帧的浏览器必须放回**（用户实测 2026-10-14）：
+                            // 不放回的话，退回这一层后 `deferred_layer()` 读到
+                            // `None`、`is_open()` 为假——「看不到也进不了父压缩包」，
+                            // 且同一行会走按条目物化的兜底路径，把**内层容器的首个
+                            // 条目**当成那一行解出来（`bh_auto_ops.itr2.x86_64.tgz`
+                            // 双击 `….tar` 行直接进 `ops/`）。
+                            d.main.restore_browser(browser);
                             d.begin_nested_session(&entry_path);
                             d.main = child;
                             Ok(())
                         }
                         Err(e) => {
-                            // core 在失败时已把延迟态放回 `browser` → 原样还回会话
+                            // `enter_deferred` 纯读、失败不改本层状态 → 原样还回会话
                             // （可重试，不是死局）
                             if let Ok(mut d) = data.lock() {
                                 d.main.restore_browser(browser);

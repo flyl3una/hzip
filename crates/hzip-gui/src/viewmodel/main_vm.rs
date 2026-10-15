@@ -543,6 +543,18 @@ impl MainViewModel {
         self.browser.as_ref().and_then(|b| b.deferred_layer())
     }
 
+    /// **就地展开**出来的内层容器名（组合档 `a.cpio.gz` 展开成 `a.cpio` 的那一层）。
+    ///
+    /// 这类嵌套层**没有自己的文件**——展开链（`Browser::path`）的末段才是它这一层
+    /// 的名字，也是面包屑/标题该显示的名字（与「双击内层压缩包」物化出的 `b.7z`
+    /// 同构，见 03 TC-GUI-115/116）。无展开链（根层 / 物化出来的嵌套层）→ `None`。
+    pub fn in_place_layer(&self) -> Option<&str> {
+        self.browser
+            .as_ref()
+            .and_then(|b| b.path().last())
+            .map(|n| n.as_str().rsplit('/').next().unwrap_or(n.as_str()))
+    }
+
     /// **摘下**会话浏览器（重活在锁外跑的唯一手法）。
     ///
     /// 展开延迟层这类操作耗时按秒~分钟计（装配解码链 + 内层容器落 spool + 索引），
@@ -554,8 +566,11 @@ impl MainViewModel {
     /// 而 `deferred_layer()` 等读到 `None`——同一行的再次双击由
     /// `AppData::session_switch` 闸挡掉，不会误走嵌套容器路径。
     ///
-    /// **放回**见 [`Self::restore_browser`]（失败路径必须放回：core 在失败时把延迟态
-    /// 放回了 `Browser` 自己，还回去即可原样重试）。
+    /// **放回**见 [`Self::restore_browser`]（每个摘下点都必须放回）：延迟层展开
+    /// 是唯一「摘出后还要把这一层留在会话栈里」的用法——`Browser::enter_deferred`
+    /// 只读借用、**不消费**本层延迟态，展开完成后原浏览器放回帧即可（用户实测
+    /// 2026-10-14：不放回 = 退回父层后 `deferred_layer()` 为 `None`、`is_open()`
+    /// 为假，同一行被按条目物化解成**内层容器的首条目** → 父层显示子压缩包内容）。
     pub fn take_browser(&mut self) -> Option<Browser> {
         self.browser.take()
     }

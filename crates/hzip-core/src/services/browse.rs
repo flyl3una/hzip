@@ -40,6 +40,9 @@ pub struct Browser {
     /// 索引内层容器」整段推迟到用户在列表/树里双击那一层
     /// （[`Browser::enter_deferred`]）。此前打开即展开——实测 940 MB 的
     /// `.cpio.gz` 打开要 10+ 秒（无进度）、3.9 GB 的 initramfs 更要落同量临时盘。
+    ///
+    /// `Some` 期间 `reader` 恒为 `None`；**展开后不清**（本层留作「可再进的层」
+    /// ——GUI 退回本层后同一行还要能再展开，见 [`Browser::enter_deferred`]）。
     deferred: Option<DeferredComposite>,
 }
 
@@ -364,35 +367,29 @@ impl Browser {
     /// 落 spool → 索引。故先跑临时盘预检（HZ-1002 快速失败），再由 registry 以
     /// **原源**走完整组合路径（与「打开即展开」时代的产物逐字相同）。
     ///
+    /// **只读借用（`&self`）：本层延迟态**不**被消费**（用户实测 2026-10-14）。
+    /// GUI 把本层会话整体压栈后要能原样退回**并再进**（退回 `.tgz` 层再双击那
+    /// 一行）。旧实现 `self.deferred.take()` 一被调用，外层帧就永久成「无浏览
+    /// 态」：`deferred_layer()` 变 `None`，同一行走**按条目物化**的兜底路径，
+    /// 而那张合成行的 `id = 0` 对应的是重开 reader 的**内层容器条目空间**——
+    /// `read_entry(0)` 解出来的是内层容器的首条目，于是父层直接显示子压缩包的
+    /// 内容（`bh_auto_ops.itr2.x86_64.tgz` 双击 `….tar` 那行直接进 `ops/`）。
+    ///
+    /// 失败可重试：展开是「按需加载」，一次失败（磁盘满、档案被删）不该把会话
+    /// 变成打不开的死局。本方法纯读——失败时本层状态逐字不变，再点一次即可重试
+    /// （存路径而非 `Source` 正是为此：源可重放）。
+    ///
     /// 非延迟档 → `Err Unsupported`（GUI 的嵌套容器路径不该走到这）。
-    pub fn enter_deferred(&mut self, registry: &FormatRegistry) -> Result<Browser, HzipError> {
-        let Some(d) = self.deferred.take() else {
+    pub fn enter_deferred(&self, registry: &FormatRegistry) -> Result<Browser, HzipError> {
+        let Some(d) = self.deferred.as_ref() else {
             return Err(HzipError::Unsupported {
                 what: "hz-5003 not-deferred-composite".into(),
             });
         };
-        // 失败可重试：展开是「按需加载」，一次失败（磁盘满、档案被删）不该把会话
-        // 变成打不开的死局——故任一失败都把延迟态**放回**（存路径而非 `Source`
-        // 正是为此：源可重建）。
-        let reopen = || {
-            let src = Source::File(d.path.clone());
-            crate::services::space::precheck_open_temp_space(registry, &src)
-                .and_then(|()| registry.open_reader(src, &OpenOptions::default()))
-        };
-        let reader = match reopen() {
-            Ok(r) => r,
-            Err(e) => {
-                self.deferred = Some(d);
-                return Err(e);
-            }
-        };
-        let entries = match reader.entries() {
-            Ok(v) => v,
-            Err(e) => {
-                self.deferred = Some(d);
-                return Err(e);
-            }
-        };
+        let src = Source::File(d.path.clone());
+        let reader = crate::services::space::precheck_open_temp_space(registry, &src)
+            .and_then(|()| registry.open_reader(src, &OpenOptions::default()))?;
+        let entries = reader.entries()?;
         tracing::info!(
             layer = %d.inner_name,
             handler = %d.handler_id,
@@ -401,7 +398,7 @@ impl Browser {
             "组合档内层容器已展开"
         );
         let mut path = self.path.clone();
-        path.push(hzip_error::EntryName::new(d.inner_name));
+        path.push(hzip_error::EntryName::new(d.inner_name.clone()));
         Ok(Browser {
             reader: Some(reader),
             entries,

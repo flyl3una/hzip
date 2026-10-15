@@ -352,8 +352,9 @@ fn composite_open_defers_inner_container() {
 
     // ② 双击那一层 = 展开（唯一耗时的一步）→ 子会话见 cpio 内真实结构
     //    （与 `shell::open_container` 的延迟分支逐字同路：摘下浏览器 →
-    //     **锁外/后台线程**展开 → 装子会话；见 `take_browser` 文档）
-    let mut browser = vm.take_browser().expect("会话浏览器");
+    //     **锁外/后台线程**展开 → 装子会话 → 原浏览器**放回本层帧**；
+    //     见 `take_browser` 文档）
+    let browser = vm.take_browser().expect("会话浏览器");
     let expanded = browser
         .enter_deferred(eng.registry())
         .expect("展开内层容器");
@@ -372,6 +373,22 @@ fn composite_open_defers_inner_container() {
     // 展开后仍是容器行：容器内的 `.tgz` 条目（若有）走同一套
     assert!(child.tree().is_some());
 
+    // ②b 展开**不消费**本层延迟态：原浏览器放回本层后仍可再进（用户实测
+    //     2026-10-14——退回本层再双击同一行，必须还走延迟展开这条路）
+    vm.restore_browser(browser);
+    assert!(vm.is_open(), "放回后本层仍是「有浏览态」");
+    assert_eq!(vm.deferred_layer(), Some("init.cpio"), "延迟态必须保留");
+    let browser = vm.take_browser().expect("会话浏览器");
+    let again = browser
+        .enter_deferred(eng.registry())
+        .expect("同一行必须能再次展开（退回本层后再进）");
+    assert_eq!(
+        again.entries().len(),
+        child.entries().len(),
+        "再展开得到同一份内层结构"
+    );
+    vm.restore_browser(browser);
+
     // ③ 失败可重试：源被删 → 展开失败，但**会话延迟态保留**（再点一次仍可试，
     //    不会变成打不开的死局——用户口径 2026-09-24 的健壮性要求）
     let browser2 = eng
@@ -385,13 +402,13 @@ fn composite_open_defers_inner_container() {
         .expect("延迟打开");
     let mut vm2 = MainViewModel::new();
     vm2.install_browser(browser2, &ar).expect("装会话");
-    let mut browser2 = vm2.take_browser().expect("会话浏览器");
+    let browser2 = vm2.take_browser().expect("会话浏览器");
     std::fs::remove_file(&ar).unwrap();
     assert!(
         browser2.enter_deferred(eng.registry()).is_err(),
         "源不在 → 展开必须失败（而不是静默成功）"
     );
-    // core 失败时把延迟态放回了浏览器 → 会话放回它即可原样重试
+    // 展开是纯读 → 浏览器原样放回就是原样重试（延迟态从未被拿走）
     vm2.restore_browser(browser2);
     assert_eq!(
         vm2.deferred_layer(),
