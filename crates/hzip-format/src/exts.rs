@@ -34,6 +34,12 @@ pub enum ExtKind {
     TarComposite,
     /// 单流压缩（gz / bz2 / xz / zst）：解出的是**一个**文件，不是容器。
     Stream,
+    /// 磁盘镜像（`raw`/`img`/`dd`/`qcow2`/`vmdk` 族，含 `qcow2.gz` 这类组合写法）。
+    ///
+    /// 与另两档的差别：它不是「条目列表」型容器，而是**块设备**——内部是分区表 +
+    /// 文件系统，条目由文件系统驱动给出（`hzip-vol` 把它们投影成「分区即顶层目录」）。
+    /// 文件关联页归为「磁盘镜像」一组。
+    Volume,
 }
 
 /// 一个格式族及其扩展名。
@@ -160,6 +166,69 @@ pub const FORMAT_EXTS: &[FormatExts] = &[
         container: None,
         kind: ExtKind::Stream,
         exts: &["zst"],
+    },
+    // —— 磁盘镜像（T-IMG 计划）：`raw` 无魔数（探针按内容结构判），qcow2/vmdk 有魔数；
+    //    组合写法（`*.qcow2.gz` 等）也列出——嗅探按内容装配解码链，UI 若漏列就会出现
+    //    「引擎解得开、菜单/类型列不认」的自相矛盾（tgz 的历史缺陷同型）。
+    FormatExts {
+        format: "raw",
+        container: Some("raw"),
+        kind: ExtKind::Volume,
+        exts: &["raw", "img", "dd"],
+    },
+    FormatExts {
+        format: "raw.gz",
+        container: Some("raw"),
+        kind: ExtKind::Volume,
+        exts: &["raw.gz"],
+    },
+    FormatExts {
+        format: "raw.bz2",
+        container: Some("raw"),
+        kind: ExtKind::Volume,
+        exts: &["raw.bz2"],
+    },
+    FormatExts {
+        format: "raw.xz",
+        container: Some("raw"),
+        kind: ExtKind::Volume,
+        exts: &["raw.xz"],
+    },
+    FormatExts {
+        format: "raw.zst",
+        container: Some("raw"),
+        kind: ExtKind::Volume,
+        exts: &["raw.zst"],
+    },
+    FormatExts {
+        format: "qcow2",
+        container: Some("qcow2"),
+        kind: ExtKind::Volume,
+        exts: &["qcow2", "qcow"],
+    },
+    FormatExts {
+        format: "qcow2.gz",
+        container: Some("qcow2"),
+        kind: ExtKind::Volume,
+        exts: &["qcow2.gz"],
+    },
+    FormatExts {
+        format: "qcow2.xz",
+        container: Some("qcow2"),
+        kind: ExtKind::Volume,
+        exts: &["qcow2.xz"],
+    },
+    FormatExts {
+        format: "vmdk",
+        container: Some("vmdk"),
+        kind: ExtKind::Volume,
+        exts: &["vmdk"],
+    },
+    FormatExts {
+        format: "vmdk.gz",
+        container: Some("vmdk"),
+        kind: ExtKind::Volume,
+        exts: &["vmdk.gz"],
     },
 ];
 

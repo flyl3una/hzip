@@ -221,6 +221,9 @@ pub struct BrowseRow {
     pub is_dir: bool,
     /// 是否文件型容器（zip/7z/…）
     pub is_container: bool,
+    /// 是否**磁盘镜像的分区行**：图标走 `HardDrive`、类型列显示文件系统、
+    /// 无标签时显示语言化的「分区 N」（元数据来自 `VolumeRowMeta`，不靠名字猜）。
+    pub is_partition: bool,
     /// 是否加密
     pub encrypted: bool,
     /// 可疑编码 ⚠ 徽标

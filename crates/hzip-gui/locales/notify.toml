@@ -137,3 +137,30 @@ zh-CN = "用法: hzip-gui [--open <档案>] [--extract-here <档案>]\n      [--
 [picker.add_files_title]
 en = "Select Files to Add"
 zh-CN = "选择要添加的文件"
+
+# —— 外部编辑写回（双击用本地程序打开 → 保存 → 写回档案）——
+#
+# 用户实测 2026-10-16：打开 `.qcow2.gz` 里的文件、改完保存后**什么都没发生**
+# （此前只物化 + 起外部程序，没有写回通路）。这几条是「保存发生了但没能写回」的
+# 如实告知——写回成功不必提示（任务中心有任务行 + 既有完成通知）。
+# 文案在**保存那一刻**才出现：只想看看内容的用户不该被提示打扰。
+
+[edit.writeback.title]
+en = "Change not saved back"
+zh-CN = "改动未写回压缩包"
+
+[edit.writeback.nested]
+en = "{name}: this file lives inside a nested container, so saving it does not write back yet. Extract the inner image first, then edit that"
+zh-CN = "{name}：该文件在容器内部（压缩链/嵌套档案），保存暂不会写回压缩包。可先把内层镜像解出来，再编辑解出来的那份"
+
+[edit.writeback.unsupported]
+en = "{name}: this format does not support editing; saving it does not write back"
+zh-CN = "{name}：该格式不支持编辑，保存不会写回"
+
+[edit.writeback.watch-failed]
+en = "{name}: could not watch the temporary file; saving it will not write back"
+zh-CN = "{name}：无法监听临时文件，保存不会写回"
+
+[edit.writeback.failed]
+en = "{name}: write-back failed: {error}"
+zh-CN = "{name}：写回失败：{error}"

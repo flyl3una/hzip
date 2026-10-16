@@ -164,6 +164,19 @@ impl Drop for Engine {
 ///
 /// 依赖红线例外通道：CLI/GUI 经 core 拿格式能力，本函数是唯一 import fmt
 /// crate 的位置（02 §2.1 红线 2）。
+///
+/// 三个 feature 全关（`--no-default-features`）时这里一个 handler 都不注册，
+/// 参数 `reg` 因此未被使用 —— 这是**合法配置**（空注册表 = 「未知格式」），
+/// 不是缺陷，故按键精确放行该告警，而不是把参数改名成 `_reg`（会毁掉公开签名
+/// 的语义与文档链接）。
+#[cfg_attr(
+    not(any(
+        feature = "default-formats",
+        feature = "rar",
+        feature = "volume-formats"
+    )),
+    allow(unused_variables)
+)]
 pub fn register_builtin_handlers(reg: &mut FormatRegistry) -> Result<(), HzipError> {
     #[cfg(feature = "default-formats")]
     {
@@ -182,6 +195,26 @@ pub fn register_builtin_handlers(reg: &mut FormatRegistry) -> Result<(), HzipErr
     #[cfg(feature = "rar")]
     {
         reg.register_handler(Box::new(hzip_fmt_rar::RarHandler::new()))?;
+    }
+    #[cfg(feature = "volume-formats")]
+    {
+        // 磁盘镜像（T-IMG）：文件系统驱动注册表在这里组装一次，再交给各卷容器
+        // （`hzip-vol` 不依赖任何 `hzip-fs-*`，靠这条注入避免依赖倒置）。
+        let mut fs_registry = hzip_vol::registry::FsRegistry::new();
+        fs_registry.register(Box::new(hzip_fs_ext4::Ext4Driver::new()));
+        fs_registry.register(Box::new(hzip_fs_fat::FatDriver::new()));
+        fs_registry.register(Box::new(hzip_fs_ntfs::NtfsDriver::new()));
+        fs_registry.register(Box::new(hzip_fs_xfs::XfsDriver::new()));
+        let fs_registry = std::sync::Arc::new(fs_registry);
+
+        // 卷容器：raw 无魔数（内容探针）；qcow2 有魔数（大端 `QFI\xfb`）；vmdk 待其任务收口。
+        reg.register_handler(Box::new(hzip_fmt_raw::RawHandler::new(fs_registry.clone())))?;
+        reg.register_handler(Box::new(hzip_fmt_qcow2::Qcow2Handler::new(
+            fs_registry.clone(),
+        )))?;
+        reg.register_handler(Box::new(hzip_fmt_vmdk::VmdkHandler::new(
+            fs_registry.clone(),
+        )))?;
     }
     Ok(())
 }

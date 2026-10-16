@@ -751,35 +751,70 @@ fn check_group(
     list.into_any_element()
 }
 
+/// 关联页分组表（**顺序即展示顺序**）。
+///
+/// 硬性不变量：`hzip_format::exts::ExtKind` 的**每个变体都必须在这里出现**。漏一个的
+/// 后果不是编译错误，而是**整组扩展名在关联页里凭空消失**——2026-10-16 用户实测缺陷：
+/// `ExtKind::Volume` 这一档没登记，于是 `raw`/`img`/`dd`/`qcow2`/`vmdk` 全都没有勾选框
+/// （引擎认得、打开也正常，只是关联页看不到）。`ui/views/tests` 有一条覆盖性用例钉住
+/// 本不变量：新增变体而不登记 ⇒ 当场红。
+pub(crate) const ASSOC_GROUPS: &[(hzip_format::exts::ExtKind, &str, &str)] = &[
+    (
+        hzip_format::exts::ExtKind::Archive,
+        "archive",
+        "assoc.group.archive",
+    ),
+    (
+        hzip_format::exts::ExtKind::TarComposite,
+        "composite",
+        "assoc.group.composite",
+    ),
+    (
+        hzip_format::exts::ExtKind::Stream,
+        "stream",
+        "assoc.group.stream",
+    ),
+    (
+        hzip_format::exts::ExtKind::Volume,
+        "volume",
+        "assoc.group.volume",
+    ),
+];
+
+/// 关联页某组的扩展名清单（`candidates` 之内、单点扩展名）。
+///
+/// 渲染与回归用例共用（用例断言「每个候选都能落到某一组」，即「页面上有勾选框」）。
+pub(crate) fn assoc_group_exts(
+    kind: hzip_format::exts::ExtKind,
+    candidates: &[String],
+) -> Vec<&'static str> {
+    use hzip_format::exts::FORMAT_EXTS;
+    FORMAT_EXTS
+        .iter()
+        .filter(|e| e.kind == kind)
+        .flat_map(|e| e.exts.iter().copied())
+        .filter(|e| !e.contains('.') && candidates.iter().any(|c| c == e))
+        .collect()
+}
+
 /// 文件关联候选勾选（候选 = 本构建可关联的单点扩展名，见
 /// [`crate::ui::contracts::associable_extensions`]）。
 ///
 /// 版式（用户要求「一行多个选项」，参考 Bandizip）：按
-/// [`hzip_format::exts::ExtKind`] 分三组，每组一个小标题 + **流式换行的等宽
-/// 勾选格**（`flex_wrap`：窗宽变化时列数自然增减）。
+/// [`hzip_format::exts::ExtKind`] 分组（组表 = [`ASSOC_GROUPS`]），每组一个小标题 +
+/// **流式换行的等宽勾选格**（`flex_wrap`：窗宽变化时列数自然增减）。
 ///
 /// 展示清单**取自表**（表序）而非候选数组：候选只用于「本构建是否可用」判定，
 /// 顺序与分组由 `hzip_format::exts` 单独决定——两处派生自同一张表，不会漂移。
 fn assoc_group(view: &SettingsView, id: SettingId, ctx: &PageCtx, cx: &App) -> AnyElement {
-    use hzip_format::exts::{ExtKind, FORMAT_EXTS};
-
     let checked = view.set_of(id);
     let candidates = view.assoc_candidates();
     let m = crate::ui::spacing::metrics();
     let mut col = v_flex().gap(m.gap_lg()).w_full();
 
     let mut first_group = true;
-    for (kind, key, label_key) in [
-        (ExtKind::Archive, "archive", "assoc.group.archive"),
-        (ExtKind::TarComposite, "composite", "assoc.group.composite"),
-        (ExtKind::Stream, "stream", "assoc.group.stream"),
-    ] {
-        let exts: Vec<&str> = FORMAT_EXTS
-            .iter()
-            .filter(|e| e.kind == kind)
-            .flat_map(|e| e.exts.iter().copied())
-            .filter(|e| !e.contains('.') && candidates.iter().any(|c| c == e))
-            .collect();
+    for (kind, key, label_key) in ASSOC_GROUPS.iter().copied() {
+        let exts = assoc_group_exts(kind, candidates);
         if exts.is_empty() {
             continue;
         }

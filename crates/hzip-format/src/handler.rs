@@ -9,9 +9,10 @@ use std::path::PathBuf;
 
 use hzip_error::HzipError;
 
-use crate::caps::{EncryptionRequest, FormatCaps};
+use crate::caps::{EncryptionRequest, FormatCaps, VolumeWriteMode};
 use crate::editor::ArchiveEditor;
 use crate::reader::ArchiveReader;
+use crate::sniffer::Confidence;
 use crate::types::EntryName;
 use crate::types::{Encoding, FormatId};
 use crate::writer::ArchiveWriter;
@@ -128,6 +129,11 @@ pub struct CreateOptions {
     pub comment: Option<String>,
     /// 追加模式（`caps.append=false` → `Err Unsupported` HZ-5001，TC-CONF-005）
     pub append: bool,
+    /// **卷类格式写回模式**（T-IMG1 契约扩展；其余格式忽略本字段）。
+    ///
+    /// 设备链末端（镜像 handler）据此选择「覆盖层暂存 / 直接写原文件 / 只读」；
+    /// 只有 `FormatHandler::supports_in_place_edit()` 为真的格式消费它，见 [`VolumeWriteMode`]。
+    pub volume_write: VolumeWriteMode,
 }
 
 impl Default for CreateOptions {
@@ -142,6 +148,7 @@ impl Default for CreateOptions {
             solid: false,
             comment: None,
             append: false,
+            volume_write: VolumeWriteMode::Overlay,
         }
     }
 }
@@ -172,4 +179,50 @@ pub trait FormatHandler: Send + Sync {
         src: Source,
         opts: &OpenOptions,
     ) -> Result<Box<dyn ArchiveEditor>, HzipError>;
+
+    /// **内容启发式探测**（T-IMG1 契约扩展）：无魔数格式（raw 镜像、裸文件系统卷）
+    /// 靠它被识别。
+    ///
+    /// `head` = 源的前 [`Self::probe_head_bytes`] 字节（源不足则给实际长度）。
+    /// 语义 = 「这是我的」：`Some(置信度)` 即认领，通常取 [`Confidence::Medium`]
+    /// （强于扩展名回退、弱于魔数）。**默认 `None` = 不参与探测** ⇒ 既有格式零成本、
+    /// 零改动。
+    ///
+    /// # 契约
+    ///
+    /// 必须是**纯函数**：不落盘、不 panic（任何输入，含空/残缺头部）、不做阻塞 IO；
+    /// 同一 `head` 可能被多个 handler 依次询问，顺序为注册序。
+    fn probe(&self, _head: &[u8]) -> Option<Confidence> {
+        None
+    }
+
+    /// `probe` 需要的头部字节数。默认 512（与魔数嗅探同一次读，故默认实现无额外 IO）。
+    ///
+    /// 上限 `sniffer::PROBE_HEAD_MAX`（当前 4 KiB）：声明值由嗅探侧钳制为
+    /// `clamp(512, PROBE_HEAD_MAX)`，超出部分无人读取。
+    fn probe_head_bytes(&self) -> usize {
+        crate::consts::SNIFF_HEAD_BYTES
+    }
+
+    /// **可就地编辑**（T-IMG1 契约扩展）：本 handler 的 `ArchiveEditor` 实现了
+    /// [`ArchiveEditor::write_in_place`]（磁盘镜像 / 裸卷类格式）。
+    ///
+    /// # 为什么不放 `FormatCaps`
+    ///
+    /// 落成 `FormatCaps` 字段需要全仓 **60 处**字面量构造点补 `..Default::default()`
+    /// （实测：8 个 fmt crate + testkit + GUI 全被连锁），噪声远大于收益；本能力是
+    /// **行为声明**（有没有那个方法实现）而非数据，与 [`Self::probe`] 同性质，
+    /// 故以**默认 false 的 trait 方法**表达 ⇒ 既有格式零改动、零重编译波及。
+    ///
+    /// # 语义与消费方
+    ///
+    /// `caps.edit` = 能重写出一份新档（`rewrite` + 原子替换，代价与档案等量）；
+    /// 本方法置位表示格式能**直接改源对象**（`write_in_place`），core 据此对**常规
+    /// 文件源**跳过「重写整档 + 原子替换」——40 GB 镜像不可接受全量拷贝。
+    /// 组合链（外层 .gz/档案条目）恒走 `rewrite`：外层必重写，就地写无意义。
+    ///
+    /// [`ArchiveEditor::write_in_place`]: crate::ArchiveEditor::write_in_place
+    fn supports_in_place_edit(&self) -> bool {
+        false
+    }
 }

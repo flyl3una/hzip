@@ -1,0 +1,22 @@
+[package]
+name = "hzip-fs-fat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip FAT12/16/32 文件系统驱动（读+写；计划 docs/tasks/T-IMG/T-IMG12-fat.md）"
+
+[dependencies]
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-vol      = { workspace = true }
+hzip-progress = { workspace = true }
+fatfs         = { workspace = true }
+time          = { workspace = true }   # FAT 的 DOS 日期/时间 → OffsetDateTime（EntryInfo.mtime）
+tracing       = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+
+[lints]
+workspace = true

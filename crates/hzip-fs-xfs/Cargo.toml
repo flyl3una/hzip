@@ -1,0 +1,26 @@
+[package]
+name = "hzip-fs-xfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip XFS 文件系统驱动（读+写；计划 docs/tasks/T-IMG/）"
+
+[dependencies]
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-vol      = { workspace = true }
+hzip-progress = { workspace = true }
+rust-fs-xfs   = { workspace = true }
+time          = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+# 稀疏内存盘要在 `read_at`/`write_at` 上造 `fs_core::Error`（越界即错、容量不可变），
+# 而 `hzip-vol` 只再导出两个 trait、不导出错误类型 ⇒ 测试侧直接依赖块设备层。
+rust-fs-core        = { workspace = true }
+tempfile            = { workspace = true }
+
+[lints]
+workspace = true

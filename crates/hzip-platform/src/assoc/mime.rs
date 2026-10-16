@@ -85,6 +85,34 @@ pub(super) const EXT_MIMES: &[ExtMime] = &[
         ext: "zst",
         mime: "application/zstd",
     },
+    // —— 磁盘镜像（T-IMG 计划）。取值口径：先按 freedesktop shared-mime-info 的规范名
+    //    核对，查不到就用 `application/octet-stream` 兜底（**不编造** MIME）。本表只用于
+    //    Linux 的 `.desktop` `MimeType=` 与 `mimeapps.list` 键，兜底不会造成功能缺失，
+    //    但一个不存在的 MIME 会让「打开方式」条目静默失效。
+    ExtMime {
+        ext: "raw",
+        mime: "application/octet-stream",
+    },
+    ExtMime {
+        ext: "img",
+        mime: "application/octet-stream",
+    },
+    ExtMime {
+        ext: "dd",
+        mime: "application/octet-stream",
+    },
+    ExtMime {
+        ext: "qcow2",
+        mime: "application/octet-stream",
+    },
+    ExtMime {
+        ext: "qcow",
+        mime: "application/octet-stream",
+    },
+    ExtMime {
+        ext: "vmdk",
+        mime: "application/octet-stream",
+    },
 ];
 
 /// 扩展名 → MIME（未知扩展名 → `None`；大小写不敏感、容忍前导点）。

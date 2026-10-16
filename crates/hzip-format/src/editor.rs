@@ -76,4 +76,28 @@ pub trait ArchiveEditor: Send {
         dst: Sink,
         ctx: &WriteCtx<'_>,
     ) -> Result<WriteReport, HzipError>;
+
+    /// **就地写**（T-IMG1 契约扩展）：直接对源对象应用变更集（**不产出新档**）。
+    ///
+    /// 与 `rewrite` 的分工：`rewrite` 产出 `dst` 后由调用方原子替换；本方法改的是
+    /// 源本身，原子性由格式自持（卷格式 = 覆盖层暂存 → 提交回放，见 T-IMG6）。
+    /// core 只在 `FormatHandler::supports_in_place_edit()` 为真时走本方法，否则一律回落 `rewrite`。
+    ///
+    /// # 可重入要求
+    ///
+    /// core 的密码重试会对**同一 editor** 多次调用 ⇒ 每次调用必须从干净中间态
+    /// 开始（丢弃上一次的暂存），不得累积——两次调用等价于一次。
+    ///
+    /// # 默认实现
+    ///
+    /// `Unsupported`（HZ-5001）：既有格式未实现就地写，无需改动。
+    fn write_in_place(
+        &self,
+        _changes: ChangeSet,
+        _ctx: &WriteCtx<'_>,
+    ) -> Result<WriteReport, HzipError> {
+        Err(HzipError::Unsupported {
+            what: "hz-5001 in-place-edit-unsupported".into(),
+        })
+    }
 }

@@ -124,6 +124,7 @@ fn empty_snapshot_yields_zero_rows() {
 // ---- T-G53：行模型下标（.. 行 + 实体行编址） ----
 fn tree_row(path: &str, name: &str, depth: usize, is_dir: bool, expanded: bool) -> TreeRow {
     TreeRow {
+        volume: None,
         path: path.into(),
         name: name.into(),
         depth,
@@ -509,6 +510,7 @@ fn click_selection_explorer_semantics() {
 #[test]
 fn menu_enable_derives_from_selection_shape() {
     let mk = |id: u64, is_dir: bool| TreeRow {
+        volume: None,
         path: format!("p{id}"),
         name: format!("p{id}"),
         depth: 0,
@@ -1421,6 +1423,7 @@ fn header_click_keeps_kit_focus_row_highlight(cx: &mut gpui_kit::TestAppContext)
 /// 行快照（密度用例的表格输入；字段与目录树行同源）
 fn row(name: &str, is_dir: bool, id: usize) -> crate::viewmodel::rows::TreeRow {
     crate::viewmodel::rows::TreeRow {
+        volume: None,
         path: name.into(),
         name: name.into(),
         depth: 0,
@@ -1481,6 +1484,7 @@ fn click_empty_area_clears_selection(cx: &mut gpui_kit::TestAppContext) {
     let shell = shell_slot.borrow().clone().expect("shell 实体");
 
     let mk_row = |name: &str, id: u64| TreeRow {
+        volume: None,
         path: name.into(),
         name: name.into(),
         depth: 0,
@@ -1591,6 +1595,7 @@ fn blank_click_clears_kit_focus_not_just_selection(cx: &mut gpui_kit::TestAppCon
     let shell = shell_slot.borrow().clone().expect("shell 实体");
 
     let row = |name: &str, id: u64| TreeRow {
+        volume: None,
         path: name.into(),
         name: name.into(),
         depth: 0,
@@ -1952,6 +1957,7 @@ fn right_click_target_splits_row_menu_and_blank_menu(cx: &mut gpui_kit::TestAppC
     let shell = shell_slot.borrow().clone().expect("shell 实体");
 
     let row = |name: &str, id: u64| TreeRow {
+        volume: None,
         path: name.into(),
         name: name.into(),
         depth: 0,
@@ -2149,6 +2155,7 @@ fn ctrl_click_multi_selects_through_real_mouse(cx: &mut gpui_kit::TestAppContext
 
     // 根目录：隐式目录行（entry_id None——T-SEL 走查 #1 场景）+ 2 文件行
     let mk_row = |path: &str, id: Option<u64>| TreeRow {
+        volume: None,
         path: path.into(),
         name: path.into(),
         depth: 0,

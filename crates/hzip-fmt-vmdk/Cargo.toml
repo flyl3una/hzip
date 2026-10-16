@@ -1,0 +1,25 @@
+[package]
+name = "hzip-fmt-vmdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip VMDK 磁盘镜像容器（sparse 读+写；计划 docs/tasks/T-IMG/T-IMG8-vmdk容器.md）"
+
+[dependencies]
+hzip-format = { workspace = true }
+hzip-error  = { workspace = true }
+hzip-vol    = { workspace = true }
+hzip-progress = { workspace = true }   # 取消令牌（open_reader 建索引）
+rust-img-vmdk = { workspace = true }
+tracing     = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+hzip-fs-ext4        = { workspace = true }   # 端到端用真实 ext4 驱动
+rust-fs-core        = { workspace = true }   # 只读/计数设备包装（拒写用例断言读量）
+tempfile            = { workspace = true }
+sha2                = { workspace = true }
+
+[lints]
+workspace = true

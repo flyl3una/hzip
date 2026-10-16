@@ -7,6 +7,9 @@
 // crate 根函数（非任何业务模块）的用例：`init_locale` 的语言落地（T-ICON 拍板3）。
 mod locale;
 
+// 卷层文案表完整性（T-IMG）：每个 `vol.*` 键两种语言都必须有文案。
+mod vol_locale;
+
 // TC-GUI-001：启动冒烟（AppShell 3 s 内建好无 panic）——T-G30 实体化。
 #[test]
 #[ignore = "T-G30: AppShell 实体化后启用"]

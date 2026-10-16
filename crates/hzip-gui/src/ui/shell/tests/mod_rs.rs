@@ -551,6 +551,7 @@ fn snapshot_round_trips_through_shell_state() {
 
 fn tree_nav_row(path: &str) -> crate::viewmodel::rows::TreeRow {
     crate::viewmodel::rows::TreeRow {
+        volume: None,
         path: path.into(),
         name: path.rsplit('/').next().unwrap_or(path).into(),
         depth: 0,

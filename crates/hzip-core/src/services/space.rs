@@ -39,7 +39,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use hzip_error::HzipError;
-use hzip_format::{FormatRegistry, Sniffed, Source};
+#[cfg(feature = "default-formats")]
+use hzip_format::Sniffed;
+use hzip_format::{FormatRegistry, Source};
 
 use crate::consts::SPACE_HEADROOM;
 
@@ -78,6 +80,11 @@ fn disk_full_os_code() -> i32 {
 }
 
 /// 空间是否不足（纯判定，便于单测注入两侧数值——与 extract 侧同款手法）。
+///
+/// 唯一调用点在 `default-formats` 门控的组合链预检里 ⇒ 裁掉该 feature 后本函数成了
+/// 死代码（**配置合法**，不是缺陷），故按键精确放行告警而不是摘掉函数：它的单测在
+/// 任何 feature 组合下都要照常编译。
+#[cfg_attr(not(feature = "default-formats"), allow(dead_code))]
 fn space_shortfall(need: u64, avail: u64) -> bool {
     avail < (need as f64 * SPACE_HEADROOM) as u64
 }

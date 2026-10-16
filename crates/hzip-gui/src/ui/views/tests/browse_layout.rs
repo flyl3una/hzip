@@ -7,6 +7,7 @@ mod view_mode_tests {
 
     fn tree_row(path: &str, is_dir: bool) -> crate::viewmodel::rows::TreeRow {
         crate::viewmodel::rows::TreeRow {
+            volume: None,
             path: path.into(),
             name: path.rsplit('/').next().unwrap_or(path).into(),
             depth: 0,

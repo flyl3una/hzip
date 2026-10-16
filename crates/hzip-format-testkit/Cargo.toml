@@ -15,6 +15,17 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 time = { workspace = true }
 zeroize = { workspace = true }
+# —— 磁盘镜像夹具（计划 docs/tasks/T-IMG/）：默认空，只在 vol 相关 crate 的测试里开 ——
+#    夹具要现场造「真的」小镜像（ext4 用上游 mkfs、FAT 用 format_volume、qcow2/vmdk
+#    手工拼头），故需要块设备与文件系统构造器；本 crate 是 dev-only，不进发行链。
+rust-fs-core = { workspace = true, optional = true }
+rust-fs-ext4 = { workspace = true, optional = true }
+rust-fs-ntfs = { workspace = true, optional = true }
+fatfs        = { workspace = true, optional = true }
+
+[features]
+# 卷镜像夹具（T-IMG3 起）：MemDevice / MBR / GPT / ext4 / FAT / qcow2 / vmdk / NTFS
+vol = ["dep:rust-fs-core", "dep:rust-fs-ext4", "dep:rust-fs-ntfs", "dep:fatfs"]
 
 [lints]
 workspace = true

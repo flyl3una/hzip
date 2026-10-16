@@ -62,6 +62,15 @@ pub struct AppShell {
     /// AppData 同步进 ShellState，与 `switch_tab`/`close_tab` 的「本地先行」
     /// 同一口径（事实源仍是 AppData，不复制状态）。
     pub(super) _observe_settings_panel: Option<gpui_kit::Subscription>,
+    /// 外部编辑（写回）事件发送端：打开流程后台线程（`Arm`）与 watch 去抖线程
+    /// （`Saved`）都经它投递到主线程 drain（见 [`super::external_edits`]）。
+    pub(super) edit_tx: smol::channel::Sender<crate::app::external_edit::EditEvent>,
+    /// 接收端（**首次渲染取走**，交给 drain 任务；`None` = 已取走）。
+    pub(super) edit_rx: Option<smol::channel::Receiver<crate::app::external_edit::EditEvent>>,
+    /// drain 任务是否已起（首帧一次）。
+    pub(super) edit_drain_started: bool,
+    /// 写回监听句柄（保活：drop = 停监听）。按物化路径替换，故同一路径只挂一处。
+    pub(super) edit_watches: Vec<(std::path::PathBuf, hzip_platform::watch::FileWatch)>,
     /// 壳层自身的焦点句柄（**焦点恢复目标**）。
     ///
     /// 为什么必须有：动作派发（菜单项/快捷键）从**当前焦点节点**沿渲染树向上冒泡；
@@ -89,11 +98,18 @@ impl AppShell {
         let state = cx.new(|_| ShellState::new());
         // 菜单条实体（T-G51：替代平台菜单双通道——打开态持久 + PopupMenu 弹出）。
         let menu_bar = MenuBar::new(cx);
+        // 外部编辑写回事件通道（无界：生产者是去抖线程/打开线程，消费者是主线程
+        // drain；事件极小且低频——批量导出/保存才有，不设上限以免丢事件）。
+        let (edit_tx, edit_rx) = smol::channel::unbounded();
         Self {
             menu_bar,
             state,
             handlers,
             data,
+            edit_tx,
+            edit_rx: Some(edit_rx),
+            edit_drain_started: false,
+            edit_watches: Vec::new(),
             name_edit_input: None,
             name_edit_sub: None,
             last_window: None,

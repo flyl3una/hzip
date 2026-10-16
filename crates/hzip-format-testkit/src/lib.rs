@@ -29,6 +29,12 @@ pub mod kit;
 pub mod malformed;
 pub mod mock;
 pub mod stub;
+/// 卷镜像夹具（磁盘镜像 → 分区 → 文件系统；计划 `docs/tasks/T-IMG/`）。
+///
+/// `vol` feature 门控：默认关闭，只有卷相关 crate 在 dev-dependencies 里开
+/// `features = ["vol"]` 才编译 ⇒ 既有格式的测试构建不受影响。
+#[cfg(feature = "vol")]
+pub mod vol;
 
 pub use filter::{ArchiveSource, CapsFilter, ConfCaseId, RunDecision};
 pub use kit::{

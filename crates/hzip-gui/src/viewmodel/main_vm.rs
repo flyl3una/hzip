@@ -679,6 +679,18 @@ impl MainViewModel {
         hzip_format::exts::container_handler(name).is_some()
     }
 
+    /// 顶层行名 → 卷元数据（磁盘镜像会话才有；其它会话恒 `None`）。
+    ///
+    /// 名字与 `VolumeRowMeta::name` 一一对应（reader 生成时就做了重名去重），
+    /// 故这里是精确匹配、不是模糊匹配。
+    fn volume_row_named(&self, name: &str) -> Option<hzip_format::VolumeRowMeta> {
+        self.browser
+            .as_ref()?
+            .volume_rows()
+            .into_iter()
+            .find(|r| r.name == name)
+    }
+
     /// 可见树行（当前浏览层；依 `expanded` 铺平——含子目录展开下钻）。
     /// 过滤（`matches`）生效于叶——命中文件祖先目录保留。
     pub fn tree_rows(&self) -> Vec<crate::viewmodel::rows::TreeRow> {
@@ -718,6 +730,14 @@ impl MainViewModel {
         let is_dir = er.is_none_or(|e| e.is_dir);
         let expanded = self.expanded.contains(&path);
         let has_children = !node.children.is_empty();
+        // 卷行元数据（仅**当前会话的顶层行**）：磁盘镜像的分区行据此画专属图标、
+        // 类型列显示文件系统、无标签时按语言显示「分区 N」——来源是 reader 的
+        // `volume_rows()`（结构化元数据），不靠名字猜。
+        let volume = if depth == 0 {
+            self.volume_row_named(name)
+        } else {
+            None
+        };
         out.push(crate::viewmodel::rows::TreeRow {
             path: path.clone(),
             name: name.to_string(),
@@ -726,6 +746,7 @@ impl MainViewModel {
             entry_id,
             expanded,
             has_children,
+            volume,
             // 实体条目上浮列（T-OPT 项11：与 dir_children/visible_rows 同一构造器）
             ..crate::viewmodel::rows::TreeRow::entry_columns(er, name)
         });

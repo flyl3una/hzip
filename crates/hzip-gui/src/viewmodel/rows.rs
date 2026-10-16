@@ -218,6 +218,12 @@ pub struct TreeRow {
     pub has_children: bool,
     /// 是否文件型容器（zip/7z/tar…可进入浏览）
     pub is_container: bool,
+    /// **卷行元数据**（磁盘镜像会话的顶层行；其余恒 `None`）。
+    ///
+    /// 来源 `hzip_format::VolumeRowMeta`（reader 的 `volume_rows()`）：分区标签、
+    /// 文件系统、类型描述、序号。界面据此画分区图标/类型列/语言化「分区 N」；
+    /// 名字本身（`path`/`name`）保持 ASCII 稳定，不参与本地化。
+    pub volume: Option<hzip_format::VolumeRowMeta>,
     /// **嵌套层号**（0 = 当前会话；1 = 上一层容器；…；与 `Crumb.level` 同标尺）。
     ///
     /// 左栏树跨嵌套层展示（外层档案为根、内层压缩包当子目录），同名的

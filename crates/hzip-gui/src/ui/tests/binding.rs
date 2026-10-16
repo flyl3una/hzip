@@ -21,6 +21,7 @@ fn sort_browse_rows_dir_first_and_dirs() {
         name: name.into(),
         is_dir,
         is_container: false,
+        is_partition: false,
         encrypted: false,
         suspect: false,
         size_text: size.into(),
@@ -95,6 +96,7 @@ fn packed_unknown_renders_placeholder_not_zero() {
         expanded: false,
         has_children: false,
         is_container: false,
+        volume: None,
         encrypted: false,
         size_raw: 100,
         size_packed: 0, // 未计算（tar 等格式 browse 层不给 packed）
@@ -125,6 +127,7 @@ fn tree_row(path: &str, name: &str, depth: usize, is_dir: bool, expanded: bool) 
         expanded,
         has_children: is_dir,
         is_container: false,
+        volume: None,
         encrypted: false,
         size_raw: 0,
         size_packed: 0,
@@ -317,4 +320,80 @@ mod jobs_row_ui_tests {
         assert!(ui_ok.failures.is_empty());
         assert_eq!(ui_ok.state_label, crate::tr("job.state_done"));
     }
+}
+
+// —— 磁盘镜像分区行（T-IMG；用户口径 2026-10-16：「在目录侧直接把每个分区当作一个
+// 目录显示（图标要标记出来是分区），分区名称使用分区 label（如果没有则使用分区 1、
+// 分区 2，支持多语言）」）——
+#[test]
+fn partition_rows_render_label_localized_name_type_and_icon() {
+    use crate::ui::views::browse::row_type_icon;
+    use crate::ui::widgets::icon::AppIcon;
+
+    let volume_row =
+        |name: &str, label: Option<&str>, kind: &str, fs: Option<&str>, index: usize| {
+            let mut row = crate::viewmodel::rows::TreeRow {
+                path: name.into(),
+                name: name.into(),
+                depth: 0,
+                is_dir: true,
+                has_children: true,
+                ..Default::default()
+            };
+            row.volume = Some(hzip_format::VolumeRowMeta {
+                name: name.into(),
+                label: label.map(str::to_string),
+                kind: Some(kind.to_string()),
+                fs: fs.map(str::to_string),
+                index,
+                start: 1 << 20,
+                len: 8 << 20,
+            });
+            row
+        };
+
+    // ① 有标签（GPT 分区名）：展示名 = 标签，类型列 = 文件系统，图标 = 硬盘
+    let ui = browse_row_from_tree_row(&volume_row(
+        "root",
+        Some("root"),
+        "Linux filesystem",
+        Some("ext4"),
+        1,
+    ));
+    assert_eq!(ui.name, "root", "有标签时展示名就是标签");
+    assert!(ui.is_partition, "分区行要打上分区标记（图标据此切）");
+    assert!(
+        ui.is_dir && !ui.is_container,
+        "分区行仍是**目录**（双击=进目录，不是开容器会话）"
+    );
+    assert_eq!(ui.type_text, "ext4", "类型列显示文件系统");
+    assert_eq!(row_type_icon(&ui), AppIcon::HardDrive, "分区专属图标");
+
+    // ② 无标签的分区：展示名按语言渲染成「分区 N」，**路径保持 ASCII 稳定**
+    let ui = browse_row_from_tree_row(&volume_row("Partition 2", None, "Linux", None, 1));
+    assert_eq!(
+        ui.path, "Partition 2",
+        "路径/导航用 ASCII 稳定名，不随语言漂移"
+    );
+    assert_eq!(
+        ui.name,
+        crate::tr_with("vol.partition_n", &[("n", "2")]),
+        "无标签 ⇒ 展示名按语言显示「分区 N」"
+    );
+    assert_ne!(ui.name, ui.path, "展示名与路径是两回事（语言化只动前者）");
+    assert_eq!(
+        ui.type_text,
+        crate::tr("vol.unknown_fs"),
+        "未识别文件系统 ⇒ 语言化「未知卷」"
+    );
+    assert_eq!(row_type_icon(&ui), AppIcon::HardDrive);
+
+    // ③ 裸文件系统镜像（无分区表）：一行「卷」
+    let ui = browse_row_from_tree_row(&volume_row("Volume", None, "Volume", Some("FAT"), 0));
+    assert_eq!(ui.name, crate::tr("vol.volume"), "整卷行按语言显示「卷」");
+    assert_eq!(ui.type_text, "FAT");
+    assert!(
+        ui.is_partition,
+        "整卷行同样走分区图标分支（它也是一个可挂载卷）"
+    );
 }

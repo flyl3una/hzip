@@ -25,6 +25,7 @@ mod app_shell;
 mod clipboard_ops;
 pub(crate) mod dispatch;
 mod errors;
+pub(crate) mod external_edits;
 mod file_ops;
 pub(crate) mod keymap;
 mod open_flow;

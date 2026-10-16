@@ -22,6 +22,8 @@ impl Render for AppShell {
         // UI 线程滞后看门狗（见 `app::ui_lag`）：一帧超过阈值就留一条 warn/error，
         // 再现「界面卡住」时日志直接点名是哪一帧的哪段同步活。
         let _lag = crate::app::ui_lag::UiLag::new("主窗口渲染");
+        // 外部编辑写回 drain（首帧起一次；见 `shell::external_edits`）
+        self.ensure_edit_drain(cx);
         // 行内编辑的「提交失败重新聚焦」要用窗口句柄（订阅回调无 Window 参数）
         self.last_window = Some(window.window_handle());
         // 无任何焦点（例如持有焦点的设置面板刚随页签销毁）→ 焦点自补到壳层：

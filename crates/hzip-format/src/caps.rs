@@ -43,6 +43,22 @@ pub enum EncryptionRequest {
     Aes(AesKey),
 }
 
+/// 卷类格式的**写回模式**（磁盘镜像 / 裸卷；用户裁定 2026-10-16：默认 `Overlay`，
+/// 设置页可切 `InPlace`/只读）。经 [`CreateOptions::volume_write`] 由 core 下发到
+/// 格式实现（设备链末端选择见 T-IMG2 §device）；非卷格式忽略本字段。
+///
+/// [`CreateOptions::volume_write`]: crate::CreateOptions::volume_write
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VolumeWriteMode {
+    /// 覆盖层暂存 → 提交时只回放脏块（默认；提交前原文件一字节不动）
+    #[default]
+    Overlay,
+    /// 直接写原文件（快；原子性由格式/文件系统自持）
+    InPlace,
+    /// 只读（不写任何字节）
+    ReadOnly,
+}
+
 /// 格式能力矩阵（02 §7.2）。数据类：fmt 实现以常量提供（可扩展字段经
 /// `Default` 补全——`Default` 全 false/None，构造侧显式置位）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

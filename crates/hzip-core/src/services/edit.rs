@@ -191,6 +191,28 @@ fn rewrite_and_replace(
     loop {
         let infos = prompter.entries(src_archive)?;
         let before = before_of(&infos)?;
+        // 卷容器（磁盘镜像）+ 单格式（非组合链）⇒ **就地写**：不产生「重写整档」的
+        // 全量副本（40 GB 镜像不可接受），也不做临时档 + 原子替换——原子性由格式自持
+        // （覆盖层暂存 → 提交回放；提交前原档字节不变，见 02 附录 C.4）。
+        // 其余格式（含组合链）照旧 rewrite + 原子替换。
+        if in_place_supported(ctx, src_archive) {
+            let result = {
+                let editor = open_editor(src_archive, ctx, prompter.password())?;
+                let opts = write_opts_for(&infos);
+                let wctx = WriteCtx {
+                    cancel: &ctx.cancel,
+                    progress: ctx.progress(),
+                    opts: &opts,
+                };
+                editor.write_in_place(changes_for(), &wctx)
+            };
+            // 密码被 fmt 层判错 → 重问重试（与 rewrite 分支同口径）
+            if matches!(&result, Err(HzipError::Password { .. })) {
+                prompter.ask()?;
+                continue;
+            }
+            return finish_in_place(src_archive, result, &before);
+        }
         // rewrite 用独立作用域：完成后 editor 立即 drop（其源 reader 句柄关闭——
         // Windows 不可替换仍被打开的文件；02 §9.9 步 ⑦ 前置）
         let (result, tmp_archive) = {
@@ -215,8 +237,46 @@ fn rewrite_and_replace(
     }
 }
 
-/// 写侧选项（按源档案条目推导）；未加密档案 → 全默认（`Level::Normal` 语义保留）。
+/// 该源是否走「**就地写**」：**单格式**（非组合链）+ 源是常规文件 + handler 声明可
+/// 就地编辑。
 ///
+/// 组合链（`.qcow2.gz` 之类）不再此列：外层必须重写，就地写无意义（02 附录 C.4）；
+/// 也正因如此，`Sniffed::Composite` 一律走 `rewrite` + 原子替换。
+fn in_place_supported(ctx: &JobCtx, src: &Path) -> bool {
+    if !std::fs::metadata(src).map(|m| m.is_file()).unwrap_or(false) {
+        return false;
+    }
+    match ctx.registry.sniff(&Source::File(src.to_path_buf())) {
+        Ok(hzip_format::Sniffed::Single(id, _)) => ctx
+            .registry
+            .handler(id.as_str())
+            .is_some_and(|h| h.supports_in_place_edit()),
+        _ => false,
+    }
+}
+
+/// 就地写收尾：与 [`finish_replace`] 同款报告，但**无临时档、无原子替换**——原子性
+/// 由格式自持（覆盖层暂存 → 提交回放）；失败时原档按契约不变。
+fn finish_in_place(
+    archive: &Path,
+    result: Result<WriteReport, HzipError>,
+    before: &EntryInfo,
+) -> Result<Outcome, HzipError> {
+    let wreport = match result {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(path = %archive.display(), "就地写失败（原档按契约不变）：{e}");
+            return Err(e);
+        }
+    };
+    let diff = report::edit_diff(before, &wreport);
+    let mut stats = report::stats_from_write(&wreport);
+    stats.finished = Some(std::time::Instant::now());
+    tracing::debug!(?diff, "编辑保存完成（就地写）");
+    Ok(Outcome::Done(stats))
+}
+
+/// 写侧选项（按源档案条目推导）；未加密档案 → 全默认（`Level::Normal` 语义保留）。
 /// - 档案级加密：取**首条加密条目**的算法（[`EntryInfo::encryption`] 的
 ///   `&'static str` 口径 → [`EncryptionRequest`]），逐条目差异由 fmt 编辑器
 ///   自行保真；

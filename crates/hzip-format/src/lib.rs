@@ -44,13 +44,13 @@ pub mod sniffer;
 pub mod types;
 pub mod writer;
 
-pub use caps::{AesKey, EncryptionCaps, EncryptionRequest, FormatCaps};
+pub use caps::{AesKey, EncryptionCaps, EncryptionRequest, FormatCaps, VolumeWriteMode};
 pub use editor::{ArchiveEditor, Change, ChangeSet};
 pub use handler::{CreateOptions, FormatHandler, OpenOptions, Signature, Sink, Source};
 pub use password::{PasswordRef, PasswordSource};
 pub use reader::{
     ArchiveReader, ConflictPolicy, ExtractCtx, ExtractReport, QuotaLimits, SanitizeConfig,
-    Selection, SymlinkPolicy,
+    Selection, SymlinkPolicy, VolumeRowMeta,
 };
 pub use registry::FormatRegistry;
 pub use sniffer::{CompositeTail, Confidence, Sniffed};

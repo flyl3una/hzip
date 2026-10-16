@@ -37,9 +37,18 @@ hzip-fmt-cpio   = { workspace = true, optional = true }
 hzip-fmt-zip    = { workspace = true, optional = true }
 hzip-fmt-7z     = { workspace = true, optional = true }
 hzip-fmt-rar    = { workspace = true, optional = true }
+# 磁盘镜像（T-IMG）：卷层 + 容器 + 文件系统驱动（feature `volume-formats` 门控）
+hzip-vol        = { workspace = true, optional = true }
+hzip-fmt-raw    = { workspace = true, optional = true }
+hzip-fmt-qcow2  = { workspace = true, optional = true }
+hzip-fmt-vmdk   = { workspace = true, optional = true }
+hzip-fs-ext4    = { workspace = true, optional = true }
+hzip-fs-fat     = { workspace = true, optional = true }
+hzip-fs-ntfs    = { workspace = true, optional = true }
+hzip-fs-xfs     = { workspace = true, optional = true }
 
 [dev-dependencies]
-hzip-format-testkit = { workspace = true }
+hzip-format-testkit = { workspace = true, features = ["vol"] }
 sha2      = { workspace = true }
 tempfile  = { workspace = true }
 hzip-fmt-tar        = { workspace = true }
@@ -60,7 +69,7 @@ flate2    = { workspace = true }
 # 与 04 §3.2「默认（全功能）… 含 rar（unrar 许可允许解压用途分发）」一致。
 # 影响面：文件关联候选与右键菜单档案判定都由「表 ∩ 已注册 handler」派生，
 # 故启用后 `.rar` 自动出现在设置页与右键菜单里（`hzip_format::exts` 表）。
-default = ["default-formats", "rar"]
+default = ["default-formats", "rar", "volume-formats"]
 default-formats = [
     "dep:hzip-fmt-tar",
     "dep:hzip-fmt-single",
@@ -70,6 +79,21 @@ default-formats = [
 ]
 # rar（T26；unrar C 库依赖单独门控）
 rar = ["dep:hzip-fmt-rar"]
+# 磁盘镜像（T-IMG 计划）：卷容器（raw/qcow2/vmdk）+ 文件系统驱动（ext4/NTFS/FAT）。
+#
+# 单独成 feature 是为了「发行版裁体积」：关掉后 `.raw/.qcow2/.vmdk` 仍出现在扩展名表
+# 里，但「表 ∩ 已注册 handler」的过滤会让它们不进关联候选/右键菜单（既有口径），
+# 打开时报「未知格式」而不是崩。
+volume-formats = [
+    "dep:hzip-vol",
+    "dep:hzip-fmt-raw",
+    "dep:hzip-fmt-qcow2",
+    "dep:hzip-fmt-vmdk",
+    "dep:hzip-fs-ext4",
+    "dep:hzip-fs-fat",
+    "dep:hzip-fs-ntfs",
+    "dep:hzip-fs-xfs",
+]
 
 [lints]
 workspace = true

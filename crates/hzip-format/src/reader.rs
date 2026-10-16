@@ -159,4 +159,40 @@ pub trait ArchiveReader: Send {
     ) -> Result<ExtractReport, HzipError>;
     /// 完整性测试（读全部数据区校验 CRC）
     fn test(&self, ctx: &ExtractCtx<'_>) -> Result<ExtractReport, HzipError>;
+
+    /// **卷内顶层行的元数据**（磁盘镜像的分区层；其它格式返回空）。
+    ///
+    /// 用途：界面把分区行标记成「分区」（专属图标 `HardDrive`）、类型列显示文件系统名、
+    /// 无标签时按当前语言显示「分区 N」——**靠结构化元数据，不靠名字猜**（名字只用于
+    /// 树路径与导航，必须跨会话稳定，故不参与本地化）。
+    ///
+    /// 默认空实现 ⇒ 既有 reader 零改动。
+    fn volume_rows(&self) -> Vec<VolumeRowMeta> {
+        Vec::new()
+    }
+}
+
+/// 卷内顶层行（分区）的元数据。数据类；由卷容器 reader 提供（见 [`ArchiveReader::volume_rows`]）。
+///
+/// 不标 `#[non_exhaustive]`：它由**别的 crate**（`hzip-vol`）构造，标了就没法构造
+/// （可扩展性靠「消费方只读字段、不匹配结构」的约定，与 `EntryInfo` 同款）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeRowMeta {
+    /// 顶层条目名（树里的目录名；无标签时形如 `Partition 1`，**ASCII 稳定**）。
+    pub name: String,
+    /// **真实分区标签**（GPT 分区名）；`None` = 无标签 ⇒ 界面按 `index` 显示「分区 N」。
+    ///
+    /// MBR 分区**没有**标签这一概念（只有类型）⇒ 恒为 `None`；把类型当标签会让界面
+    /// 把「Linux」显示成分区名。
+    pub label: Option<String>,
+    /// 类型描述（界面类型列用）：`EFI System`/`Linux`/`Volume` 等；**永不本地化**（是数据）。
+    pub kind: Option<String>,
+    /// 文件系统显示名（`ext4`/`NTFS`/`FAT`/`XFS`…）；`None` = 未识别。
+    pub fs: Option<String>,
+    /// 分区序号（0 起）。
+    pub index: usize,
+    /// 分区起始字节。
+    pub start: u64,
+    /// 分区长度（字节）。
+    pub len: u64,
 }

@@ -801,6 +801,13 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                                 changed
                             })
                             .unwrap_or(false);
+                        // 外部编辑写回对账（每 wake，≤100 ms）：在飞编辑任务结束后
+                        // 把「在飞期间又保存过」的那次补上（见 `shell::external_edits`）。
+                        // 无在飞会话时是零成本早退。
+                        crate::ui::shell::external_edits::reconcile_and_apply(
+                            &data,
+                            &tx_for_pump_root,
+                        );
                         // 主线程专属半场（窗口线程亲和）：①用户通知投递
                         //（目标判定在 ui::notify 组件——主窗口在场 → 界面
                         // toast，否则系统通知）②进度窗开窗请求（编辑等

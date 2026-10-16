@@ -10,13 +10,30 @@ description = "hzip 命令行前端（02 §10），T40 实现 6 子命令 + 退�
 name = "hzip"
 path = "src/main.rs"
 
+[features]
+# CLI 自身没有可选代码——这些 feature **只做转发**（→ `hzip-core`/`hzip-format`）。
+#
+# 为什么必须有：04 §3.2 的「发行版合规构建」要在 **CLI 这一层**剔除 rar
+# （`cargo build --release --no-default-features -p hzip-cli --features default-formats`），
+# 而那只有在依赖声明带 `default-features = false` 时才生效——否则 `-p hzip-cli` 的
+# `--no-default-features` 碰不到 core 的默认 feature 集，「剔除 rar」只是文档里的空话
+# （2026-10-16 按文档跑该命令实测报 `package 'hzip-cli' does not contain this feature`）。
+default = ["hzip-core/default", "hzip-format/default"]
+default-formats = ["hzip-core/default-formats", "hzip-format/default-formats"]
+rar = ["hzip-core/rar"]
+volume-formats = ["hzip-core/volume-formats"]
+
 [dependencies]
 # —— workspace 内部（02 §2.1 依赖图：CLI → core/platform/error/progress）——
-hzip-core     = { workspace = true }
+# `default-features = false` + 上面的转发 feature：默认集仍与从前一致（全功能），
+# 但 `--no-default-features` 现在**真的**能裁掉格式集（见 [features] 注释）。
+hzip-core     = { workspace = true, default-features = false }
 hzip-error    = { workspace = true }
 hzip-platform = { workspace = true }
 hzip-progress = { workspace = true }
 # 红线 2（02 §2.1）：禁止 hzip-fmt-* / hzip-codec——格式能力一律经 hzip-core。
+# 这一条**不动** `default-features`：编解码 feature（deflate/bzip2/xz/zstd）由 core 自己
+# 的依赖边带着（`hzip-format/default`），裁格式集不该连编解码一起裁掉。
 hzip-format   = { workspace = true }
 hzip-log      = { workspace = true }    # 日志初始化（02 §12.3）
 hzip-config   = { workspace = true }    # 配置加载（02 §12.1）
@@ -43,7 +60,7 @@ tempfile    = { workspace = true }
 serde_json  = { workspace = true }
 sha2        = { workspace = true }
 # cpio 只读格式无写侧，E2E 素材由 testkit 拼字节（dev-only；红线 R2 只判运行时依赖）
-hzip-format-testkit = { workspace = true }
+hzip-format-testkit = { workspace = true, features = ["vol"] }
 
 [lints]
 workspace = true

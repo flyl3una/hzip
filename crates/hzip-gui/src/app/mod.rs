@@ -17,6 +17,7 @@
 //! | [`open_event`] | macOS「打开方式」Apple Event 的 URL → 路径转换 |
 
 pub mod exit;
+pub mod external_edit;
 pub mod file_picker;
 pub mod instance;
 pub mod labels;

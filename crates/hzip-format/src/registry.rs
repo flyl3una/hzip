@@ -79,13 +79,16 @@ impl FormatRegistry {
 
     /// 全部 handler 的遍历访问（R2 T-G52：GUI 按读能力派生扩展名过滤清单——
     /// 注册表为单一事实来源，GUI 不硬编码）。
+    ///
+    /// 内部同时服务嗅探的**内容探针扫描**（T-IMG1）与**签名扩展名回退**
+    /// （见 `sniffer::probe_sweep` / `sniffer::match_extension`），故只给只读视图。
     pub fn handlers(&self) -> impl Iterator<Item = &dyn FormatHandler> {
         self.handlers.iter().map(|b| b.as_ref())
     }
 
-    /// 嗅探源格式（02 §7.4 全流程）。
+    /// 嗅探源格式（02 §7.4 全流程；探针档需查已注册 handler）。
     pub fn sniff(&self, src: &Source) -> Result<Sniffed, HzipError> {
-        sniff_impl(src)
+        sniff_impl(self, src)
     }
 
     /// 打开读取器（02 §7.5）：`Single` 直开；`Composite` 装配组合 reader。
@@ -94,7 +97,7 @@ impl FormatRegistry {
         src: Source,
         opts: &OpenOptions,
     ) -> Result<Box<dyn ArchiveReader>, HzipError> {
-        match sniff_impl(&src)? {
+        match sniff_impl(self, &src)? {
             Sniffed::Single(id, _) => self
                 .handler(id.as_str())
                 .ok_or_else(|| HzipError::Unsupported {
@@ -141,7 +144,7 @@ impl FormatRegistry {
         src: Source,
         opts: &OpenOptions,
     ) -> Result<Box<dyn ArchiveEditor>, HzipError> {
-        match sniff_impl(&src)? {
+        match sniff_impl(self, &src)? {
             Sniffed::Single(id, _) => self
                 .handler(id.as_str())
                 .ok_or_else(|| HzipError::Unsupported {

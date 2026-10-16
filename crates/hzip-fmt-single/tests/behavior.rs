@@ -460,20 +460,33 @@ fn cancel_mid_extract_cleans_partial() {
     let cancel = CancellationToken::new();
     let bus = ProgressBus::new();
     static NOPW: NoPw = NoPw;
+    // 取消**由解压循环自己的进度事件触发**，不用轮询输出文件大小。
+    //
+    // 为什么改（2026-10-16 实测两次间歇失败）：轮询版本在重载（`cargo test
+    // --workspace` 同时跑上百个测试二进制）下，监控线程可能整段没被调度，解压已经
+    // **完成**才轮到它 → 取消来得太晚，`result` 是 `Ok`，「取消后应 Err」必红。
+    // 事件版在阻塞 `recv` 上等第一个字节事件（解压循环每读到一个 chunk 就发一次），
+    // 事件到达即取消：此时循环**刚写完一个 chunk**、还有 ~16 MiB 要干，取消必然落在
+    // 中途——不再依赖「轮询能否抢在结束前被调度」。
+    let events = bus.subscribe();
     let cancel2 = cancel.clone();
-    let mon_dest = dest.clone();
     let sub = std::thread::spawn(move || {
-        let started = Instant::now();
-        loop {
-            let size = std::fs::metadata(mon_dest.join("big"))
-                .map(|m| m.len())
-                .unwrap_or(0);
-            if size >= 8 * 1024 * 1024 || started.elapsed() > Duration::from_secs(30) {
+        while let Some(ev) = events.recv() {
+            if matches!(
+                ev,
+                hzip_format::ProgressEvent::Bytes { delta } if delta > 0
+            ) {
                 cancel2.cancel();
-                break;
+                return;
             }
-            std::thread::sleep(Duration::from_millis(2));
         }
+    });
+    // 兜底（不 join）：万一一个进度事件都没来（理论上不会——16 MiB 要读 256 个
+    // chunk），也不能把测试挂死在 `join` 上；30 s 后强取消让 extract 收敛。
+    let cancel3 = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(30));
+        cancel3.cancel();
     });
     let ctx = ExtractCtx {
         cancel: &cancel,

@@ -1674,6 +1674,9 @@ pub(crate) fn row_type_icon(row: &BrowseRow) -> AppIcon {
         AppIcon::Link
     } else if row.is_container {
         AppIcon::FolderZip
+    } else if row.is_partition {
+        // 磁盘镜像的分区行：专属图标（用户口径 2026-10-16「图标要标记出来是分区」）
+        AppIcon::HardDrive
     } else if row.is_dir {
         AppIcon::Folder
     } else {

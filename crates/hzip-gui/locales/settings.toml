@@ -128,6 +128,10 @@ zh-CN = "tar 复合归档"
 en = "Single-stream compression"
 zh-CN = "单流压缩"
 
+[assoc.group.volume]
+en = "Disk images (partitions + filesystems)"
+zh-CN = "磁盘镜像（分区 + 文件系统）"
+
 [setting.ctx_extract.label]
 en = "Extract menu"
 zh-CN = "解压菜单"

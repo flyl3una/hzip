@@ -929,6 +929,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caseless"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b6fd507454086c8edfd769ca6ada439193cdb209c7681712ef6275cccbfe5d8"
+dependencies = [
+ "unicode-normalization",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1468,6 +1477,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1965,6 +1983,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 dependencies = [
  "getrandom 0.4.3",
+]
+
+[[package]]
+name = "fatfs"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05669f8e7e2d7badc545c513710f0eba09c2fbef683eb859fd79c46c355048e0"
+dependencies = [
+ "bitflags 1.3.2",
+ "byteorder",
+ "chrono",
+ "log",
 ]
 
 [[package]]
@@ -3421,7 +3451,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -3450,7 +3480,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-codec"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bzip2 0.4.4",
  "crc32fast",
@@ -3463,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-config"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hzip-platform",
  "serde",
@@ -3474,7 +3504,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chardetng",
  "crossbeam-channel",
@@ -3485,14 +3515,22 @@ dependencies = [
  "hzip-error",
  "hzip-fmt-7z",
  "hzip-fmt-cpio",
+ "hzip-fmt-qcow2",
  "hzip-fmt-rar",
+ "hzip-fmt-raw",
  "hzip-fmt-single",
  "hzip-fmt-tar",
+ "hzip-fmt-vmdk",
  "hzip-fmt-zip",
  "hzip-format",
  "hzip-format-testkit",
+ "hzip-fs-ext4",
+ "hzip-fs-fat",
+ "hzip-fs-ntfs",
+ "hzip-fs-xfs",
  "hzip-platform",
  "hzip-progress",
+ "hzip-vol",
  "proptest",
  "rayon",
  "sha2 0.10.9",
@@ -3507,7 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-error"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "smol_str",
  "thiserror 2.0.20",
@@ -3515,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-7z"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "aes",
  "cbc",
@@ -3534,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-cpio"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3549,8 +3587,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hzip-fmt-qcow2"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-fs-ext4",
+ "hzip-progress",
+ "hzip-vol",
+ "rust-img-qcow2",
+ "sha2 0.10.9",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "hzip-fmt-rar"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3565,8 +3619,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hzip-fmt-raw"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-fs-ext4",
+ "hzip-progress",
+ "hzip-vol",
+ "sha2 0.10.9",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "hzip-fmt-single"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bzip2 0.4.4",
  "flate2",
@@ -3586,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-tar"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3602,8 +3671,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hzip-fmt-vmdk"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-fs-ext4",
+ "hzip-progress",
+ "hzip-vol",
+ "rust-fs-core",
+ "rust-img-vmdk",
+ "sha2 0.10.9",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "hzip-fmt-zip"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "aes",
  "chardetng",
@@ -3628,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-format"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bzip2 0.4.4",
  "flate2",
@@ -3645,11 +3731,15 @@ dependencies = [
 
 [[package]]
 name = "hzip-format-testkit"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
+ "fatfs",
  "hzip-error",
  "hzip-format",
  "hzip-progress",
+ "rust-fs-core",
+ "rust-fs-ext4",
+ "rust-fs-ntfs",
  "sha2 0.10.9",
  "tempfile",
  "time",
@@ -3657,8 +3747,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "hzip-fs-ext4"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-progress",
+ "hzip-vol",
+ "rust-fs-ext4",
+ "sha2 0.10.9",
+ "tempfile",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "hzip-fs-fat"
+version = "0.1.4"
+dependencies = [
+ "fatfs",
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-progress",
+ "hzip-vol",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "hzip-fs-ntfs"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-progress",
+ "hzip-vol",
+ "rust-fs-ntfs",
+ "tempfile",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "hzip-fs-xfs"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-progress",
+ "hzip-vol",
+ "rust-fs-core",
+ "rust-fs-xfs",
+ "tempfile",
+ "time",
+ "tracing",
+]
+
+[[package]]
 name = "hzip-gui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "crossbeam-channel",
  "embed-resource",
@@ -3691,7 +3842,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-log"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hzip-platform",
  "tempfile",
@@ -3703,7 +3854,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-platform"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dirs 6.0.0",
  "hzip-error",
@@ -3728,11 +3879,28 @@ dependencies = [
 
 [[package]]
 name = "hzip-progress"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "crossbeam-channel",
  "hzip-error",
  "smol_str",
+]
+
+[[package]]
+name = "hzip-vol"
+version = "0.1.4"
+dependencies = [
+ "hzip-error",
+ "hzip-format",
+ "hzip-format-testkit",
+ "hzip-platform",
+ "hzip-progress",
+ "rust-disk-partitions",
+ "rust-fs-core",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -6440,6 +6608,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-disk-partitions"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6350f8ee03c07032101193603255746e7e911f34d1a7c1e985604270abf4076d"
+dependencies = [
+ "crc32fast",
+ "rust-fs-core",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6474,6 +6652,47 @@ dependencies = [
  "globset",
  "sha2 0.11.0",
  "walkdir",
+]
+
+[[package]]
+name = "rust-fs-core"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b367b3bdf7ef90b9701edc9aa9cb9e67817e07c56a9ad88509367eebae74675"
+
+[[package]]
+name = "rust-fs-ext4"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "935fd35ddcd26853677042ffff62084b65273cf978031e2905a081af094d97a0"
+dependencies = [
+ "bitflags 2.13.1",
+ "caseless",
+ "crc32c",
+ "js-sys",
+ "rust-fs-core",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "rust-fs-ntfs"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72173bcbba83fa10ed708cad90813037d79c6286be50b8c3ef8ae82d0ce79bb8"
+dependencies = [
+ "libc",
+ "log",
+ "rust-fs-core",
+]
+
+[[package]]
+name = "rust-fs-xfs"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "696d074be414e581a52bafce8ac78ec35692d9ac41ea6c2b786c3f804e41ab0c"
+dependencies = [
+ "crc32c",
+ "rust-fs-core",
 ]
 
 [[package]]
@@ -6575,6 +6794,27 @@ dependencies = [
  "siphasher",
  "toml 0.8.23",
  "triomphe",
+]
+
+[[package]]
+name = "rust-img-qcow2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f270cd662d4963790f51a014dc9cd976b069e7f4745f6cc6cce835b66963408"
+dependencies = [
+ "flate2",
+ "rust-fs-core",
+ "ruzstd",
+]
+
+[[package]]
+name = "rust-img-vmdk"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6104807c477d30292ba610c209b4f2d3f12a823cbf45eace5ff61567e3bf9b28"
+dependencies = [
+ "flate2",
+ "rust-fs-core",
 ]
 
 [[package]]
@@ -6707,6 +6947,15 @@ dependencies = [
  "unicode-ccc",
  "unicode-properties",
  "unicode-script",
+]
+
+[[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+dependencies = [
+ "twox-hash",
 ]
 
 [[package]]
@@ -8028,6 +8277,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8097,6 +8352,15 @@ name = "unicode-linebreak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-properties"
@@ -9598,7 +9862,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "xz2"

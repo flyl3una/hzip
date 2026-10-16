@@ -132,10 +132,21 @@ impl AppShell {
             form = form_copy.kind(),
             "打开条目：起物化 + 外部打开流程"
         );
+        // 写回目标（**登记时定死**）：嵌套会话 / 不支持编辑的格式 ⇒ 不写回，
+        // 保存时如实告知（见 `app::external_edit` 的边界说明）。
+        let target = data
+            .lock()
+            .map(|d| super::external_edits::write_back_target(&d, &archive, id))
+            .unwrap_or(crate::app::external_edit::WriteBack::Disabled {
+                reason: "edit.writeback.unsupported",
+            });
+        let edit_tx = self.edit_tx.clone();
         let work = {
             let data = data.clone();
             let archive = archive.clone();
             let name = name.clone();
+            let target = target.clone();
+            let edit_tx = edit_tx.clone();
             move |detail: &crate::ui::views::open_progress::OpenDetail| {
                 detail.set_phase(crate::tr("openprogress.phase_materialize_one"));
                 // ① 锁内摘出浏览器 + 会话密码（密码克隆：重活不持锁）
@@ -236,6 +247,14 @@ impl AppShell {
                     if let Err(e) = opened {
                         return Err(e.to_string());
                     }
+                    // 写回登记（**只在外部程序确实起来了之后**）：登记会话 + 挂
+                    // 临时文件监听；保存时要么写回档案，要么如实告知写不回
+                    //（用户实测 2026-10-16：此前保存**什么都没发生**——静默丢改动）。
+                    let _ = edit_tx.try_send(crate::app::external_edit::EditEvent::Arm {
+                        name: name.clone(),
+                        temp: p.clone(),
+                        target: target.clone(),
+                    });
                 }
                 if !failed.is_empty() {
                     tracing::warn!("外部打开：物化失败条目 {failed:?}");

@@ -509,6 +509,12 @@ pub struct AppData {
     pub extract: ExtractDialogVm,
     /// 当前档案路径
     pub archive: Option<PathBuf>,
+    /// 外部编辑器编辑会话（双击物化 → 外部程序保存 → 写回档案）。
+    ///
+    /// 见 [`crate::app::external_edit`]：登记/判重/在飞串行/「不可写回」告知都在
+    /// 那里，本结构只持有清单；`watch` 句柄归 `AppShell`（UI 线程半场），
+    /// 避免 AppData ↔ 回调的自引用环。
+    pub external_edits: Vec<crate::app::external_edit::ExternalEdit>,
     /// 解压对话框待确认对象（档案, 选择范围；确认后消费）
     pub pending_scope: Option<(PathBuf, SelectionArg)>,
     /// 编辑提交待确认变更集（T-MENU6/7 添加上传/删除确认挂起期载荷）
@@ -628,6 +634,7 @@ impl AppData {
             compress: CompressDialogVm::new(),
             extract: ExtractDialogVm::new(),
             archive: None,
+            external_edits: Vec::new(),
             pending_scope: None,
             pending_edit: None,
             name_edit: None,
@@ -922,20 +929,30 @@ impl AppData {
         let Some((archive, changes)) = self.pending_edit.take() else {
             return Err("没有待提交的变更".into());
         };
-        // 关键：先释放浏览会话（Browser 持有档案文件句柄）。Windows 上
-        // MoveFileExW REPLACE_EXISTING 对被打开的目标返回 err 5（拒绝访问），
-        // 编辑任务的原子替换必失败——释放后 UI 仍显示 entries 缓存，
-        // 任务完成后 pump 钩子按 archive 路径 refresh 重开。
-        if self.archive.as_deref() == Some(archive.as_path()) {
+        // 关键：先释放浏览会话（见 `release_session_for_edit` 的说明）。
+        self.release_session_for_edit(&archive);
+        crate::ui::shell::dispatch::submit_edit_batch_locked(self, &archive, changes)
+    }
+
+    /// 编辑提交前的浏览会话释放（**唯一实现**，两个入口共用）。
+    ///
+    /// 必须：`Browser` 持着档案文件句柄，而 Windows 上 `MoveFileExW
+    /// REPLACE_EXISTING` 对被打开的目标返回 err 5（拒绝访问）⇒ 编辑任务的原子替换
+    /// 必失败。释放后 UI 仍显示 entries 缓存，任务完成后泵钩子按 archive 路径
+    /// refresh 重开（保活重开只在**真正释放**处武装——三段式临时摘出不武装，
+    /// 避免误重开把目录打回根）。
+    ///
+    /// 调用方：① 菜单/右键的批量编辑（[`Self::commit_edit_batch`]）
+    /// ② 外部编辑器保存回写（`ui::shell::external_edits`）。
+    pub(crate) fn release_session_for_edit(&mut self, archive: &std::path::Path) {
+        if self.archive.as_deref() == Some(archive) {
             // 重开前记住视图状态（当前目录 + 树展开集）——重开会话会把它们归零
             self.reopen_view_state = Some(self.main.view_state());
             self.main.release_browser();
             // 武装保活重开（2026-09-26）：只有这里（编辑提交真正释放会话）才
-            // 允许泵的 `browse_session_reopen_request` 重开——`take_browser`
-            // 三段式的临时摘出不武装，避免误重开把目录打回根
+            // 允许泵的 `browse_session_reopen_request` 重开。
             self.browse_reopen_armed.set(true);
         }
-        crate::ui::shell::dispatch::submit_edit_batch_locked(self, &archive, changes)
     }
 
     /// 进入行内名称编辑态（重命名/新建文件夹；用户口径 2026-09-28）。
@@ -1554,6 +1571,7 @@ impl AppData {
         let root_vm = sessions[0].0;
         // 根行：最外层档案（虚拟节点，path 空）
         out.push(crate::viewmodel::rows::TreeRow {
+            volume: None,
             path: String::new(),
             name: root_vm
                 .source_path()

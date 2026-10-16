@@ -193,9 +193,12 @@ pub fn browse_row_from_tree_row(row: &TreeRow) -> BrowseRow {
     BrowseRow {
         entry_id: row.entry_id.map(|id| id as u64),
         path: row.path.clone(),
-        name: row.name.clone(),
+        // 展示名：卷行按语言渲染（有标签用标签、无标签「分区 N」/「卷」）；
+        // `path` 不动 ⇒ 导航/选择/剪贴板仍然用 ASCII 稳定的名字。
+        name: volume_display_name(row),
         is_dir: row.is_dir,
         is_container: row.is_container,
+        is_partition: row.volume.is_some(),
         encrypted: row.encrypted,
         suspect,
         size_text: if row.is_dir {
@@ -227,9 +230,13 @@ pub fn browse_row_from_tree_row(row: &TreeRow) -> BrowseRow {
         symlink_target: None,
         // 合成容器层（组合档内层容器：`init.cpio`）→ 类型列显**格式名**
         // （用户口径 2026-09-24：显示 `cpio` 而不是「文件夹」）；其余行走通用映射。
-        type_text: row.container_format.clone().unwrap_or_else(|| {
-            entry_type_label(&row.name, row.is_dir, row.is_symlink, row.is_container)
-        }),
+        // 卷行（分区）：类型列显示**文件系统**（`ext4`/`NTFS`/…）或语言化的「未知卷」；
+        // 其余行照旧（合成容器层 → 格式名；否则通用映射）。
+        type_text: volume_type_text(row)
+            .or_else(|| row.container_format.clone())
+            .unwrap_or_else(|| {
+                entry_type_label(&row.name, row.is_dir, row.is_symlink, row.is_container)
+            }),
         level_text: level_text(row.compression_level),
         encryption_text: encryption_text(row.encrypted, row.encryption),
         crc_text: crc_text(row.crc32),
@@ -243,6 +250,39 @@ fn row_enc_suspect(_row: &TreeRow) -> Option<bool> {
     None
 }
 
+/// 卷行（分区）的**展示名**：有标签用标签；无标签时按当前语言渲染
+/// （裸卷 ⇒「卷」；分区 ⇒「分区 N」）。
+///
+/// 只改展示名：`TreeRow::path`/`name` 保持 ASCII 稳定（树路径、选择、剪贴板、日志
+/// 都用它），语言切换不会让它们漂移。
+fn volume_display_name(row: &TreeRow) -> String {
+    let Some(v) = row.volume.as_ref() else {
+        return row.name.clone();
+    };
+    if let Some(label) = v.label.as_ref().filter(|l| !l.is_empty()) {
+        return label.clone();
+    }
+    if v.kind.as_deref() == Some("Volume") {
+        return crate::tr("vol.volume");
+    }
+    crate::tr_with(
+        "vol.partition_n",
+        &[("n", &(v.index.saturating_add(1)).to_string())],
+    )
+}
+
+/// 卷行（分区）的**类型列文本**：文件系统显示名；未识别 ⇒ 语言化的「未知卷」。
+///
+/// 与「类型描述」（`VolumeRowMeta::kind`，如 `Linux`/`EFI System`）分工：类型列按
+/// 用户口径显示**文件系统**（`ext4`），分区类型描述留给信息面板。
+fn volume_type_text(row: &TreeRow) -> Option<String> {
+    let v = row.volume.as_ref()?;
+    Some(match v.fs.as_deref() {
+        Some(fs) => fs.to_string(),
+        None => crate::tr("vol.unknown_fs"),
+    })
+}
+
 /// `EntryRow`（VM 条目）→ [`BrowseRow`]（右栏完整派生；来自 VM entries 顺序）。
 pub fn browse_row_from_entry_row(row: &EntryRow) -> BrowseRow {
     let suspect = matches!(row.name_encoding, NameEncoding::Suspect(_));
@@ -252,6 +292,7 @@ pub fn browse_row_from_entry_row(row: &EntryRow) -> BrowseRow {
         name: row.name.rsplit('/').next().unwrap_or(&row.name).to_string(),
         is_dir: row.is_dir,
         is_container: false,
+        is_partition: false,
         encrypted: row.encrypted,
         suspect,
         size_text: if row.is_dir {

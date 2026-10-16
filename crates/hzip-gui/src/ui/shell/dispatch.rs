@@ -1000,7 +1000,7 @@ pub(crate) fn submit_edit_batch_locked(
 }
 
 /// 投递出口（已持 `&mut AppData` 版本；[`submit_spec`] 的锁内形态）。
-fn submit_spec_locked(
+pub(crate) fn submit_spec_locked(
     d: &mut crate::app::state::AppData,
     spec: hzip_core::jobs::JobSpec,
 ) -> Result<u64, String> {

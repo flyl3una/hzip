@@ -6,13 +6,17 @@ members = [
     "crates/hzip-format-testkit",
     "crates/hzip-fmt-zip", "crates/hzip-fmt-7z", "crates/hzip-fmt-rar",
     "crates/hzip-fmt-tar", "crates/hzip-fmt-single", "crates/hzip-fmt-cpio",
+    # 磁盘镜像（卷容器 + 文件系统；计划 docs/tasks/T-IMG/，T-IMG2 起）
+    "crates/hzip-vol", "crates/hzip-fmt-raw", "crates/hzip-fmt-qcow2",
+    "crates/hzip-fmt-vmdk", "crates/hzip-fs-ext4", "crates/hzip-fs-fat",
+    "crates/hzip-fs-ntfs", "crates/hzip-fs-xfs",
     "crates/hzip-core", "crates/hzip-cli", "crates/hzip-gui", "crates/hzip-log",
     "crates/xtask",
 ]
 exclude = ["tests-assets"]          # T02 独立生成器 bin，不入 workspace（05 T02：不依赖 hzip crate）
 
 [workspace.package]
-version = "0.1.3"                   # 全部 crate 同版本同步发布（02 §2.2）
+version = "0.2.0"                   # 全部 crate 同版本同步发布（02 §2.2）
 edition = "2024"                    # MSRV 1.95（04 §1；T-G00 Spike#9 评审升级）
 rust-version = "1.95"
 license = "GPL-3.0-or-later"         # 04 §9：本项目以 GPL-3.0-or-later 发布，正文见仓库根 LICENSE（唯一事实源）
@@ -33,7 +37,16 @@ hzip-fmt-rar  = { path = "crates/hzip-fmt-rar",  version = "0.1.0" }
 hzip-fmt-tar  = { path = "crates/hzip-fmt-tar",  version = "0.1.0" }
 hzip-fmt-single = { path = "crates/hzip-fmt-single", version = "0.1.0" }
 hzip-fmt-cpio = { path = "crates/hzip-fmt-cpio", version = "0.1.0" }
-hzip-core     = { path = "crates/hzip-core",     version = "0.1.0" }
+# 磁盘镜像（计划 docs/tasks/T-IMG/）：卷层框架 + 镜像容器 + 文件系统驱动
+hzip-vol      = { path = "crates/hzip-vol",      version = "0.1.0" }
+hzip-fmt-raw  = { path = "crates/hzip-fmt-raw",  version = "0.1.0" }
+hzip-fmt-qcow2 = { path = "crates/hzip-fmt-qcow2", version = "0.1.0" }
+hzip-fmt-vmdk = { path = "crates/hzip-fmt-vmdk", version = "0.1.0" }
+hzip-fs-ext4  = { path = "crates/hzip-fs-ext4",  version = "0.1.0" }
+hzip-fs-fat   = { path = "crates/hzip-fs-fat",   version = "0.1.0" }
+hzip-fs-ntfs  = { path = "crates/hzip-fs-ntfs",  version = "0.1.0" }
+hzip-fs-xfs   = { path = "crates/hzip-fs-xfs",   version = "0.1.0" }
+hzip-core     = { path = "crates/hzip-core",     version = "0.1.0", default-features = false }
 hzip-log      = { path = "crates/hzip-log",      version = "0.1.0" }  # 日志收口（02 §12.3）
 # T21 合入时未自登记；T22/T24 conformance 需 workspace=true 引用（02 §8.6 dev crate）
 hzip-format-testkit = { path = "crates/hzip-format-testkit", version = "0.1.0" }
@@ -52,7 +65,7 @@ crossbeam-utils = "0.8"                             # T10 事件泵 parking（�
 sha2        = "0.10"                                # T11 平台哈希（02 §5 收口）
 dirs        = "6"                                   # T11 平台目录（02 §5 收口）
 clap        = { version = "4", features = ["derive"] }
-gpui-kit    = "=0.7.1"  # 06 §1.2 GUI 层（T-G00 切换；0.7.1 把 gpui 指向 gpui-pre =0.3.8，家族整体换版；gpui-kit 仍无 MSRV 声明，rustc 1.95 已实测可编）
+gpui-kit    = {version = "=0.7.1"}  # 06 §1.2 GUI 层（T-G00 切换；0.7.1 把 gpui 指向 gpui-pre =0.3.8，家族整体换版；gpui-kit 仍无 MSRV 声明，rustc 1.95 已实测可编）
 # —— 02 文档点名的外部依赖（版本由实施者按当时最新稳定版校准，05 T00 实施要点）——
 thiserror        = "2"                                  # HzipError 派生（02 §3.3）
 crossbeam-channel = "0.5"                               # ProgressBus 广播通道（02 §4.1）
@@ -78,6 +91,17 @@ serde_json       = "1"
 toml             = "1"                                 # 配置解析（hzip-config，02 §12.1）
 tracing          = "0.1"                                # 02 §12.3
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# —— 磁盘镜像栈（T-IMG §3：纯 Rust、MIT/Apache、规格自实现；版本一律精确锁 ——
+#    上游 0.x 且刚改过名（am-fs-* → rust-fs-*），锁死 + 适配层隔离，
+#    升级前须跑 docs/tasks/T-IMG/T-IMG13 的交叉验证与性能基线）——
+rust-fs-core         = "=0.3.11"   # 块设备层（BlockRead/BlockDevice/FileDevice/SliceReader/LRU/计数）
+rust-disk-partitions = "=0.7.1"    # GPT/MBR 探测 + FS 魔数嗅探（T-IMG2 分区层）
+rust-img-qcow2       = "=0.6.1"    # qcow2 读+写（T-IMG7）
+rust-img-vmdk        = "=0.5.1"    # VMDK sparse 读+写（T-IMG8）
+rust-fs-ext4         = "=0.8.0"    # ext2/3/4 读+写 + JBD2（T-IMG3/T-IMG5）
+rust-fs-ntfs         = "=0.10.2"   # NTFS 读+写（T-IMG11）
+fatfs                = "=0.3.6"    # FAT12/16/32 读+写（T-IMG12）
+rust-fs-xfs          = "=0.14.1"   # XFS v4/v5 读+写（T-IMG 追加：用户口径列了 XFS）
 tracing-appender = "0.2"                                # 文件滚动日志（hzip-log；02 §12.3）
 rpassword        = "7"                                  # CLI 密码输入（02 §10.2）
 rust-i18n        = "3"                                  # 02 §12.2

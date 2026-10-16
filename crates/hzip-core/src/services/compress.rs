@@ -308,6 +308,8 @@ fn create_options(c: &CompressSpec) -> CreateOptions {
         solid: c.solid,
         comment: c.comment.clone(),
         append: c.append,
+        // volume_write（卷类格式写回模式）取其 Default = Overlay（用户裁定 ②）
+        ..Default::default()
     }
 }
 

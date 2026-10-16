@@ -1,0 +1,23 @@
+[package]
+name = "hzip-fs-ntfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip NTFS 文件系统驱动（读+写；计划 docs/tasks/T-IMG/T-IMG11-ntfs.md）"
+
+[dependencies]
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-vol      = { workspace = true }
+hzip-progress = { workspace = true }
+rust-fs-ntfs  = { workspace = true }
+time          = { workspace = true }   # EntryInfo.mtime（OffsetDateTime）
+tracing       = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+tempfile            = { workspace = true }   # 本地源文件（Replace/Append 的入参）
+
+[lints]
+workspace = true

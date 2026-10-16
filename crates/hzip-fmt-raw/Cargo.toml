@@ -1,0 +1,24 @@
+[package]
+name = "hzip-fmt-raw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip raw 磁盘镜像容器（无魔数：内容探针；计划 docs/tasks/T-IMG/）"
+
+[dependencies]
+hzip-format = { workspace = true }
+hzip-error  = { workspace = true }
+hzip-vol    = { workspace = true }
+hzip-progress = { workspace = true }   # 取消令牌（handler 建索引/编辑器应用变更）
+tracing     = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+hzip-fs-ext4        = { workspace = true }   # 端到端用真实 ext4 驱动（R1 只管 fmt-* 之间零依赖）
+tempfile            = { workspace = true }
+hzip-progress       = { workspace = true }
+sha2                = { workspace = true }
+
+[lints]
+workspace = true

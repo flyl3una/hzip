@@ -1,0 +1,225 @@
+# 磁盘镜像（卷层）文案表（T-IMG；键由 `hzip-vol`/各驱动经 `Unsupported`/`Quota`
+# 与 `ReadOnlyReason::key()` 给出）。
+#
+# 生成/校验：`cargo test -p hzip-gui vol_locale`（逐键断言 en 与 zh-CN 都非空）。
+# 新增键时用下面这条重列清单，再补文案：
+#   grep -rhoE '\"vol\.[a-z0-9.-]+\"' crates | sort -u
+
+_meta = { generated = "hzip-gui i18n" }
+_version = 2
+
+[vol.err.audit]
+en = "Pre-write check failed; nothing was written"
+zh-CN = "提交前自检未通过（已放弃写入，原文件未改动）"
+
+[vol.err.audit-skipped]
+en = "This filesystem has no checker"
+zh-CN = "该文件系统没有自检器"
+
+[vol.err.bad-type]
+en = "Operation not allowed for this file type"
+zh-CN = "该文件类型不允许此操作"
+
+[vol.err.dir-move]
+en = "Directory cannot be moved this way"
+zh-CN = "目录不能以这种方式移动"
+
+[vol.err.dir-not-empty]
+en = "Directory is not empty"
+zh-CN = "目录非空，未删除"
+
+[vol.err.entry-gone]
+en = "Entry no longer exists (image changed underneath?)"
+zh-CN = "条目已不存在（镜像可能被外部改动）"
+
+[vol.err.exists]
+en = "An entry with that name already exists"
+zh-CN = "同名条目已存在"
+
+[vol.err.fs-feature]
+en = "Volume uses a feature this tool does not support"
+zh-CN = "卷使用了本工具不支持的特性"
+
+[vol.err.invalid-name]
+en = "Invalid name"
+zh-CN = "名字不合法"
+
+[vol.err.name-too-long]
+en = "Name exceeds this filesystem's limit"
+zh-CN = "名字超出该文件系统的长度上限"
+
+[vol.err.no-space]
+en = "No space left in the volume"
+zh-CN = "卷内空间不足"
+
+[vol.err.partition-not-mounted]
+en = "Partition has no mounted filesystem"
+zh-CN = "该分区没有已挂载的文件系统"
+
+[vol.err.read-entry]
+en = "Failed to read the entry"
+zh-CN = "读取条目失败"
+
+[vol.err.refused]
+en = "The filesystem refused the operation"
+zh-CN = "文件系统拒绝了该操作"
+
+[vol.err.source-not-file]
+en = "Source is not a regular file"
+zh-CN = "来源不是普通文件"
+
+[vol.err.spool-limit]
+en = "Temporary buffer exceeded its limit"
+zh-CN = "临时缓冲超出上限"
+
+[vol.err.too-large]
+en = "File exceeds this filesystem's size limit"
+zh-CN = "文件超出该文件系统的大小上限"
+
+[vol.err.unknown-change]
+en = "Unknown change type"
+zh-CN = "未知的变更类型"
+
+[vol.err.unknown-entry]
+en = "Entry not found"
+zh-CN = "找不到该条目"
+
+[vol.err.unknown-selection]
+en = "Unknown selection"
+zh-CN = "未知的选择方式"
+
+[vol.err.unsupported-change]
+en = "This filesystem does not support that change"
+zh-CN = "该文件系统不支持这种变更"
+
+[vol.readonly.by-setting]
+en = "Opened read-only by setting"
+zh-CN = "按设置以只读方式打开"
+
+[vol.readonly.device]
+en = "Target is not writable (read-only media or permissions)"
+zh-CN = "目标不可写（只读介质或权限不足）"
+
+[vol.readonly.dirty]
+en = "Volume is dirty; opened read-only"
+zh-CN = "卷内有未提交的变更（dirty），默认只读"
+
+[vol.readonly.encrypted]
+en = "Encrypted image; read-only"
+zh-CN = "加密镜像/卷，只读"
+
+[vol.readonly.fs-unknown]
+en = "Unrecognised filesystem; read-only"
+zh-CN = "未识别的文件系统，只读"
+
+[vol.readonly.hibernated]
+en = "Volume is hibernated (Windows fast startup); read-only"
+zh-CN = "卷处于休眠状态（Windows 快速启动），只读"
+
+[vol.readonly.journal]
+en = "Volume has a journal to replay; read-only by default"
+zh-CN = "卷内有未重放的日志，默认只读"
+
+[vol.readonly.layout]
+en = "This image layout is read-only"
+zh-CN = "该镜像布局不支持写入，只读"
+
+[vol.readonly.outer-not-editable]
+en = "Outer container cannot be rebuilt; read-only"
+zh-CN = "外层容器不可重建，因此只读"
+
+[vol.reject.commit-spooled]
+en = "Changes came from a temporary buffer; use save-as to rewrite the outer container"
+zh-CN = "改动来自临时缓冲，请用「另存为」重写外层容器"
+
+[vol.reject.multi-volume]
+en = "Multi-volume images are not supported"
+zh-CN = "暂不支持分卷镜像"
+
+[vol.reject.stdin-source]
+en = "Opening an image from standard input is not supported"
+zh-CN = "暂不支持从标准输入打开镜像"
+
+[vol.unsupported.backing-file]
+en = "Image has a backing file, which cannot be located here"
+zh-CN = "镜像有 backing 父文件，此处无法定位，暂不支持"
+
+[vol.unsupported.change]
+en = "This filesystem does not support that change"
+zh-CN = "该文件系统不支持这种变更"
+
+[vol.unsupported.change-route]
+en = "This image has several volumes; editing inside it is not supported yet"
+zh-CN = "该镜像含多个卷（分区），暂不支持在其内部编辑"
+
+[vol.unsupported.compressed]
+en = "File is WOF-compressed or encrypted; not supported"
+zh-CN = "该文件被 Windows 压缩或加密，暂不支持"
+
+[vol.unsupported.create-image]
+en = "Creating disk images is not supported"
+zh-CN = "暂不支持创建磁盘镜像"
+
+[vol.unsupported.descriptor]
+en = "VMDK descriptor could not be parsed"
+zh-CN = "VMDK 描述符无法解析"
+
+[vol.unsupported.dir-too-large]
+en = "Directory exceeds this filesystem's index limit"
+zh-CN = "目录已超出该文件系统的索引上限"
+
+[vol.unsupported.ext-l2]
+en = "Image uses extended L2 tables; not supported"
+zh-CN = "镜像使用扩展 L2 表，暂不支持"
+
+[vol.unsupported.external-data]
+en = "Image uses an external data file; not supported"
+zh-CN = "镜像使用外部数据文件，暂不支持"
+
+[vol.unsupported.layout-flat]
+en = "Flat VMDK layout; convert to monolithicSparse first"
+zh-CN = "该 VMDK 为 flat 布局；请先转为 monolithicSparse"
+
+[vol.unsupported.layout-unknown]
+en = "Unrecognised VMDK layout"
+zh-CN = "无法识别的 VMDK 布局"
+
+[vol.unsupported.layout-vmfs]
+en = "ESXi vmfsSparse VMDK; not supported"
+zh-CN = "该 VMDK 为 ESXi vmfsSparse 布局，暂不支持"
+
+[vol.unsupported.multi-extent]
+en = "Split VMDK (twoGbMaxExtent); not supported"
+zh-CN = "分卷 VMDK（twoGbMaxExtent）暂不支持"
+
+[vol.unsupported.open]
+en = "Could not open the volume"
+zh-CN = "无法打开该卷"
+
+[vol.unsupported.qcow2-feature]
+en = "Unsupported qcow2 feature"
+zh-CN = "镜像使用了本工具不支持的 qcow2 特性"
+
+[vol.unsupported.snapshot-delta]
+en = "Snapshot delta needs its parent image; not supported"
+zh-CN = "VMDK 快照增量依赖父镜像，暂不支持"
+
+[vol.unsupported.split-image]
+en = "Splitting an image into volumes is not supported"
+zh-CN = "暂不支持把镜像切成分卷输出"
+
+[vol.warn.backing-copyup]
+en = "Backing file present: writes copy parent clusters and grow this image"
+zh-CN = "镜像有 backing 父文件：写入会复制相关簇，体积会增长"
+
+[vol.warn.inplace-fallback]
+en = "In-place write unavailable; using the staged overlay instead"
+zh-CN = "就地写不可用，已改用覆盖写（更安全）"
+
+[vol.warn.no-journal]
+en = "This filesystem has no journal; an interruption can leave it inconsistent"
+zh-CN = "该文件系统没有日志：中断可能留下不一致"
+
+[vol.warn.table-corrupt]
+en = "Partition table damaged; treated as having none"
+zh-CN = "分区表损坏，已按无分区表处理"

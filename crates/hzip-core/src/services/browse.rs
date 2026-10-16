@@ -160,13 +160,24 @@ fn deferred_composite(registry: &FormatRegistry, src: Source) -> Result<Deferred
     let handler_id = hzip_format::exts::container_handler(&inner_name)
         .unwrap_or_default()
         .to_string();
-    // 声明大小：最内层编码层的输出 = 内层容器解压后字节数（与单流 size_raw 同源）
+    // 声明大小：最内层编码层的输出 = 内层容器解压后字节数（与单流 size_raw 同源）。
+    //
+    // 精确值要靠 `hzip-fmt-single` 解出压缩流头（gz/bz2/xz/zst）。裁掉
+    // `default-formats` 的构建（04 §3.2 发行版合规：只留 tar/zip/7z 等）里那个
+    // crate 根本没链进来 —— 此时退化为 0（本函数既有口径里 `packed` 缺失即 0，
+    // 显示层按「未知大小」处理），**不能**为了这行把 fmt crate 拉进依赖红线。
+    #[cfg(feature = "default-formats")]
     let declared = layers
         .last()
         .and_then(|codec| {
             packed.and_then(|n| hzip_fmt_single::declared_payload_size(codec.as_str(), &path, n))
         })
         .unwrap_or(0);
+    #[cfg(not(feature = "default-formats"))]
+    let declared = {
+        let _ = (&layers, &path, packed);
+        0
+    };
     let entry = EntryInfo {
         id: 0,
         name: hzip_error::EntryName::new(inner_name.clone()),
@@ -444,6 +455,15 @@ impl Browser {
         pw: PasswordRef<'_>,
     ) -> Result<Box<dyn std::io::Read + Send>, HzipError> {
         self.reader().read_entry(entry_id, pw)
+    }
+
+    /// **卷内顶层行（分区）的元数据**（磁盘镜像会话才有；其它格式为空）。
+    ///
+    /// 界面据此把分区行画成「分区」（专属图标）、类型列显示文件系统、无标签时按语言
+    /// 显示「分区 N」——**不靠名字猜**。名字本身保持 ASCII 稳定（树路径/剪贴板/日志）。
+    #[must_use]
+    pub fn volume_rows(&self) -> Vec<hzip_format::VolumeRowMeta> {
+        self.reader().volume_rows()
     }
 }
 

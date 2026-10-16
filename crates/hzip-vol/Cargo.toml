@@ -1,0 +1,28 @@
+[package]
+name = "hzip-vol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "hzip 卷层框架：磁盘镜像 → 分区 → 文件系统（计划 docs/tasks/T-IMG/）"
+
+[dependencies]
+# 依赖红线：hzip-vol 是**新的中间层**，只依赖 hzip-format（契约）、hzip-error、
+# hzip-platform（TempArea/dirs）、hzip-progress + 上游块设备栈；不依赖 hzip-core
+# （core 依赖它，反向会成环）。参见 docs/tasks/T-IMG/T-IMG2-vol框架.md。
+hzip-format   = { workspace = true }
+hzip-error    = { workspace = true }
+hzip-platform = { workspace = true }
+hzip-progress = { workspace = true }
+rust-fs-core         = { workspace = true }
+rust-disk-partitions = { workspace = true }
+thiserror = { workspace = true }
+tempfile  = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+hzip-format-testkit = { workspace = true, features = ["vol"] }
+zeroize = { workspace = true }   # 测试里的无密码源
+
+[lints]
+workspace = true

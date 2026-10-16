@@ -1082,6 +1082,7 @@ fn is_direct_child_matches_spec_cases() {
 fn refresh_browse_rows_closed_archive_clears() {
     let mut data = app();
     std::sync::Arc::make_mut(&mut data.nav_rows).push(TreeRow {
+        volume: None,
         path: "docs".into(),
         name: "docs".into(),
         depth: 0,
@@ -1103,6 +1104,7 @@ fn refresh_browse_rows_closed_archive_clears() {
         container_format: None,
     });
     std::sync::Arc::make_mut(&mut data.dir_rows).push(TreeRow {
+        volume: None,
         path: "a.txt".into(),
         name: "a.txt".into(),
         depth: 0,
@@ -1367,6 +1369,7 @@ fn export_snapshot_carries_selection_stats() {
     // 根层行集——统计只受当前 dir_rows 的行字段驱动）
     let x_id = data.main.entry(0).expect("首条目").id;
     std::sync::Arc::make_mut(&mut data.dir_rows).push(crate::viewmodel::rows::TreeRow {
+        volume: None,
         path: "zdir".into(),
         name: "zdir".into(),
         depth: 0,

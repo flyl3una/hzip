@@ -648,3 +648,50 @@ fn keys_block_shows_conflict_on_the_rejected_row(cx: &mut gpui_kit::TestAppConte
     let hint = conflict_hint(occupant);
     assert!(hint.contains(&crate::tr("keymap.action.quit")), "{hint}");
 }
+
+/// 关联页必须给**每个候选扩展名**一个勾选框（用户实测缺陷 2026-10-16：磁盘镜像族
+/// `raw`/`img`/`dd`/`qcow2`/`vmdk` 整族在关联页里不出现——`ExtKind::Volume` 这一档
+/// 没登记进分组表，于是整组静默消失；引擎认得、也打得开，只是页面上没有勾选框）。
+///
+/// 两层断言：
+/// 1. **每个 `ExtKind` 变体都在 [`ASSOC_GROUPS`] 里**——新增变体不登记 ⇒ 整组静默消失
+///    （不是编译错误，故必须有一条测试守着）；
+/// 2. **本构建的每个候选都能落到某一组**——等价于「页面上有它的勾选框」，比分档断言更
+///    贴用户所见（任何过滤漂移都会红）。
+#[test]
+fn assoc_page_has_a_checkbox_for_every_candidate() {
+    use hzip_core::engine::{Engine, EngineConfig};
+    use hzip_format::exts::ExtKind;
+
+    // ① 变体登记完整：`ExtKind` 不能自动枚举，新增变体时这行清单要同步改
+    //    （改了清单却忘了 ASSOC_GROUPS ⇒ 本断言红）
+    for kind in [
+        ExtKind::Archive,
+        ExtKind::TarComposite,
+        ExtKind::Stream,
+        ExtKind::Volume,
+    ] {
+        assert!(
+            ASSOC_GROUPS.iter().any(|(k, ..)| *k == kind),
+            "ExtKind::{kind:?} 未登记到 ASSOC_GROUPS（该组会在关联页整片消失）"
+        );
+    }
+
+    // ② 默认构建（GUI 固定取 core 的 `default` ⇒ 含卷格式）下磁盘镜像族必须在候选里
+    let engine = Engine::new(EngineConfig::default()).expect("默认 Engine 构造");
+    let candidates = crate::ui::contracts::associable_extensions(&engine);
+    for ext in ["raw", "img", "dd", "qcow2", "qcow", "vmdk"] {
+        assert!(
+            candidates.iter().any(|c| c == ext),
+            "关联候选里应有 {ext}：{candidates:?}"
+        );
+    }
+
+    // ③ 每个候选都有归属组（= 有勾选框）
+    for c in &candidates {
+        let shown = ASSOC_GROUPS
+            .iter()
+            .any(|(k, ..)| assoc_group_exts(*k, &candidates).iter().any(|e| e == c));
+        assert!(shown, "候选 {c} 在关联页里没有勾选框（分组表遗漏）");
+    }
+}

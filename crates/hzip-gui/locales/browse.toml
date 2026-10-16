@@ -361,3 +361,18 @@ zh-CN = "新建文件夹"
 [browse.rename.nested]
 en = "Cannot rename inside a nested archive layer"
 zh-CN = "进入内层压缩包后不能重命名/新建（请在顶层压缩包里操作）"
+
+# —— 磁盘镜像分区行（T-IMG；用户口径 2026-10-16）——
+# 注意：树路径/条目名保持 ASCII 稳定（`Partition 1`/`Volume`），这里只是**展示层**
+# 的语言化——否则切换语言会让路径、选择、剪贴板、日志跟着漂移。
+[vol.partition_n]
+en = "Partition {n}"
+zh-CN = "分区 {n}"
+
+[vol.volume]
+en = "Volume"
+zh-CN = "卷"
+
+[vol.unknown_fs]
+en = "Unknown volume"
+zh-CN = "未知卷"
