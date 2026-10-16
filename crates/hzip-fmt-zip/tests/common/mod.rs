@@ -72,13 +72,21 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// 临时目录（进程级唯一）。
 pub fn tmp_dir(tag: &str) -> PathBuf {
+    // ⚠️ 不能只靠 `SystemTime::now()` 的纳秒：Windows 上它是**粗粒度**时钟
+    // （约 15.6 ms 一跳），同一测试二进制里并行跑、**同 tag** 的用例会拿到
+    // **同一个目录** ⇒ 一个用例收尾的 `remove_dir_all` 会把另一个用例正在读的
+    // 档案删掉（实测 `tests/editor.rs::edit_replace_delete_append` 因此偶发
+    // `Io { NotFound }`，且失败点落在「刚写完的文件上」）。故再加进程内自增
+    // 序号：同一进程内**永不重名**，与时钟分辨率无关。
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let p = std::env::temp_dir().join(format!(
-        "hzip-zip-{tag}-{}-{}",
+        "hzip-zip-{tag}-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&p).unwrap();
     p

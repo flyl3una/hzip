@@ -83,6 +83,14 @@ pub enum SettingId {
     ViewStyle,
     /// 文件类型图标来源（[ui].file_type_icons；system/builtin——T-ICON 决策 #1）
     FileTypeIcons,
+    /// 快捷键绑定（`[keys]` 全节一次上行——T-KEYS）。
+    ///
+    /// 本项**一项顶一节**：界面上的 14 行动作共用这一个 id（不像其它项一项一
+    /// 个字段），因为配置侧就是一个 `[keys]` 表、上行侧整份 `Keys` 一次写回
+    /// （见 [`crate::app::settings_registry::SettingValue::Keys`]）。
+    /// 生效半场 = `Effect::DataOnly` 声明 + UI 半场按**本 id** 重装 keymap
+    /// （keymap 是 `App` 级全局态，快照不携带）。
+    Keymap,
 }
 
 impl SettingId {
@@ -125,6 +133,7 @@ impl SettingId {
             Self::ToolbarStyle => "set-toolbar-style",
             Self::ViewStyle => "set-view-style",
             Self::FileTypeIcons => "set-file-type-icons",
+            Self::Keymap => "set-keymap",
         }
     }
 }

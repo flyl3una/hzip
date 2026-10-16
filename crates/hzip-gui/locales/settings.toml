@@ -31,6 +31,11 @@ zh-CN = "查看器"
 en = "Language"
 zh-CN = "语言"
 
+# T-KEYS：第 8 个页签「快捷键」
+[tab.keys]
+en = "Shortcuts"
+zh-CN = "快捷键"
+
 # T-SET 界面外观：界面字体 / 字体大小 / 布局密度（设置-常规页签）
 [setting.font_family.search]
 en = "Search fonts"
@@ -401,3 +406,104 @@ zh-CN = "打开系统「默认应用」设置"
 [assocstatus.failed]
 en = "System operation failed: {reason}"
 zh-CN = "系统操作失败：{reason}"
+
+# —— 快捷键页（T-KEYS）——
+# 行文案 = `setting.keymap.label`；`keymap.action.<config_key>` 的动作名由
+# `ui::shell::keymap::ACTIONS` 的 label 引用（config_key = TOML 字段名，
+# 与 `hzip_config::Keys::field` 的键名一一对应）。
+[setting.keymap.label]
+en = "Shortcuts"
+zh-CN = "快捷键"
+
+[setting.keymap.help]
+en = "Click a shortcut and press the combination you want \u2014 it takes effect as soon as the shortcut loses focus. Esc cancels the edit, \u2715 removes the shortcut from that action, and \u201cReset all shortcuts\u201d in the page header restores every shortcut to its default."
+zh-CN = "点键位后按下想用的组合键，移开焦点即生效；Esc 取消本次编辑；点 ✕ 删除该动作的快捷键绑定；页头「全部恢复默认」可一键复原全部快捷键。"
+
+[keymap.action.open]
+en = "Open archive"
+zh-CN = "打开档案"
+
+[keymap.action.extract]
+en = "Extract"
+zh-CN = "解压"
+
+[keymap.action.new_window]
+en = "New window"
+zh-CN = "新建窗口"
+
+[keymap.action.select_all]
+en = "Select all"
+zh-CN = "全选"
+
+[keymap.action.select_invert]
+en = "Invert selection"
+zh-CN = "反选"
+
+[keymap.action.copy]
+en = "Copy"
+zh-CN = "复制"
+
+[keymap.action.paste]
+en = "Paste"
+zh-CN = "粘贴"
+
+[keymap.action.find]
+en = "Find"
+zh-CN = "查找"
+
+[keymap.action.test_integrity]
+en = "Test integrity"
+zh-CN = "测试完整性"
+
+[keymap.action.settings]
+en = "Settings"
+zh-CN = "设置"
+
+[keymap.action.show_jobs]
+en = "Job center"
+zh-CN = "任务中心"
+
+[keymap.action.refresh]
+en = "Refresh"
+zh-CN = "刷新"
+
+[keymap.action.delete]
+en = "Delete"
+zh-CN = "删除"
+
+[keymap.action.quit]
+en = "Quit"
+zh-CN = "退出"
+
+# 行态角标（两态：默认 / 未绑定；自定义不显示角标）
+[keymap.state.default]
+en = "Default"
+zh-CN = "默认"
+
+[keymap.state.unbound]
+en = "Unbound"
+zh-CN = "未绑定"
+
+[keymap.recording]
+en = "Press a key…"
+zh-CN = "请按键…"
+
+# 行尾 ✕ 按钮的 tooltip
+[keymap.remove_binding]
+en = "Remove this shortcut"
+zh-CN = "删除该快捷键绑定"
+
+# `{action}` = 占用该键位的动作名（`keymap.action.*` 的本地化文案）
+[keymap.conflict]
+en = "Already used by \u201c{action}\u201d"
+zh-CN = "已被「{action}」占用"
+
+# 行内 ↻ 还原钮（把该动作恢复成内置默认键位；与页头「全部恢复默认」只差范围）
+[keymap.reset_one]
+en = "Restore default"
+zh-CN = "恢复默认"
+
+[keymap.reset_all]
+en = "Reset all shortcuts"
+zh-CN = "全部恢复默认"
+

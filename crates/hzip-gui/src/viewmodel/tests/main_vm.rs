@@ -264,6 +264,202 @@ fn select_ids_replaces_ignores_out_of_range_and_clears() {
     assert!(vm.selection().is_empty());
 }
 
+// —— T-SEL2：全选 / 反选 = 列表**可见行**（Ctrl+A 语义修正）——
+//
+// 与 `select_all`/`select_invert`（**整档**：过滤后的 `entries` 全集）的分野：
+// 逐层浏览时 = 当前目录那一屏；搜索/过滤激活时 = 扁平命中结果。`..` 上一级行
+// 是 UI 委托层合成的（`views/browse.rs` `DataRowRef::Parent`），结构上不在行集里。
+
+/// 当前层语义：根层全选只选根层行——根层文件进实体通道、隐式目录行进目录
+/// 通道；子目录内的条目**不**进实体通道（整档语义的根因缺陷）。
+#[test]
+fn select_visible_rows_limits_to_current_layer() {
+    let d = tempfile::TempDir::new().unwrap();
+    let ar = d.path().join("t.tar");
+    testutil::write_ustar(
+        &ar,
+        &[("a.txt", b"a"), ("b.txt", b"b"), ("sub/c.txt", b"c")],
+    );
+    let eng = testutil::engine();
+    let mut vm = MainViewModel::new();
+    vm.open(&eng, &ar).expect("open");
+    vm.tree(); // 懒建树（生产路径 rebuild_browse_rows 同序）
+
+    // 根层行集 = 当前目录直接子项（目录先行；无 `..` 合成行）
+    let rows = vm.visible_rows();
+    assert_eq!(
+        rows.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        vec!["sub", "a.txt", "b.txt"],
+        "根层可见行"
+    );
+
+    vm.select_visible_rows(&rows, false);
+    let c_id = vm.entry_id_of_path("sub/c.txt").expect("c.txt 可定位");
+    assert_eq!(vm.selection(), vec![0, 1], "实体通道恰为根层两个文件");
+    assert!(!vm.selection().contains(&c_id), "子目录内条目不进实体通道");
+    assert_eq!(
+        vm.dir_selection(),
+        vec!["sub".to_string()],
+        "隐式目录行（tar 无目录条目）走目录通道"
+    );
+    // 注：`selection_names()` 是**有效集**——目录通道按路径前缀展开子树
+    // （§2「选目录 = 选中其全部内容」），故它仍含 sub/c.txt；「不含当前目录
+    // 之外的条目」约束看的是两个**原始通道**（上面两条断言）。
+    assert_eq!(
+        vm.selection_names(),
+        vec![
+            "a.txt".to_string(),
+            "b.txt".to_string(),
+            "sub/c.txt".to_string()
+        ],
+        "有效集 = 实体 ∪ 目录子树（复制/解压消费面）"
+    );
+
+    // 进 sub/ 再全选：只选该层（整档 `select_all` 在这一步仍会选上 4 条）
+    vm.enter_dir("sub");
+    let rows = vm.visible_rows();
+    assert_eq!(
+        rows.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        vec!["sub/c.txt"],
+        "sub/ 可见行"
+    );
+    vm.select_visible_rows(&rows, false);
+    assert_eq!(vm.selection(), vec![c_id], "只选该子目录内的条目");
+    assert!(vm.dir_selection().is_empty(), "该层无隐式目录行");
+    assert_eq!(vm.selection_names(), vec!["sub/c.txt".to_string()]);
+}
+
+/// 搜索/过滤态：行集 = **扁平命中结果** ⇒ 选择集 = 命中集（既不是整档，也不是
+/// 当前目录那一层）。
+#[test]
+fn select_visible_rows_in_search_mode_is_flat_hits() {
+    let d = tempfile::TempDir::new().unwrap();
+    let ar = d.path().join("t.tar");
+    testutil::write_ustar(
+        &ar,
+        &[
+            ("a.txt", b"a"),
+            ("b.txt", b"b"),
+            ("sub/c.txt", b"c"),
+            ("sub/d.txt", b"d"),
+        ],
+    );
+    let eng = testutil::engine();
+    let mut vm = MainViewModel::new();
+    vm.open(&eng, &ar).expect("open");
+    vm.tree();
+    assert_eq!(vm.entry_count(), 4);
+
+    vm.set_filter(Filter {
+        name_substr: Some("c.txt".into()),
+        ..Default::default()
+    });
+    let rows = vm.visible_rows();
+    assert_eq!(rows.len(), 1, "命中跨目录的一条：sub/c.txt");
+    assert_eq!(rows[0].path, "sub/c.txt");
+    assert!(
+        rows[0].entry_id.is_some(),
+        "搜索行带实体 id（非隐式目录行）"
+    );
+
+    vm.select_visible_rows(&rows, false);
+    assert_eq!(
+        vm.selection().len(),
+        1,
+        "命中集 1 条（整档 select_all 会是 4 条）"
+    );
+    assert_eq!(vm.selection_names(), vec!["sub/c.txt".to_string()]);
+    assert!(vm.dir_selection().is_empty(), "扁平结果行全走实体通道");
+}
+
+/// `..` / 越界：选择集 ⊆ 行集 id；行集里没有 `..` 合成行 ⇒ 选择集不可能含它；
+/// 空行集与 `clear=true` 等价（清空两通道）。
+#[test]
+fn select_visible_rows_stays_within_row_set_and_clears() {
+    let d = tempfile::TempDir::new().unwrap();
+    let ar = d.path().join("t.tar");
+    testutil::write_ustar(
+        &ar,
+        &[("a.txt", b"a"), ("b.txt", b"b"), ("sub/c.txt", b"c")],
+    );
+    let eng = testutil::engine();
+    let mut vm = MainViewModel::new();
+    vm.open(&eng, &ar).expect("open");
+    vm.tree();
+
+    let rows = vm.visible_rows();
+    assert!(
+        rows.iter().all(|r| r.path != ".." && r.name != ".."),
+        "行集不含 `..` 合成行（它只在 UI 委托层）"
+    );
+    vm.select_visible_rows(&rows, false);
+    let row_ids: std::collections::BTreeSet<usize> =
+        rows.iter().filter_map(|r| r.entry_id).collect();
+    assert!(
+        vm.selection().iter().all(|id| row_ids.contains(id)),
+        "实体选择 ⊆ 行集 id（`..` 无实体 id，结构上进不来）"
+    );
+    assert_eq!(
+        vm.dir_selection(),
+        rows.iter()
+            .filter(|r| r.is_dir && r.entry_id.is_none())
+            .map(|r| r.path.clone())
+            .collect::<Vec<_>>(),
+        "目录选择 == 行集里的隐式目录行"
+    );
+
+    // 空行集 = 清空两通道（`clear=true` 的同款出口）
+    vm.select_visible_rows(&[], false);
+    assert_eq!(vm.selection_count(), 0, "空行集清空实体 + 目录两通道");
+    // `clear=true`（不依赖行集）
+    vm.select_visible_rows(&rows, false);
+    assert!(vm.selection_count() > 0, "先选上再来清");
+    vm.select_visible_rows(&rows, true);
+    assert!(
+        vm.selection().is_empty() && vm.dir_selection().is_empty() && vm.selection_count() == 0
+    );
+}
+
+/// 反选：同一行集内双通道互换（隐式目录行同参），连按两次回到原集。
+#[test]
+fn invert_rows_swaps_within_row_set() {
+    let d = tempfile::TempDir::new().unwrap();
+    let ar = d.path().join("t.tar");
+    testutil::write_ustar(
+        &ar,
+        &[("a.txt", b"a"), ("b.txt", b"b"), ("sub/c.txt", b"c")],
+    );
+    let eng = testutil::engine();
+    let mut vm = MainViewModel::new();
+    vm.open(&eng, &ar).expect("open");
+    vm.tree();
+
+    let rows = vm.visible_rows(); // sub + a.txt + b.txt
+    vm.select_visible_rows(&rows, false); // 全选：实体 {0,1} + 目录 {sub}
+    vm.invert_rows(&rows);
+    assert_eq!(vm.selection_count(), 0, "行集内已全选 → 反选 = 全不选");
+    assert!(vm.selection().is_empty() && vm.dir_selection().is_empty());
+
+    vm.invert_rows(&rows);
+    assert_eq!(vm.selection(), vec![0, 1], "再反选 = 行集内全选中");
+    assert_eq!(vm.dir_selection(), vec!["sub".to_string()]);
+
+    // 半选：先摘掉目录通道 → 反选后两通道互补，两次反选回到原集
+    vm.toggle_select_dir("sub");
+    let before = vm.selection();
+    assert!(vm.dir_selection().is_empty());
+    vm.invert_rows(&rows);
+    assert!(vm.selection().is_empty(), "实体行原全选中 → 反选后全不选");
+    assert_eq!(
+        vm.dir_selection(),
+        vec!["sub".to_string()],
+        "隐式目录行原未选中 → 反选后选中"
+    );
+    vm.invert_rows(&rows);
+    assert_eq!(vm.selection(), before, "两次反选回到原集");
+    assert!(vm.dir_selection().is_empty());
+}
+
 #[test]
 fn tree_lazy_build() {
     let d = tempfile::TempDir::new().unwrap();

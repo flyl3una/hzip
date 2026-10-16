@@ -37,6 +37,8 @@ pub struct Config {
     pub ui: Ui,
     pub update: Update,
     pub logging: Logging,
+    /// 快捷键（T-KEYS `[keys]`）；见 [`Keys`] 的三态语义。
+    pub keys: Keys,
 }
 
 /// 在线更新检查（`[update]`）。
@@ -449,6 +451,129 @@ impl Default for Logging {
             retention_days: 7,
             dir: String::new(),
             format: "detailed".into(),
+        }
+    }
+}
+
+/// 快捷键配置（`[keys]`；T-KEYS 需求 2）。
+///
+/// 每个字段 = 一个**可配置动作**，字段名与 TOML 键名、GUI 的
+/// `ui::shell::keymap::KeyActionDef::config_key` 三者同字面；**声明顺序**即
+/// 设置页「快捷键」页签的行序（GUI `keymap::ACTIONS` 逐条对应）。
+///
+/// # 三态（每个字段一个 `String`）
+///
+/// | 值 | 语义 | 行为 |
+/// |---|---|---|
+/// | `""`（或缺键） | 用**内置默认** | 绑该动作的默认键位（各字段文档里那条；GUI 侧 `default_spec`） |
+/// | `"none"` | **禁用**该动作 | 不注册任何键盘绑定；菜单项仍可点击、仍能执行，只是不再有快捷键、菜单也不显示提示 |
+/// | 其它 | 自定义键位 | ASCII 键位串（如 `ctrl-shift-n`）；**解析失败回落默认并 `tracing::warn!`** |
+///
+/// # 为什么是哨兵字符串，而不是 `Option<String>` / 枚举
+///
+/// - TOML 没有 `null`：用户在配置文件里表达「这个动作别用快捷键了」，最直白也
+///   最不容易写错的就是 `open = "none"`；而 `open = ""` 必须仍表示「用默认」，
+///   两者得能区分。
+/// - `""` = 「未设置 → 回落默认」是本文件既有惯例（`ui.image_viewer`、
+///   `ui.editor`、`update.check_url` 同口径），沿用同一口径就不必让用户学第二套
+///   空值语义；也让 `#[serde(default)]` 缺键回落自然等于「全默认」。
+/// - **判定顺序在消费方**：必须先认哨兵/空串，再进 `Keystroke::parse`。把
+///   `"none"` 直接丢给解析器**不会报错**（它只是把 `none` 当成一个叫 `none`
+///   的普通键名，而物理键盘永远送不出这个名字），于是「禁用」会被静默当成
+///   「绑了个永不触发的键」——看着生效、实则与默认绑定被清掉不是一回事。
+///
+/// # 本层不校验、不归一
+///
+/// 与 `theme` / `lang` / `file_type_icons` 同惯例：本层**直存**用户写下的字符串。
+/// 「合法键位串」只有 GUI 拿得到判定（`gpui` 的 `Keystroke::parse`），且「非法串
+/// 回落默认」应当是**每次装配时**判一次而不是在读取时把原文改掉——手改的错误值
+/// 原样留在盘上，用户回头才看得出自己写错在哪（若这里悄悄改成默认，用户会以为
+/// 自己写的东西被程序吃了）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    /// 打开档案（默认 `ctrl-o`）
+    pub open: String,
+    /// 解压（默认 `ctrl-e`）
+    pub extract: String,
+    /// 新建窗口（默认 `ctrl-shift-n`）
+    pub new_window: String,
+    /// 全选（默认 `ctrl-a`；T-SEL2 起「全选/反选」只作用于**可见行**）
+    pub select_all: String,
+    /// 反选（默认 `ctrl-i`）
+    pub select_invert: String,
+    /// 复制（默认 `ctrl-c`）
+    pub copy: String,
+    /// 粘贴（默认 `ctrl-v`）
+    pub paste: String,
+    /// 查找（默认 `ctrl-f`）
+    pub find: String,
+    /// 测试完整性（默认 `ctrl-t`）
+    pub test_integrity: String,
+    /// 打开设置（默认 `ctrl-,`）
+    pub settings: String,
+    /// 任务中心（默认 `ctrl-j`）
+    pub show_jobs: String,
+    /// 刷新（默认 `f5`）
+    pub refresh: String,
+    /// 删除（默认 `delete`）
+    pub delete: String,
+    /// 退出（默认 `ctrl-q`）
+    pub quit: String,
+}
+
+impl Keys {
+    /// 按 TOML 键名取单个键位原文（`None` = 该键名不属于本表）。
+    ///
+    /// 为什么拿字符串键来索引：调用方（GUI）的世界里这套动作是按
+    /// `config_key: &'static str` 组织的（设置注册表行、`keymap::ACTIONS`、
+    /// 冲突检测全走同一个字面量），本 crate 不依赖 GUI 类型 ⇒ 这一处字符串边界
+    /// 换来上层零映射表。
+    ///
+    /// 为什么是显式 match 而不是宏/反射：14 条是冻结契约，分支逐条写出来才能在
+    /// 改字段名时被编译器盯住；`field` / `field_mut` 两个 match 的键名集合由单测
+    /// 互锁（见 `tests/lib_rs.rs::keys_field_roundtrip_all_known_keys`）。
+    pub fn field(&self, config_key: &str) -> Option<&str> {
+        match config_key {
+            "open" => Some(self.open.as_str()),
+            "extract" => Some(self.extract.as_str()),
+            "new_window" => Some(self.new_window.as_str()),
+            "select_all" => Some(self.select_all.as_str()),
+            "select_invert" => Some(self.select_invert.as_str()),
+            "copy" => Some(self.copy.as_str()),
+            "paste" => Some(self.paste.as_str()),
+            "find" => Some(self.find.as_str()),
+            "test_integrity" => Some(self.test_integrity.as_str()),
+            "settings" => Some(self.settings.as_str()),
+            "show_jobs" => Some(self.show_jobs.as_str()),
+            "refresh" => Some(self.refresh.as_str()),
+            "delete" => Some(self.delete.as_str()),
+            "quit" => Some(self.quit.as_str()),
+            _ => None,
+        }
+    }
+
+    /// 按 TOML 键名取单个键位的**可变**引用（设置页「录制」写回整份 `Keys` 时用；
+    /// `None` = 未知键）。
+    ///
+    /// 与 [`Keys::field`] 是同一批键名，只是可写——两个 match 必须同步演进。
+    pub fn field_mut(&mut self, config_key: &str) -> Option<&mut String> {
+        match config_key {
+            "open" => Some(&mut self.open),
+            "extract" => Some(&mut self.extract),
+            "new_window" => Some(&mut self.new_window),
+            "select_all" => Some(&mut self.select_all),
+            "select_invert" => Some(&mut self.select_invert),
+            "copy" => Some(&mut self.copy),
+            "paste" => Some(&mut self.paste),
+            "find" => Some(&mut self.find),
+            "test_integrity" => Some(&mut self.test_integrity),
+            "settings" => Some(&mut self.settings),
+            "show_jobs" => Some(&mut self.show_jobs),
+            "refresh" => Some(&mut self.refresh),
+            "delete" => Some(&mut self.delete),
+            "quit" => Some(&mut self.quit),
+            _ => None,
         }
     }
 }

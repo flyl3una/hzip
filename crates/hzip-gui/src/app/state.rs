@@ -262,6 +262,13 @@ pub struct SettingsPrefs {
     /// 1 = builtin）。泵经 `SettingApplied(FileTypeIcons)` 调
     /// [`crate::ui::widgets::file_icon::set_enabled`]
     pub file_type_icons_ix: usize,
+    /// 快捷键绑定（`[keys]` 整节；T-KEYS）。
+    ///
+    /// 泵经 `SettingApplied(Keymap)` 重装绑定，**取值应从本镜像来**（与主题重放
+    /// `theme_replay_of` 同款口径）：镜像在 `store` 步骤已就地更新，是「本进程
+    /// 当前生效态」；盘上那份由异步写线程（`save_async`）稍后落定，读盘等于把
+    /// 生效面挂到与落盘的赛跑上。
+    pub keys: hzip_config::Keys,
 }
 
 impl Default for SettingsPrefs {
@@ -291,6 +298,8 @@ impl Default for SettingsPrefs {
             corner_radius: hzip_config::CORNER_RADIUS_DEFAULT,
             density_ix: crate::viewmodel::density::Density::Standard.index(),
             file_type_icons_ix: 0,
+            // 全空 = 全部动作走内置默认键位（T-KEYS §2 三态之一）
+            keys: hzip_config::Keys::default(),
         }
     }
 }
@@ -848,6 +857,9 @@ impl AppData {
                 &crate::app::labels::FILE_ICONS,
                 &ui.file_type_icons,
             ),
+            // 快捷键整节原样搬入镜像（本层不校验键位串：三态判读与非法回落
+            // 都在 `ui::shell::keymap`——装配时判一次，错误值原样留在盘上）
+            keys: config.keys.clone(),
         };
     }
 
@@ -1183,6 +1195,10 @@ impl AppData {
             SettingId::FileTypeIcons,
             settings_registry::Effect::FileIconSource,
         );
+        // 快捷键：`apply_defaults` 已把 `[keys]` 清成全空（= 全默认），但键位
+        // 生效面是 `App` 级 keymap（全局态，快照不携带）——不补发信号则「配置复位
+        // 了、按下仍是旧快捷键」（与主题/字体/圆角同款缺口，泵按本 id 重装绑定）。
+        self.dispatch_effect(SettingId::Keymap, settings_registry::Effect::DataOnly);
     }
 
     /// 设置视图投影（面板逐帧回读 / 主窗口刷新共用；候选集现算）。

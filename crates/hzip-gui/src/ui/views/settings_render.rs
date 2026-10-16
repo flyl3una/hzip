@@ -5,7 +5,8 @@
 //! - **页装配**：按分类页过滤 [`REGISTRY`]，逐项依 [`WidgetKind`] 分派渲染；
 //!   [`ACTIONS`] 产出页级按钮（`Emit`）与行内按钮（`Clear`/`FilePicker`）。
 //!   页内容不再手写——新增设置项只改注册表。
-//! - **叶子控件**：Switch / Select / 勾选组 / 文本行 / 列块（[`columns_section`]）。
+//! - **叶子控件**：Switch / Select / 勾选组 / 文本行 / 列块（[`columns_section`]）/
+//!   快捷键块（[`keys_section`]——全宽自绘，**不经通用行**，见 §9.1）。
 //! - **事件**：值控件一律上行 `DialogEvent::SettingChanged { id, value }` →
 //!   `AppData::apply_setting` 五步流程；归一化在注册表 `store` 完成，本层
 //!   **不校验/不写配置/不持全局态**。
@@ -33,7 +34,9 @@ use crate::app::settings_registry::{
     WidgetKind,
 };
 use crate::ui::contracts::{BrowseColumnId, ColumnsConfig, DialogEvent};
+use crate::ui::shell::keymap::{self, Binding, KeyActionDef, KeyActionId};
 use crate::ui::widgets::AppIcon;
+use crate::ui::widgets::key_capture::{KeyChipState, key_capture_chip};
 use crate::viewmodel::SettingId;
 
 /// Select 实体句柄简写（`SearchableVec<String>` delegate）。
@@ -42,12 +45,15 @@ pub type SelectEntity = Entity<SelectState<SearchableVec<String>>>;
 /// ColorPicker 实体类型别名（T-SEL 走查 #3——面板装配期预建、行渲染取用）。
 pub type PickerEntity = Entity<gpui_kit::component::color_picker::ColorPickerState>;
 
-/// 页渲染输入束（事件上行 + 视图刷新）。
+/// 页渲染输入束（事件上行 + 视图刷新 + 录制宿主）。
 pub struct PageCtx {
     /// 事件上行（UI → AppData 五步流程）
     pub on: Rc<dyn Fn(DialogEvent)>,
     /// 事件后刷新面板（重读活读视图 + 重渲）
     pub refresh: Rc<dyn Fn(&mut App)>,
+    /// 快捷键页的录制宿主（`None` = 本页无录制能力 ⇒ 只显示当前键位；
+    /// 由面板注入，见 [`KeysCtx`]）
+    pub keys: Option<KeysCtx>,
 }
 
 /// 页分组框（无标题、**无边框**——页签已含名称，走查 #8：内容不再重复标签；
@@ -87,6 +93,15 @@ fn group(body: AnyElement) -> AnyElement {
 fn label_col_w() -> gpui_kit::Pixels {
     LABEL_COL_W_BASE * crate::ui::spacing::density_scale()
 }
+
+/// 快捷键块的内容宽上限（rem；随**界面字号**缩放，与 `sp()` 同标尺）。
+///
+/// 为什么要有上限（用户口径 2026-10-16 二轮：「整个快捷键设置区域依旧太宽，名称与
+/// 右侧键位/按钮之间隔了很宽的空白」；三轮定为「约 600px 差不多」）：该块是自绘块，
+/// 不限宽就会被内容列拉满，行尾被顶到最右 ⇒ 名称与键位之间空一大片。
+/// 37.5rem（标准档 ≈600px）放得下最长动作名 + `Ctrl+Shift+N` 这类最长键位 +
+/// ↻/✕ 两枚图标钮，并留出从容的行内间距。
+pub(crate) const KEYS_BLOCK_W_REM: f32 = 37.5;
 
 /// **行带**：行内「首行」的统一垂直基准（高 = 最高单行控件的固有高度）。
 ///
@@ -172,19 +187,50 @@ pub fn page(
     let assoc_ready = !view.assoc_candidates().is_empty();
 
     let mut form = Form::horizontal().label_width(label_col_w());
+    // 全宽自绘块（快捷键）**不进 Form 网格**（用户口径 2026-10-16：「整块依旧太宽、
+    // 名称与右侧键位/按钮之间隔了很宽的空白」）：Form 的标签列即使 `has_label` 为假
+    // **仍占一列宽**（实测把块整体右推 ~170px），于是「左侧留白」看着像没有、
+    // 行尾又被顶到内容列最右。详情见 [`keys_section`] 的宽度说明。
+    //
+    // 拼装顺序：本页当前只有这一个块（`SettingId::Keymap` 独占「快捷键」页），故
+    // 块在 Form 之前即可；同页混排的断言见下方 `debug_assert`。
+    let mut blocks: Vec<AnyElement> = Vec::new();
+    // Form 的子项计数（含状态行/页级动作钮）：拼装时用来判断「要不要把 Form 也画出来」
+    let mut form_children = 0usize;
     for def in settings_registry::REGISTRY.iter().filter(|d| d.page == tab) {
         if def.id == SettingId::Assoc && !assoc_ready {
             form = form.child(assoc_fallback(def));
+            form_children += 1;
+            continue;
+        }
+        // 快捷键块不走通用行：块自身即页头 + 行 + （说明改 ？ 悬浮）。
+        if matches!(def.widget, WidgetKind::KeysBlock) {
+            let fallback = hzip_config::Keys::default();
+            let keys = view.keys_of(def.id).unwrap_or(&fallback);
+            blocks.push(keys_section(keys, ctx, cx));
             continue;
         }
         form = form.child(row(def, view, selects, pickers, ctx, cx));
+        form_children += 1;
     }
+    // 「块在前」的拼装顺序只在「本页没有其它注册表行」时才等价于注册表顺序——
+    // 将来若真要混排，这里必须改成按注册表顺序交错拼装（否则行序静默错位）。
+    debug_assert!(
+        blocks.is_empty()
+            || settings_registry::REGISTRY
+                .iter()
+                .filter(|d| d.page == tab && !matches!(d.widget, WidgetKind::KeysBlock))
+                .count()
+                == 0,
+        "快捷键块与通用行同页混排：拼装顺序需按注册表交错（见本段注释）"
+    );
 
     // 上下文菜单页：状态行（系统实况）+ 未应用提示。
     // 状态来自 `SettingsView::ctx_status`（面板每次 reload 在锁外查询一次），
     // 故「点了应用/清除之后」立刻反映真实结果，而不是可能过期的缓存。
     if tab == SettingsTab::ContextMenu {
         form = form.child(ctx_status_row(view, cx));
+        form_children += 1;
     }
 
     // 文件关联页：**双击实况**状态行。
@@ -195,6 +241,7 @@ pub fn page(
     // 入口（唯一受支持的夺回途径）。
     if tab == SettingsTab::Assoc && assoc_ready {
         form = form.child(assoc_status_row(view, ctx, cx));
+        form_children += 1;
     }
 
     let page_actions: Vec<&'static settings_registry::ActionDef> = ACTIONS
@@ -248,8 +295,18 @@ pub fn page(
                 .label_fn(|_, _| label_cell(crate::tr("setting.actions"), None, "actions"))
                 .child(band(buttons)),
         );
+        form_children += 1;
     }
 
+    let mut body = v_flex().w_full().min_w_0();
+    if !blocks.is_empty() {
+        body = body.gap(sp(2.)).children(blocks);
+        // 块与 Form 都可能有内容（今天「快捷键」页只有块），谁非空就拼谁
+        if form_children > 0 {
+            body = body.child(form.into_any_element());
+        }
+        return group(body.into_any_element());
+    }
     group(form.into_any_element())
 }
 
@@ -487,6 +544,13 @@ fn row(
             let fallback = ColumnsConfig::default();
             let cols = view.columns_of(def.id).unwrap_or(&fallback);
             columns_section(cols, ctx, cx)
+        }
+        WidgetKind::KeysBlock => {
+            // 快捷键块是全宽自绘块（`page()` 里先分派给 [`keys_section`]，不经本
+            // 函数）——走到这里就是分派不变量被破坏。降级为空行（不 panic、不
+            // 静默丢行），与本文件其它装配降级同一纪律。
+            debug_assert!(false, "KeysBlock 不走通用行（见 page() 的全宽分派）");
+            return empty_row(def);
         }
     };
 
@@ -965,6 +1029,401 @@ pub fn columns_section(columns: &ColumnsConfig, ctx: &PageCtx, cx: &App) -> AnyE
     list.into_any_element()
 }
 
+// —— 快捷键块（快捷键页内嵌；T-KEYS） ——
+
+/// 「未绑定」哨兵：`[keys]` 的字段写它 = 该动作不注册任何绑定。
+///
+/// 写入点**只有行尾 ✕**（2026-10-15 用户口径：✕ 表示「删除该快捷键绑定」，
+/// 取代了旧的「禁用」文本按钮；录制期按 Delete 也只是一个普通键位，不再是
+/// 禁用专用手势）。
+///
+/// `ui::shell::keymap` 侧的常量是**私有**的（本层只能重写字面量），一致性由
+/// `tests::keys_disabled_sentinel_agrees_with_keymap` 守住——两侧一旦分叉，
+/// 「未绑定」就会退化成「把一个叫 `none` 的键当键位写进配置」（`Keystroke::parse`
+/// 会把它解析成一个永不匹配的普通键名，用户看到的绑定位数不变、动作却失灵）。
+pub(crate) const KEYS_DISABLED: &str = "none";
+
+/// 快捷键录制宿主（面板注入 [`PageCtx::keys`]）。
+///
+/// 渲染层需要知道的全部就这几样：谁在录、录到哪一步了、上一次撞车的占用者是谁
+/// （挂在哪一行）、每行的焦点句柄、怎么起录制。
+/// **订阅**（`Subscription`）不在这里：它是 App 级拦截器，生命周期必须跟着面板
+/// 的「录制态」字段走，而渲染函数一帧可能被调多次（详见 `widgets::key_capture`
+/// 的模块文档——把订阅留在渲染里必然写错退订时机）。
+pub struct KeysCtx {
+    /// 正在录制的动作（`None` = 未录制；芯片视觉按它分支）
+    pub recording: Option<KeyActionId>,
+    /// 录制中已按下的组合（芯片上的**实时预览**；`None` = 还没按或未录制）。
+    ///
+    /// 只用于显示：录制期间**不写配置**，写值发生在失焦提交（与
+    /// 「按键 → 立即落库」的旧契约的区别，见 `T-KEYS` §9.2 表）。
+    pub pending: Option<SharedString>,
+    /// 上一次被拒的占用者（`None` = 无冲突）
+    pub conflict: Option<&'static KeyActionDef>,
+    /// 冲突红字所属的动作（失焦提交被拒的那一行）。
+    ///
+    /// 冻结接口（§9.3）里只有 [`Self::conflict`]，但冲突现在是**失焦提交**触发
+    /// 的——那一刻录制态已经收口（`recording == None`），光有占用者就无从定位
+    /// 「哪一行出的问题」，红字只能挂到全页任意一行或干脆不挂。故补这一个字段：
+    /// 把面板已有的信息（`SettingsPanel::conflict_on`）递给渲染层是画对位置的
+    /// 最小代价，且它不影响 §9.3 列的任一字段语义。
+    pub conflict_on: Option<KeyActionId>,
+    /// 每行的焦点句柄（面板装配期建）：芯片 `track_focus` 它，点击时
+    /// [`gpui_kit::Window::focus`] 它，焦点移开即提交（§9.2 表）。
+    pub focus_of: Rc<dyn Fn(KeyActionId) -> gpui_kit::FocusHandle>,
+    /// 起录制（面板侧：收旧订阅 → **提交上一行** → 挂拦截器 → 记状态）
+    pub start: StartRecording,
+}
+
+/// 「开始录制」闭包类型（面板侧：收旧订阅 → 挂拦截器 → 记状态）。
+///
+/// 提成别名而不是把 `Rc<dyn Fn(..)>` 直接写在字段上：绕开
+/// `clippy::type_complexity`（本 workspace 以 `-D warnings` 跑 clippy），
+/// 且面板与渲染两侧共用同一份签名。
+pub type StartRecording = Rc<dyn Fn(KeyActionId, &mut App)>;
+
+/// 「整份快捷键」上行事件（录制 / 行内恢复默认 / 行内禁用 / 页底全部恢复默认，
+/// 四条写值路径共用的唯一口径）。
+///
+/// 走既有的 `SettingChanged` 而**不新增**事件变体：`store_keys` 双写 `[keys]` 与
+/// `AppData.settings.keys` 镜像，泵按 `SettingId::Keymap` 重装 keymap——「改值」
+/// 这条链路已经齐了，多一个事件类型只是多一条要维护的分支。
+pub(crate) fn keys_event(keys: hzip_config::Keys) -> DialogEvent {
+    DialogEvent::SettingChanged {
+        id: SettingId::Keymap,
+        value: SettingValue::Keys(Box::new(keys)),
+    }
+}
+
+/// 当前快捷键配置的副本 + 一个字段的新值（键名对不上 → 原样返回）。
+///
+/// 三态语义的**写值**只从这里出：`""` = 回内置默认、[`KEYS_DISABLED`] = 禁用、
+/// 其余 = ASCII 键位串。
+pub(crate) fn with_field(
+    keys: &hzip_config::Keys,
+    config_key: &str,
+    raw: &str,
+) -> hzip_config::Keys {
+    let mut next = keys.clone();
+    if let Some(field) = next.field_mut(config_key) {
+        *field = raw.to_string();
+    }
+    next
+}
+
+/// 冲突提示文案（纯函数：渲染与测试共用）。
+///
+/// `{action}` 填**占用者**的动作名：只说「这个键被占了」用户还得自己一行行找，
+/// 说了「已被「全选」占用」才知道该去哪一行腾键位。
+pub fn conflict_hint(occupant: &KeyActionDef) -> String {
+    crate::tr_with("keymap.conflict", &[("action", &crate::tr(occupant.label))])
+}
+
+/// 芯片上的**文案**与「未绑定」标记（纯函数：渲染与测试共用）。
+///
+/// 三态的显示口径（T-KEYS §9.2）：
+///
+/// | 行状态 | 显示 |
+/// |---|---|
+/// | 录制中且还没按键 | `keymap.recording`（提示语；芯片带录制态视觉） |
+/// | `""` | `display_spec(default_spec)`（内置默认键位） |
+/// | [`KEYS_DISABLED`] | `keymap.state.unbound` + `unbound = true` |
+/// | 其余 | `display_spec(自定义串)` |
+///
+/// 注意录制中**有** pending 时显示的仍是当前有效键位：新按键的预览由芯片自己
+/// 的预览块（`kc-pending-<config_key>`）承担，两者互不覆盖——用户一眼能看出
+/// 「原来是什么、即将变成什么」。
+pub(crate) fn chip_display(
+    def: &KeyActionDef,
+    raw: &str,
+    recording: bool,
+    has_pending: bool,
+) -> (String, bool) {
+    if recording && !has_pending {
+        return (crate::tr("keymap.recording"), false);
+    }
+    // 「未绑定」的判据走三态（哨兵串本身就是个**可解析**的键名 `none`，靠
+    // `spec_is_valid` 之类的解析失败来兜是兜不住的，见 `keymap::binding_of`）。
+    let unbound = matches!(keymap::binding_of(raw), Binding::Disabled);
+    match keymap::effective_spec(def, raw) {
+        // 显示串**只用于看**：macOS 上是 `^⌥⌘⇧` 字形、Windows 上单字符会大写，
+        // 任何一处回写配置都会把键位写坏（见 `keymap::display_spec` 文档）。
+        Some(spec) => (keymap::display_spec(spec), unbound),
+        None => (crate::tr("keymap.state.unbound"), true),
+    }
+}
+
+/// 快捷键块（快捷键页内嵌）：页头 + 14 条动作行 + 说明行。
+///
+/// # 版式（2026-10-15 用户口径，`docs/tasks/T-KEYS/README.md` §9）
+///
+/// ```text
+/// 快捷键                                   [全部恢复默认]   ← 页头：标题左 / 动作右
+/// 打开档案                            Ctrl+O         ✕     ← 每行**一行**
+/// 退出                                未绑定          ✕
+/// 点键位→按组合键→移开焦点即生效；Esc 取消；✕ 删除绑定      ← 说明行
+/// ```
+///
+/// - **全宽自绘、没有左侧标签列**：`page()` 不把本项交给通用行 [`row`]（用户
+///   口径「每行太宽、不要 label 列」），标题因此进页头。
+/// - 每行 = `h_flex`：名称（`flex_1` + `truncate`，左）→ 键位芯片
+///   （[`key_capture_chip`]，**点它即进入录制态**）→ ✕（删除该动作的绑定）。
+///   行内不再有「恢复默认」：单项复原走页头「全部恢复默认」或重新录制。
+/// - 冲突红字由**失焦提交**触发（不是键入时）：它跟在出问题的那一行下面
+///   （`kconflict-<config_key>`），故除占用者外还得从 [`KeysCtx::conflict_on`]
+///   拿到「哪一行」。
+///
+/// 动作顺序 = [`keymap::ACTIONS`] 顺序（唯一事实源：启动装配、菜单提示、冲突
+/// 检测、本页都读它），本页不另排一套。
+pub fn keys_section(keys: &hzip_config::Keys, ctx: &PageCtx, cx: &App) -> AnyElement {
+    let host = ctx.keys.as_ref();
+    let recording = host.and_then(|k| k.recording);
+    let pending = host.and_then(|k| k.pending.clone());
+    let conflict = host.and_then(|k| k.conflict);
+    let conflict_on = host.and_then(|k| k.conflict_on);
+    let start = host.map(|k| k.start.clone());
+    let focus_of = host.map(|k| k.focus_of.clone());
+    // 无录制宿主（直驱探针 / 降级渲染）时的占位焦点句柄：芯片必须有句柄才画得
+    // 出来，而没有面板就没有录制态——没人会把它设成焦点，也没人收它的失焦。
+    let placeholder_focus = cx.focus_handle();
+    let on = ctx.on.clone();
+    let refresh = ctx.refresh.clone();
+
+    // 页头：「全部恢复默认」= 整份 `Keys::default()`（全空串 = 回内置默认键位）。
+    // 语义与整页 `SettingsReset` 相同；「禁用项也一起复位」由「整份替换」天然
+    // 满足——本页没有逐项状态要清。
+    let mut reset_all = Button::new("keymap-reset-all")
+        .with_size(component_size())
+        .label(crate::tr("keymap.reset_all"))
+        .on_click({
+            let on = on.clone();
+            let refresh = refresh.clone();
+            move |_, _, cx: &mut App| {
+                on(keys_event(hzip_config::Keys::default()));
+                refresh(cx);
+            }
+        });
+    if cfg!(test) {
+        reset_all = reset_all.debug_selector(|| "kreset-all".into());
+    }
+    // 页头 ？：交互说明从**页底常驻行**挪到标题旁的悬浮（用户口径 2026-10-16：
+    // 「把下方的快捷键提示放到最上方快捷键词条旁边增加一个 ？ 鼠标移动浮显」）——
+    // 常驻说明行占一屏高度却只在第一次看时有用，与设置页既有的「行尾 ？ 悬浮」
+    // 同一手法（见 [`label_with_help`]）。
+    let mut help = Button::new("keymap-help")
+        .with_size(component_size())
+        .ghost()
+        .xsmall()
+        .icon(AppIcon::CircleHelp)
+        .tooltip(crate::tr("setting.keymap.help"));
+    if cfg!(test) {
+        help = help.debug_selector(|| "khelp".into());
+    }
+    let mut list = v_flex()
+        .w_full()
+        // 整块**收窄 + 居中**（用户口径 2026-10-16：「内容需要居中对齐……320px 又太窄了，
+        // 调到 600px 左右」）：封顶 37.5rem（标准档 ≈600px，随界面字号缩放），
+        // 两侧 `ml_auto`/`mr_auto` 把这块余量均分 ⇒ 块在内容列里**居中**，而不是贴左。
+        .max_w(gpui_kit::rems(KEYS_BLOCK_W_REM))
+        .ml_auto()
+        .mr_auto()
+        // 左右留白（用户口径 2026-10-16：「两侧都要 padding，右侧键位与按钮贴着
+        // 边框不好看」）。本块是**全宽自绘**（不走 Form 的标签/控件两列），而内容
+        // 列本身只有底部留白 ⇒ 不补这一步时行尾的芯片与 ✕ 会贴到面板右缘。
+        // 取 `sp(3.)`（标准档 12px）与页面级小节间距同档，且随密度缩放。
+        .px(sp(3.))
+        .gap(sp(1.))
+        .child(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .items_center()
+                // 标题与它右侧的 ？ 之间留 `gap_sm`；`？` 之后用 `flex_1` 撑开余量，
+                // 把「全部恢复默认」推到最右（用户口径 2026-10-16：「？ 应该在快捷键
+                // 词条右侧，而不是全部恢复默认按钮的左侧」——此前标题吃满 `flex_1`，
+                // 于是 ？ 被挤到最右、紧挨着动作钮）。
+                .gap(sp(2.))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_sm()
+                        .child(crate::tr("setting.keymap.label")),
+                )
+                .child(help)
+                .child(div().flex_1())
+                .child(reset_all),
+        );
+
+    for def in keymap::ACTIONS {
+        // 三态判定：先空串、再哨兵、最后才是自定义串（顺序见 `keymap::binding_of`）
+        let raw = keys.field(def.config_key).unwrap_or("");
+        let is_recording = recording == Some(def.id);
+        let pending_here = if is_recording {
+            pending.clone()
+        } else {
+            // 预览只对**正在录制**的那一行有意义（面板里 pending 是单份的）
+            None
+        };
+        let (shown, unbound) = chip_display(def, raw, is_recording, pending_here.is_some());
+
+        let name = div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_sm()
+            .child(crate::tr(def.label));
+
+        // 焦点句柄（面板装配期建 → 芯片 `track_focus` 它 → 焦点移开即提交）。
+        // 无宿主时退化成占位句柄：芯片照样画得出来，但没有录制语义。
+        let handle = match &focus_of {
+            Some(focus_of) => focus_of(def.id),
+            None => placeholder_focus.clone(),
+        };
+        let focus = handle.clone();
+        let start_click = start.clone();
+        let chip = key_capture_chip(
+            def.config_key,
+            shown.into(),
+            KeyChipState {
+                recording: is_recording,
+                pending: pending_here,
+                unbound,
+            },
+            &handle,
+            move |_, window, cx| {
+                // 设焦点在渲染层做（面板做不了）：只有这里同时拿得到 `&mut Window`
+                // 与行焦点句柄——面板的「起录制」闭包只收 `&mut App`，而
+                // `Window::focus` 要 window。**先设焦点再起录制**：焦点进了本行的
+                // 句柄，面板注册的失焦监听才会在用户移开焦点时把这一行提交。
+                window.focus(&focus, cx);
+                if let Some(start) = &start_click {
+                    start(def.id, cx);
+                }
+            },
+        );
+
+        // ✕ = 删除该动作的绑定（写 `"none"` 哨兵）。
+        //
+        // 尺寸/样式与**设置页其它按钮同款**（用户口径 2026-10-16）：
+        // `with_size(component_size())` + **默认变体**（不再 `.ghost().xsmall()`——
+        // 那套的 hover 是主题色，而设置页其它按钮是浅灰；icon-only 由 `.icon()` 承担）。
+        let mut remove = Button::new(format!("kremove-{}", def.config_key))
+            .with_size(component_size())
+            .icon(AppIcon::X)
+            .tooltip(crate::tr("keymap.remove_binding"))
+            .on_click({
+                let current = keys.clone();
+                let on = on.clone();
+                let refresh = refresh.clone();
+                move |_, _, cx: &mut App| {
+                    // 钮在行内：吞掉事件，别让「删绑定」顺带触发所在行的其它命中
+                    cx.stop_propagation();
+                    on(keys_event(with_field(
+                        &current,
+                        def.config_key,
+                        KEYS_DISABLED,
+                    )));
+                    refresh(cx);
+                }
+            });
+        if cfg!(test) {
+            let sel = format!("kremove-{}", def.config_key);
+            remove = remove.debug_selector(move || sel.clone());
+        }
+
+        // ↻ = 恢复该动作到**内置默认键位**（写 `""` = 回落默认，与页头「全部恢复
+        // 默认」同一写入口径、只是范围不同）。用户口径 2026-10-16：✕ 旁边要一个
+        // 还原钮——删了绑定或改乱了之后，逐项复原不必去动整份配置。
+        // 图标用 `AppIcon::Refresh`（图标集里没有 undo/rotate 语义位，圆箭头 +
+        // tooltip「恢复默认」已足够消歧）。
+        //
+        // 尺寸/样式与**设置页其它按钮同款**（用户口径 2026-10-16：「应该使用 gpui-kit
+        // 的 Button（icon-only），hover 才和其他按钮统一」）：`with_size(component_size())`
+        // + **默认变体**（不加 `.ghost()`——ghost 的 hover 是主题色，而设置页其它按钮
+        // 是浅灰）。
+        let mut restore = Button::new(format!("krestore-{}", def.config_key))
+            .with_size(component_size())
+            .icon(AppIcon::Refresh)
+            .tooltip(crate::tr("keymap.reset_one"))
+            .on_click({
+                let current = keys.clone();
+                let on = on.clone();
+                let refresh = refresh.clone();
+                move |_, _, cx: &mut App| {
+                    cx.stop_propagation();
+                    on(keys_event(with_field(&current, def.config_key, "")));
+                    refresh(cx);
+                }
+            });
+        if cfg!(test) {
+            let sel = format!("krestore-{}", def.config_key);
+            restore = restore.debug_selector(move || sel.clone());
+        }
+
+        // 行 = 名称（左，占满剩余宽）→ [键位芯片 + ↻ 还原 + ✕ 删除]（右，紧贴成组）。
+        //
+        // 尾部三件套单独成组、`gap(px(1.))`（用户口径 2026-10-16：「图标按钮的 margin
+        // 调到 1px 就可以了」）：它们是一个整体（改键 / 复原 / 删绑定都作用于同一行），
+        // 组内 1px 才是「贴着的」观感；与名称之间由名称的 `flex_1` 自然分开。
+        let mut row = v_flex()
+            .w_full()
+            .min_w_0()
+            .py(crate::ui::spacing::row_gap())
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .gap(sp(2.))
+                    .child(name)
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .items_center()
+                            .gap(gpui_kit::px(1.))
+                            .child(chip)
+                            .child(restore)
+                            .child(remove),
+                    ),
+            );
+        // 冲突红字（由**失焦提交**触发，不是键入时）：跟在被拒的那一行下面。
+        // 不挤进行内——行尾已被芯片与 ✕ 占满，而中英文文案宽度差得很远
+        // （英文 "Already used by …" 会把这一行撑破）。
+        if conflict_on == Some(def.id)
+            && let Some(occupant) = conflict
+        {
+            let hint = div()
+                .text_sm()
+                .text_color(cx.theme().danger)
+                .child(conflict_hint(occupant));
+            let hint = if cfg!(test) {
+                let key = format!("kconflict-{}", def.config_key);
+                div()
+                    .debug_selector(move || key.clone())
+                    .child(hint)
+                    .into_any_element()
+            } else {
+                hint.into_any_element()
+            };
+            row = row.child(hint);
+        }
+        if cfg!(test) {
+            let key = format!("krow-{}", def.config_key);
+            row = row.debug_selector(move || key.clone());
+        }
+        list = list.child(row);
+    }
+
+    // 说明行已下线（用户口径 2026-10-16）：交互说明改挂页头 ？ 的悬浮提示
+    // （`setting.keymap.help`），常驻一整行只在第一次看时有用。
+    if cfg!(test) {
+        // 块根锚点：布局用例要量「块左缘是否还在内容列左缘」「块宽是否 ≤ 封顶」
+        list = list.debug_selector(|| "kblock".into());
+    }
+    list.into_any_element()
+}
+
 /// 切换单列显隐（hidden 集合增删；order 不动）。
 pub fn toggle_hidden(
     hidden: &[BrowseColumnId],
@@ -1254,6 +1713,79 @@ fn ctx_status_row(view: &SettingsView, cx: &App) -> Field {
             }
             col
         })
+}
+
+/// 测试锚点名 → `&'static str`（`cfg!(test)` 专用；发布构建不编译）。
+///
+/// `VisualTestContext::debug_bounds` 在本 fork 收 `&'static str`（它内部其实是
+/// `FxHashMap<String, _>` 的按键查询，只是签名被收窄了），而快捷键页的锚点是按
+/// `config_key` **现拼**的（14 个动作 × 若干前缀）。这里把它们登记进**进程级
+/// 静态表**：静态数据的借用即 `'static`，一次构建、终身复用——不用 `Box::leak`
+/// 把每个短串永久泄漏出进程（同一个锚点被多个用例查几次就泄漏几份，而且没有
+/// 任何一处会告诉你泄漏了什么）。
+///
+/// 未登记的名字 → panic：锚点是测试的眼睛，新增锚点却忘了登记应当**立刻**可见，
+/// 而不是悄悄返回 `None` 让「锚点不存在」的断言变成假绿。
+#[cfg(test)]
+pub(crate) fn test_anchor(name: impl AsRef<str>) -> &'static str {
+    use std::sync::LazyLock;
+    /// 本页锚点的**全量**名单（前缀 × 动作清单 + 页级锚点 + 页签下标）。
+    ///
+    /// 含已下线的旧锚点前缀（`kreset-`/`kdisable-`）：用例要能断言它们**不在**
+    /// 渲染结果里——「查不到」也是断言的一部分。
+    static TABLE: LazyLock<Vec<String>> = LazyLock::new(|| {
+        let mut names = vec![
+            "kreset-all".to_string(),
+            // 页头 ？ 帮助钮（交互说明改悬浮，用户口径 2026-10-16）
+            "khelp".to_string(),
+            // 块根（不进 Form 网格：无 label 列偏移）
+            "kblock".to_string(),
+        ];
+        for def in keymap::ACTIONS {
+            for prefix in [
+                "krow",
+                "kc",
+                "kc-idle",
+                "kc-rec",
+                "kc-pending",
+                "kc-unbound",
+                "kremove",
+                // 行尾 ↻ 还原钮（逐项恢复默认，用户口径 2026-10-16）
+                "krestore",
+                "kconflict",
+                // 已下线的旧锚点前缀（`kreset-` 行内复原 / `kdisable-` 禁用钮）：
+                // 用例要能断言它们**不在**渲染结果里——「查不到」也是断言的一部分。
+                "kreset",
+                "kdisable",
+            ] {
+                names.push(format!("{prefix}-{}", def.config_key));
+            }
+        }
+        for ix in 0..settings_registry::SettingsTab::ALL.len() {
+            names.push(format!("settings-tab-{ix}"));
+        }
+        // 通用行（`row()`）的标签/控件/块首行/帮助钮锚点与页级动作钮锚点：
+        // 对齐用例按注册表**全量遍历**，名字由 id/action key 现拼。
+        for def in settings_registry::REGISTRY {
+            let key = def.id.key();
+            for prefix in ["lbl", "ctl", "ctlrow0", "help-btn"] {
+                names.push(format!("{prefix}-{key}"));
+            }
+        }
+        for action in settings_registry::ACTIONS {
+            names.push(format!("act-{}", action.key));
+        }
+        for name in ["lbl-actions", "lbl-ctx-status", "ctl-ctx-status"] {
+            names.push(name.to_string());
+        }
+        names
+    });
+    let name = name.as_ref();
+    TABLE
+        .iter()
+        .find(|n| n.as_str() == name)
+        .map(String::as_str)
+        .unwrap_or_else(|| panic!("未登记的测试锚点：{name}"))
 }
 
 #[cfg(test)]

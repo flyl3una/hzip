@@ -24,7 +24,7 @@ use hzip_core::services::browse::{Browser, TreeNode};
 use hzip_error::HzipError;
 use hzip_format::{EntryId, NameEncoding, OpenOptions, Source};
 
-use super::rows::EntryRow;
+use super::rows::{EntryRow, TreeRow};
 
 /// 过滤条件（02 附录 B.1 ui 项语义；名称子串 / glob / 仅目录 / 隐藏 __MACOSX）。
 #[derive(Debug, Clone, Default)]
@@ -455,8 +455,72 @@ impl MainViewModel {
         (raw, packed)
     }
 
+    /// 按**列表可见行**全选 / 清空（T-SEL2：Ctrl+A / 右键「全选」的数据面）。
+    ///
+    /// 语义 = **右栏那一屏**（`AppData.dir_rows`——泵在后台重建后传进来）：
+    /// 逐层浏览时 = 当前目录的直接子项（文件 + 目录）；搜索/过滤激活时 =
+    /// 扁平命中结果。与 [`Self::select_all`] 的分野正在于此——后者按**整档**
+    /// `entries` 全集（进子目录后再按 Ctrl+A 会把别的目录的文件一并选上，
+    /// 用户「全选当前目录再复制」会被复制到别的目录的文件）。
+    ///
+    /// 两个通道：实体行（`entry_id: Some(id)`）进 [`Self::selection`]；隐式
+    /// 目录行（`is_dir && entry_id.is_none()`——tar 这类无目录条目的档案）
+    /// 按**档案内路径**进 [`Self::dir_selection`]。[`Self::effective_selection_ids`]
+    /// 会按路径前缀展开子树，故「选目录 = 选中其全部内容」的复制/解压语义
+    /// 自动成立。
+    ///
+    /// `..` 上一级行是 UI 委托层合成的（`views/browse.rs` `DataRowRef::Parent`），
+    /// **不在** `dir_rows` 里 ⇒ 结构上进不了选择集（需求「不含 `..`」）。
+    ///
+    /// `clear=true` 与 `select_rows(&[], true)` 等价：清空两通道（不依赖行集）。
+    /// 本方法**只动选择集**——不重建行、不碰 `current_dir`/树/过滤。
+    ///
+    /// **命名**：与本 VM 既有的 `select_rows(ids, dirs)`（双通道整组替换，
+    /// [`Self::select_ids`] 的底层）同名冲突——Rust 无重载，而重命名那头会牵动
+    /// `ui/shell/runtime.rs`/`ui/views` 等处的调用点 ⇒ 本方法命名
+    /// `select_visible_rows`。
+    pub fn select_visible_rows(&mut self, rows: &[TreeRow], clear: bool) {
+        if clear {
+            self.selection.clear();
+            self.dir_selection.clear();
+            return;
+        }
+        let (ids, dirs) = rows_channels(rows, self.entries.len());
+        self.selection = ids;
+        self.dir_selection = dirs;
+    }
+
+    /// 按**列表可见行**反选（T-SEL2：Ctrl+I / `SelectInvert` 的数据面）。
+    ///
+    /// 口径与 [`Self::select_visible_rows`] 同一行集：实体行在 [`Self::selection`]
+    /// 内选中/未选互换；隐式目录行在 [`Self::dir_selection`] 内已在的移除、
+    /// 未在的加入（两通道**行集内整组替换**）。
+    ///
+    /// 行集之外的残留选中（上一层留下的实体 id、别处的隐式目录）随本次反选
+    /// 一并丢弃——「反选 = 当前这一屏」，与旧 [`Self::select_invert`]（可见集外
+    /// 丢弃）同款口径。故对同一行集连按两次 = 回到调用前选择集与行集的交集。
+    pub fn invert_rows(&mut self, rows: &[TreeRow]) {
+        let (ids, dirs) = rows_channels(rows, self.entries.len());
+        let next_ids: BTreeSet<EntryId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !self.selection.contains(id))
+            .collect();
+        let next_dirs: BTreeSet<String> = dirs
+            .iter()
+            .filter(|dir| !self.dir_selection.contains(*dir))
+            .cloned()
+            .collect();
+        self.selection = next_ids;
+        self.dir_selection = next_dirs;
+    }
+
     /// 全选/清空（`clear=true` 清空；否则全选过滤后可见条目——实体条目
     /// 全集 + 清隐式目录选择：目录内容已由子实体覆盖，目录行本身无需选中）。
+    ///
+    /// **「整档」口径**（`entries` 全集，不按当前层/行集收窄）。T-SEL2 起 UI 的
+    /// Ctrl+A / 右键「全选」改走 [`Self::select_visible_rows`]（当前那一屏）；
+    /// 本方法按契约保留原语义，供既有调用面/用例继续使用。
     pub fn select_all(&mut self, clear: bool) {
         if clear {
             self.selection.clear();
@@ -474,6 +538,10 @@ impl MainViewModel {
 
     /// 反选（T-GUI T34「反选」菜单接线：可见条目内选中/未选中互换；
     /// 隐式目录选择一并清空——混合反选语义无自然定义，从实体集）。
+    ///
+    /// **「整档」口径**（`entries` 过滤集，不带行集参数，且清隐式目录通道）。
+    /// T-SEL2 起 UI 的 Ctrl+I 改走 [`Self::invert_rows`]（当前那一屏、双通道）；
+    /// 本方法按契约保留原语义，供既有调用面/用例继续使用。
     pub fn select_invert(&mut self) {
         let visible: Vec<EntryId> = self
             .entries
@@ -1224,6 +1292,29 @@ fn password_ref(pw: Option<&zeroize::Zeroizing<String>>) -> hzip_format::Passwor
 /// 条目名末段（`/` 分隔；EntryName 契约：档案内名统一 `/` 分隔、无 `\`）。
 fn last_segment(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
+}
+
+/// 可见行集 → 双通道选择集（T-SEL2：实体 id 通道 + 隐式目录路径通道）。
+///
+/// 越界实体 id 静默忽略（与 [`MainViewModel::select_rows`] 同口径——行集来自
+/// 别处的快照，行集与 `entries` 不是同一时刻时可能短暂错位）；无实体 id 的
+/// **非目录**行（组合档合成层行）不进任何通道。
+fn rows_channels(rows: &[TreeRow], entry_count: usize) -> (BTreeSet<EntryId>, BTreeSet<String>) {
+    let mut ids = BTreeSet::new();
+    let mut dirs = BTreeSet::new();
+    for row in rows {
+        match row.entry_id {
+            Some(id) if id < entry_count => {
+                ids.insert(id);
+            }
+            Some(_) => {}
+            None if row.is_dir => {
+                dirs.insert(row.path.clone());
+            }
+            None => {}
+        }
+    }
+    (ids, dirs)
 }
 
 /// `EntryInfo` → 纯数据行（mtime → RFC3339 UTC 占位；展示层本地时区格式化

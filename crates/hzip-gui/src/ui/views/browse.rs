@@ -1462,6 +1462,15 @@ pub(crate) fn command_channel(cx: &App) -> Option<BrowseCommandFn> {
 /// GetKeyState 的线程队列语义，焦点/队列竞态下可能取空；`GetAsyncKeyState`
 /// 物理硬件态 OR 合并——按住的键必定可见）。
 pub(crate) fn merge_modifiers(m: Modifiers) -> Modifiers {
+    // **测试下不查硬件态**：兜底层读的是 `GetAsyncKeyState`（本机**物理**修饰键），
+    // 而测试里的鼠标事件是合成的 ⇒ 合成「普通单击」会被宿主机当前按着的
+    // Shift/Ctrl 变成区间/增选（实测症状：`ctrl_click_multi_selects_through_real_mouse`
+    // 偶发 `普通单击 = 单选基线`，实得 `[0,1]` = 锚点到点击行的区间选择；本机跑长任务
+    // 时（终端/自动化注入按键）尤其容易命中）。这与「合成的按键事件不该受物理键盘
+    // 影响」是同一条测试隔离纪律——生产语义（焦点切换竞态下兜底）不受影响。
+    if cfg!(test) {
+        return m;
+    }
     let (ctrl, shift, alt) = hzip_platform::kb::async_key_modifiers();
     Modifiers {
         control: m.control || ctrl,

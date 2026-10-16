@@ -243,6 +243,34 @@ fn zh_cn_text_matches_pre_i18n_wording() {
         ),
         ("action.open_log_dir", "打开日志目录"),
         ("action.open_config", "打开配置文件"),
+        // —— 快捷键页（T-KEYS）：第 8 页签 + 整页文案 ——
+        ("tab.keys", "快捷键"),
+        ("setting.keymap.label", "快捷键"),
+        (
+            "setting.keymap.help",
+            "点键位后按下想用的组合键，移开焦点即生效；Esc 取消本次编辑；点 ✕ 删除该动作的快捷键绑定；页头「全部恢复默认」可一键复原全部快捷键。",
+        ),
+        ("keymap.action.open", "打开档案"),
+        ("keymap.action.extract", "解压"),
+        ("keymap.action.new_window", "新建窗口"),
+        ("keymap.action.select_all", "全选"),
+        ("keymap.action.select_invert", "反选"),
+        ("keymap.action.copy", "复制"),
+        ("keymap.action.paste", "粘贴"),
+        ("keymap.action.find", "查找"),
+        ("keymap.action.test_integrity", "测试完整性"),
+        ("keymap.action.settings", "设置"),
+        ("keymap.action.show_jobs", "任务中心"),
+        ("keymap.action.refresh", "刷新"),
+        ("keymap.action.delete", "删除"),
+        ("keymap.action.quit", "退出"),
+        ("keymap.state.default", "默认"),
+        ("keymap.state.unbound", "未绑定"),
+        ("keymap.recording", "请按键…"),
+        ("keymap.remove_binding", "删除该快捷键绑定"),
+        ("keymap.conflict", "已被「{action}」占用"),
+        ("keymap.reset_one", "恢复默认"),
+        ("keymap.reset_all", "全部恢复默认"),
     ];
     for (key, want) in cases {
         assert_eq!(
@@ -258,8 +286,8 @@ fn zh_cn_text_matches_pre_i18n_wording() {
 fn registry_index_is_unique_and_complete() {
     assert_eq!(
         REGISTRY.len(),
-        33,
-        "设置项总数（33 = 27 + 主题色 + 界面字体/字号/圆角弧度/布局密度/文件图标来源）+ 动作按钮不进表"
+        34,
+        "设置项总数（34 = 33 + 快捷键整节）+ 动作按钮不进表"
     );
     for (ix, d) in REGISTRY.iter().enumerate() {
         assert_eq!(index(d.id), ix, "index({:?}) 与表顺序不一致", d.id);
@@ -376,6 +404,9 @@ fn defaults_match_lower_layer_defaults() {
     cfg.ui.font_size = 22;
     cfg.ui.density = "loose".into();
     cfg.ui.file_type_icons = "builtin".into();
+    // 快捷键（T-KEYS）：一个自定义键位 + 一个「禁用」——两者都必须被重置清掉
+    cfg.keys.select_all = "f2".into();
+    cfg.keys.quit = "none".into();
     // 非设置项：恢复默认必须原值保留
     cfg.extract.delete_after = true;
     cfg.compress.solid_block_mib = 64;
@@ -412,6 +443,15 @@ fn defaults_match_lower_layer_defaults() {
     assert_eq!(cfg.ui.font_size, want.ui.font_size);
     assert_eq!(cfg.ui.density, want.ui.density);
     assert_eq!(cfg.ui.file_type_icons, want.ui.file_type_icons);
+    assert_eq!(
+        cfg.keys, want.keys,
+        "恢复默认必须把 [keys] 清成全空（= 走内置默认键位）"
+    );
+    assert_eq!(
+        cfg.keys.select_all, "",
+        "自定义键位串必须被清掉（空串 = 默认态）"
+    );
+    assert_eq!(cfg.keys.quit, "", "「禁用」哨兵同样必须被清掉");
     assert_eq!(data.settings, SettingsPrefs::default());
     // 非设置项原值保留
     assert!(cfg.extract.delete_after, "delete_after 非设置项须保留");
@@ -750,4 +790,194 @@ fn store_file_type_icons_normalizes_case_and_unknown() {
     store(&mut cfg, &mut data, &SettingValue::Bool(false));
     assert_eq!(cfg.ui.file_type_icons, "builtin", "跨类型上行不得改值");
     assert_eq!(data.settings.file_type_icons_ix, 1);
+}
+
+// —— T-KEYS：快捷键整节（页签「快捷键」+ 一项顶一节）——
+
+/// 造一份「非默认」的 `Keys`：自定义键位 + `"none"` 禁用 + 空串默认三态齐备。
+fn keys_sample() -> hzip_config::Keys {
+    let mut k = hzip_config::Keys::default();
+    *k.field_mut("select_all").expect("select_all 是契约键名") = "f2".into();
+    *k.field_mut("quit").expect("quit 是契约键名") = "none".into();
+    k
+}
+
+// 页签集合 ↔ 下标互锁（T-KEYS：7 → 8；越界守界语义**不得**变）
+#[test]
+fn settings_tab_collection_interlocks_with_index() {
+    assert_eq!(SettingsTab::ALL.len(), 8, "新增「快捷键」页后共 8 页");
+    assert_eq!(
+        SettingsTab::LABEL_KEYS.len(),
+        SettingsTab::ALL.len(),
+        "文案 key 序列与页集合必须等长（渲染按下标取）"
+    );
+    for (ix, tab) in SettingsTab::ALL.iter().enumerate() {
+        assert_eq!(tab.index(), ix, "index() 与 ALL 顺序漂移：{tab:?}");
+        assert_eq!(SettingsTab::from_index(ix), *tab);
+    }
+    // 既有 7 页下标一个都不能动（E 侧渲染/测试按绝对下标断言）
+    assert_eq!(SettingsTab::from_index(6), SettingsTab::Language);
+    assert_eq!(SettingsTab::Keys.index(), 7);
+    // 越界回落仍钉在语言页（既有守界语义；不是「最后一个变体」）
+    assert_eq!(
+        SettingsTab::from_index(8),
+        SettingsTab::Language,
+        "越界守界"
+    );
+    assert_eq!(SettingsTab::from_index(9), SettingsTab::Language);
+    assert_eq!(SettingsTab::from_index(usize::MAX), SettingsTab::Language);
+    // 快捷键页必须有登记项（否则页签是空页——`registry_index_is_unique_and_complete`
+    // 的页覆盖断言会先炸，这里把根因也钉住）
+    assert_eq!(def(SettingId::Keymap).page, SettingsTab::Keys);
+    // 页签文案 key 一一对应（顺序 = ALL）
+    assert_eq!(
+        SettingsTab::LABEL_KEYS[SettingsTab::Keys.index()],
+        "tab.keys"
+    );
+}
+
+// 取值类型守界：`Keys` 只被 `KeysBlock` 吃；其它控件不吃 `Keys`，`KeysBlock` 也不吃别的
+#[test]
+fn keys_block_accepts_only_keys_value() {
+    let sample = keys_sample();
+    assert!(WidgetKind::KeysBlock.accepts(&SettingValue::Keys(Box::new(sample.clone()))));
+    assert!(
+        def(SettingId::Keymap)
+            .widget
+            .accepts(&SettingValue::Keys(Box::new(sample.clone()))),
+        "注册表行的控件必须吃 Keys 值（否则 apply_setting 静默忽略）"
+    );
+    // 其余控件类型一律不吃（跨类型串用整项忽略，不 panic）
+    for w in [
+        WidgetKind::Switch,
+        WidgetKind::Text,
+        WidgetKind::Color,
+        WidgetKind::ExtGroup,
+        WidgetKind::ColumnsBlock,
+        WidgetKind::FontSelect,
+        WidgetKind::Number {
+            min: 0,
+            max: 9,
+            step: 1,
+        },
+    ] {
+        assert!(
+            !w.accepts(&SettingValue::Keys(Box::new(sample.clone()))),
+            "{w:?} 不应接受 Keys 值"
+        );
+    }
+    // `KeysBlock` 只吃 Keys（Columns/Bool/Text/StrSet/Index/Number 全部拒绝）
+    for v in [
+        SettingValue::Bool(true),
+        SettingValue::Index(1),
+        SettingValue::Text("f2".into()),
+        SettingValue::StrSet(vec!["zip".into()]),
+        SettingValue::Columns(ColumnsConfig::default()),
+        SettingValue::Number(3),
+    ] {
+        assert!(
+            !WidgetKind::KeysBlock.accepts(&v),
+            "KeysBlock 不应接受 {v:?}"
+        );
+    }
+    // 取值访问器：非 Keys 变体回 None
+    assert!(SettingValue::Bool(true).as_keys().is_none());
+    assert_eq!(
+        SettingValue::Keys(Box::new(sample.clone())).as_keys(),
+        Some(&sample)
+    );
+}
+
+// `store` 双写 + `load` 活读镜像（T-KEYS §3.3：`cfg.keys` 与 `app.settings.keys` 同源）
+#[test]
+fn store_keys_dual_writes_config_and_mirror() {
+    let mut cfg = Config::defaults();
+    let mut data = app();
+    let store = def(SettingId::Keymap).store;
+
+    let sample = keys_sample();
+    store(
+        &mut cfg,
+        &mut data,
+        &SettingValue::Keys(Box::new(sample.clone())),
+    );
+    assert_eq!(cfg.keys, sample, "配置侧 [keys] 整节落库");
+    assert_eq!(data.settings.keys, sample, "AppData 镜像同步（泵取值来源）");
+
+    // 跨类型上行整项忽略（不 panic、不改值）：Bool 不是本控件取值
+    store(&mut cfg, &mut data, &SettingValue::Bool(false));
+    assert_eq!(cfg.keys, sample, "跨类型上行不得改值");
+    assert_eq!(data.settings.keys, sample);
+
+    // 活读走镜像（不读盘）：改了镜像即改活读值——落盘是异步的，读盘会拿到上一拍
+    if let Some(f) = data.settings.keys.field_mut("select_all") {
+        *f = "ctrl-shift-a".into();
+    }
+    let view = SettingsView::load(&data, &cfg, Vec::new(), None, Vec::new());
+    assert_eq!(
+        view.keys_of(SettingId::Keymap)
+            .and_then(|k| k.field("select_all")),
+        Some("ctrl-shift-a"),
+        "活读取镜像而不是读盘"
+    );
+    assert_eq!(
+        cfg.keys.field("select_all"),
+        Some("f2"),
+        "活读不回写配置（两半各自持有；下一次 store 才同步）"
+    );
+    // 缺项/非 Keys 项守界
+    assert!(view.keys_of(SettingId::Theme).is_none());
+    assert_eq!(
+        SettingsView::defaults(Vec::new())
+            .keys_of(SettingId::Keymap)
+            .cloned(),
+        Some(hzip_config::Keys::default()),
+        "全默认视图 = 全空串（= 全部动作走内置默认键位）"
+    );
+
+    // 出厂默认 = 全空 + 生效半场声明 = DataOnly（UI 半场按 id 挂钩，不新增 Effect 变体）
+    assert_eq!(
+        (def(SettingId::Keymap).default)(),
+        SettingValue::Keys(Box::default())
+    );
+    assert_eq!(def(SettingId::Keymap).effect, Effect::DataOnly);
+    assert_eq!(def(SettingId::Keymap).commit, Commit::Immediate);
+    assert_eq!(def(SettingId::Keymap).label, "setting.keymap.label");
+    assert_eq!(def(SettingId::Keymap).help, Some("setting.keymap.help"));
+}
+
+// `apply_setting` 全链路（事件 → store → 镜像 → 信号）：快捷键整节一次上行即生效面就绪
+#[test]
+fn apply_setting_keymap_updates_mirror_and_emits_signal() {
+    let (tx, rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::unbounded();
+    let mut data = app();
+    data.signal_tx = Some(std::sync::Arc::new(tx));
+
+    let sample = keys_sample();
+    data.apply_setting(
+        SettingId::Keymap,
+        &SettingValue::Keys(Box::new(sample.clone())),
+    );
+    assert_eq!(data.settings.keys, sample, "镜像落地");
+    match rx.try_recv() {
+        Ok(crate::viewmodel::VmSignal::SettingApplied(id)) => {
+            assert_eq!(
+                id,
+                SettingId::Keymap,
+                "应发出 Keymap 生效信号（泵据它重装绑定）"
+            )
+        }
+        other => panic!("期望 SettingApplied(Keymap)，实得 {other:?}"),
+    }
+
+    // 类型不符 → 整项忽略（不 panic、不改状态、不发信号）
+    data.apply_setting(SettingId::Keymap, &SettingValue::Bool(true));
+    assert_eq!(data.settings.keys, sample, "跨类型上行不得改值");
+    assert!(
+        rx.try_recv().is_err(),
+        "被忽略的上行不得发信号（否则泵会白重装一次 keymap）"
+    );
 }

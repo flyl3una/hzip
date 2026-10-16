@@ -31,6 +31,16 @@ impl Render for AppShell {
         if window.focused(cx).is_none() {
             shell_focus.focus(window, cx);
         }
+        // 焦点还可能**悬空**在「已不渲染」的设置面板键位芯片上（切走主页签时 gpui
+        // 不清焦点）——那条路上按键派发从不在本帧的节点出发，快捷键静默失效（实测）。
+        // 面板正在渲染的那一帧不动它：芯片句柄会在本帧重新登记。
+        if self.state.read(cx).tab != MainTab::Settings
+            && window
+                .focused(cx)
+                .is_some_and(|h| crate::ui::views::settings_layout::owns_key_focus(cx, &h))
+        {
+            shell_focus.focus(window, cx);
+        }
         // 先拷贝 state 字段（结束不可变借用），再建需要 &mut App 的元素
         let (
             busy,
@@ -232,22 +242,13 @@ impl Render for AppShell {
                 cx.quit();
             }))
             .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-                // T-GUI T34：全选（VM 过滤后可见条目；回投刷新选择计数）
-                if let Some(data) = this.data.as_ref()
-                    && let Ok(mut d) = data.lock()
-                {
-                    d.main.select_all(false);
-                }
-                let _ = cx;
+                // T-SEL2：全选 = 右栏列表**当前那一屏**（不再是「整档」——进子目录
+                // 后再按不会把别的目录的文件选上）；非浏览页让动作继续冒泡。
+                this.select_all_visible(cx);
             }))
             .on_action(cx.listener(|this, _: &SelectInvert, _, cx| {
-                // T-GUI T34：反选（T34 新增 VM select_invert；可见条目互换）
-                if let Some(data) = this.data.as_ref()
-                    && let Ok(mut d) = data.lock()
-                {
-                    d.main.select_invert();
-                }
-                let _ = cx;
+                // T-SEL2：反选同口径（同一行集内双通道互换）
+                this.invert_visible(cx);
             }))
             .on_action(cx.listener(|this, _: &Extract, window, cx| {
                 // T-MENU1：菜单「解压文件…」直连工具栏解压同路径（选中预填
@@ -487,6 +488,69 @@ impl Render for AppShell {
         // 手工调用已无法编译——也不必：只要 `component::init` 跑过（`run_ui`
         // 已保证），层就随 Root 自动出现。
         action_chain.into_any_element()
+    }
+}
+
+impl AppShell {
+    /// 列表全选（Ctrl+A / 右键「全选」同源，T-SEL2）：锁内取当前可见行 →
+    /// VM 双通道选择 → 解锁后回投 [`crate::viewmodel::VmSignal::EntriesChanged`]。
+    ///
+    /// **为什么必须回投信号**：行高亮/状态栏计数/选中统计都靠泵的快照批次刷新
+    /// ——旧 Action 分支改完 VM 就撒手不管，用户观感是「按了 Ctrl+A 没反应」，
+    /// 要等下一个不相干的信号才补上（实测见 T-SEL2 §1）。右键菜单入口此前**发**
+    /// 信号，两条入口因此长期不同源；本轮统一收口到本方法。
+    ///
+    /// 返回是否消费本次动作：`false` = 非浏览页 / 无数据面 / 锁中毒。非浏览页
+    /// 已 `cx.propagate()` 把动作让出去（设置页/任务中心不静默吞 Ctrl+A）。
+    pub(crate) fn select_all_visible(&mut self, cx: &mut Context<Self>) -> bool {
+        self.visible_rows_action(cx, false)
+    }
+
+    /// 列表反选（Ctrl+I，T-SEL2）：口径同 [`Self::select_all_visible`]，作用于
+    /// [`crate::viewmodel::MainViewModel::invert_rows`]。
+    pub(crate) fn invert_visible(&mut self, cx: &mut Context<Self>) -> bool {
+        self.visible_rows_action(cx, true)
+    }
+
+    /// 「可见行选择」两入口的共用收口（作用域门 → 取行 → 作用 VM → 回投）。
+    ///
+    /// - **作用域门**：仅浏览页（[`MainTab::Browse`]）消费——`SelectAll`/`SelectInvert`
+    ///   是全局键位，设置页/任务中心页上按到它们时动作应继续冒泡（`cx.propagate()`），
+    ///   而不是被浏览页吞掉。
+    /// - **行集来源** = `AppData.dir_rows`（泵在后台重建好的「用户看到的那一屏」）。
+    ///   刻意**不在** UI 线程重算 `main.visible_rows()`：那是 O(行集) 的纯 CPU 派生，
+    ///   2026-09-24 审计 B5 已明确挪到后台泵线程（`AppData::rebuild_browse_rows`）；
+    ///   在动作处理器里重算等于把这个坑搬回 UI 线程。
+    /// - 锁内只做 `Arc` 克隆（O(1)）+ 选择集替换，无派生、无 IO。
+    fn visible_rows_action(&mut self, cx: &mut Context<Self>, invert: bool) -> bool {
+        let tab = self.state.read(cx).tab;
+        if tab != MainTab::Browse {
+            cx.propagate();
+            return false;
+        }
+        let Some(data) = self.data.clone() else {
+            return false;
+        };
+        let applied = match data.lock() {
+            Ok(mut d) => {
+                let rows = d.dir_rows.clone();
+                if invert {
+                    d.main.invert_rows(&rows);
+                } else {
+                    d.main.select_visible_rows(&rows, false);
+                }
+                true
+            }
+            // 中毒锁：本次动作作废（不假装成功，也不发「已刷新」的信号骗泵）
+            Err(_) => false,
+        };
+        if !applied {
+            return false;
+        }
+        if let Some(tx) = self.signal_tx.as_ref() {
+            let _ = tx.try_send(crate::viewmodel::VmSignal::EntriesChanged);
+        }
+        true
     }
 }
 

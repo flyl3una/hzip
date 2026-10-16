@@ -40,11 +40,27 @@ fn custom_open_program_by_extension() {
     assert_eq!(pick("C:/iv.exe", "C:/ed.exe", "noext"), "C:/ed.exe");
 }
 
+/// 允许测试调度器 park —— 本模块里**凡经 `run_open_flow` 起真实后台线程**
+/// （`hzip-open`）的用例都要先调一次。
+///
+/// 为什么需要：那条线程完成时用 smol 通道唤醒任务，唤醒发生在**非测试线程**上；
+/// gpui 的确定性测试调度器（`gpui_pre::executor::BackgroundExecutor`）会因此记一条
+/// 「Detected activity on thread "hzip-open" … Your test is not deterministic」并在
+/// **测试结束时 panic**。它是竞态：测试线程先 park（内部会开一次许可）就绿，后台线程
+/// 先醒就红——所以负载高时偶发（实测同一用例连跑 1/2 次结果不同）。
+/// `allow_parking()` 正是该调度器给「与真实 I/O 混跑」留的开关
+/// （`gpui-pre-0.3.8/src/executor.rs:220` 的文档原文）。
+fn allow_parking_for_real_io(vtcx: &mut gpui_kit::VisualTestContext) {
+    vtcx.update(|_window, cx| cx.background_executor().allow_parking());
+}
+
 /// [`run_open_flow`] 的 `work` 必须跑在**另一个线程**上（用户口径 2026-09-24：
 /// 「在后台新线程加载」）。跑在 UI 线程上 = 大档案/内层容器把界面冻住，正是
 /// 这次要消灭的东西；这条断言就是那个契约的守门人。
 #[gpui_kit::test]
 fn run_open_flow_work_runs_off_ui_thread(cx: &mut gpui_kit::TestAppContext) {
+    // 真实后台线程唤醒任务的许可（见 `allow_parking_for_real_io`）
+    cx.update(|cx| cx.background_executor().allow_parking());
     let ui_thread = std::thread::current().id();
     let (tx, rx) = std::sync::mpsc::channel();
     cx.update(|cx| {
@@ -636,6 +652,7 @@ fn open_flow_installs_session_then_enters_and_leaves_container(cx: &mut gpui_kit
     );
 
     // ① 打开（与 argv `--open` 同一条路；show_window=false 免测试里弹窗）
+    allow_parking_for_real_io(vtcx);
     let task = vtcx.update(|_, cx| {
         crate::ui::shell::open_archive_task(cx, data.clone(), outer.clone(), false)
     });
@@ -840,6 +857,7 @@ fn composite_parent_reenter_keeps_its_own_layer(cx: &mut gpui_kit::TestAppContex
     .expect("写 .tar.gz");
 
     // ① 打开外层（`--open` 那条路；组合档延迟展开 → 单行 `outer.tar`）
+    allow_parking_for_real_io(vtcx);
     let task = vtcx.update(|_, cx| {
         crate::ui::shell::open_archive_task(cx, data.clone(), outer.clone(), false)
     });
@@ -1701,6 +1719,7 @@ fn encrypted_entry_open_goes_through_password_gate(cx: &mut gpui_kit::TestAppCon
     };
 
     // 打开档案（与用户双击档案同一条路）
+    allow_parking_for_real_io(vtcx);
     let task = vtcx
         .update(|_, cx| crate::ui::shell::open_archive_task(cx, data.clone(), zip.clone(), false));
     vtcx.update(|_, cx| {
@@ -2104,4 +2123,630 @@ mod new_window_tests {
             });
         });
     }
+}
+
+/// T-SEL2：Ctrl+A 全选 = 右栏**列表当前那一屏**（不是整档）。
+///
+/// 走真实链路：真实窗口 + `Main` 上下文里的 `ctrl-a` 绑定（`cx.bind_keys`）→
+/// AppShell 的 `on_action(SelectAll)` → `AppShell::select_all_visible` →
+/// `AppData.dir_rows`（用户看到的那一屏）→ VM 双通道选择 → `EntriesChanged`
+/// 回投 → 快照回流 → 浏览委托选中集镜像。
+///
+/// 三条断言：① 根层只选根层两条、隐式目录 `sub` 进目录通道；② 进 `sub/` 再按
+/// 只选该层两条（整档语义在这一步会仍把根层选上）；③ 回投信号确实发出
+/// （高亮/状态栏/选中统计靠它当批刷新——旧 Action 入口漏发，用户观感
+/// 「按了 Ctrl+A 没反应」）。
+#[gpui_kit::test]
+fn ctrl_a_selects_only_visible_rows(cx: &mut gpui_kit::TestAppContext) {
+    use crate::ui::shell as sh;
+    let (tx, rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let data_w = data.clone();
+    let slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        // 生产装配在 `run_ui`（`ui/shell/runtime.rs`）——测试里按同一上下文
+        // （`Main`）注册同一条绑定，走真实键位分发链
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "ctrl-a",
+            sh::SelectAll,
+            Some("Main"),
+        )]);
+        let shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_w.clone()),
+            Some(tx.clone()),
+        );
+        let shell = cx.new(|_| shell);
+        *slot2.borrow_mut() = Some(shell.clone());
+        let view: gpui_kit::AnyView = shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = slot.borrow().clone().expect("shell 实体");
+
+    // 夹具：根 2 文件 + sub/ 内 2 文件（共 4 条目）
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ar = dir.path().join("demo.tar");
+    crate::viewmodel::testutil::write_ustar(
+        &ar,
+        &[
+            ("a.txt", b"a"),
+            ("b.txt", b"b"),
+            ("sub/c.txt", b"c"),
+            ("sub/d.txt", b"d"),
+        ],
+    );
+    allow_parking_for_real_io(vtcx);
+    let task = vtcx
+        .update(|_, cx| crate::ui::shell::open_archive_task(cx, data.clone(), ar.clone(), false));
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    let wait = |vtcx: &mut gpui_kit::VisualTestContext, what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}：10s 未完成");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            vtcx.run_until_parked();
+        }
+    };
+    {
+        let probe = data.clone();
+        wait(vtcx, "打开", &|| {
+            probe.lock().map(|d| d.main.is_open()).unwrap_or(false)
+        });
+    }
+    vtcx.run_until_parked();
+    // 当前 VM 实体选择对应的条目名（按 id 查 `entries`；原始通道，不经
+    // `selection_names` 的目录子树展开）
+    let sel_names = |d: &crate::app::state::AppData| -> Vec<String> {
+        d.main
+            .selection()
+            .iter()
+            .filter_map(|id| d.main.entry(*id).map(|e| e.name.clone()))
+            .collect()
+    };
+    // 行集里的实体 id（假定顺序即升序——行集按名序，tar 夹具下 id 与名序一致）
+    let row_entity_ids = |d: &crate::app::state::AppData| -> Vec<usize> {
+        d.dir_rows.iter().filter_map(|r| r.entry_id).collect()
+    };
+    // 快照回流（泵的常规路径）+ 重绘 → 浏览委托选中集镜像
+    let delegate_mirror = |vtcx: &mut gpui_kit::VisualTestContext| {
+        (
+            vtcx.update(|_, cx| {
+                crate::ui::views::browse::filter_hold_in(cx)
+                    .map(|h| h.read(cx).table.read(cx).delegate().selected_ids.clone())
+            }),
+            vtcx.update(|_, cx| {
+                crate::ui::views::browse::filter_hold_in(cx)
+                    .map(|h| h.read(cx).table.read(cx).delegate().selected_dirs.clone())
+            }),
+        )
+    };
+    let sync_snapshot = |vtcx: &mut gpui_kit::VisualTestContext| {
+        let snap = data.lock().unwrap().export_snapshot();
+        vtcx.update(|window, cx| {
+            shell.update(cx, |s, cx| s.update_from_state(cx, &snap));
+            window.draw(cx).clear(cx);
+        });
+    };
+
+    // 泵的常规路径：后台线程重建当前层行集（测试里手工触发）
+    {
+        let mut d = data.lock().unwrap();
+        d.rebuild_browse_rows();
+        assert_eq!(
+            d.dir_rows
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sub", "a.txt", "b.txt"],
+            "根层行集 = 当前目录直接子项（`..` 合成行不在其中）"
+        );
+    }
+    // 排空开档期信号：下面只认 ctrl-a 自己发的
+    while rx.try_recv().is_ok() {}
+
+    // —— ① 根层：无焦点直按 Ctrl+A（用户路径）——
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    {
+        let d = data.lock().unwrap();
+        assert_eq!(
+            sel_names(&d),
+            vec!["a.txt".to_string(), "b.txt".to_string()],
+            "根层 Ctrl+A 只选根层两条（sub/c.txt、sub/d.txt 不进实体通道）"
+        );
+        assert_eq!(
+            d.main.dir_selection(),
+            vec!["sub".to_string()],
+            "隐式目录行 sub（tar 无目录条目）进目录通道"
+        );
+        assert_eq!(
+            d.main.selection(),
+            row_entity_ids(&d),
+            "选择集 == 行集实体 id（一屏全选）"
+        );
+    }
+    // —— ② 回投信号：高亮/状态栏靠它当批刷新 ——
+    let mut entries_changed = false;
+    while let Ok(sig) = rx.try_recv() {
+        if matches!(sig, crate::viewmodel::VmSignal::EntriesChanged) {
+            entries_changed = true;
+        }
+    }
+    assert!(
+        entries_changed,
+        "Ctrl+A 必须回投 EntriesChanged（旧 Action 入口漏发 = 用户观感「没反应」）"
+    );
+    // —— ③ 快照回流 → 浏览委托镜像（icon/list 高亮/菜单可用性与快照同源）——
+    sync_snapshot(vtcx);
+    let expect_root: std::collections::HashSet<u64> = data
+        .lock()
+        .unwrap()
+        .dir_rows
+        .iter()
+        .filter_map(|r| r.entry_id)
+        .map(|id| id as u64)
+        .collect();
+    let (mirror_ids, mirror_dirs) = delegate_mirror(vtcx);
+    assert_eq!(
+        mirror_ids,
+        Some(expect_root),
+        "快照回流后委托 selected_ids == 行集实体 id"
+    );
+    assert_eq!(
+        mirror_dirs,
+        Some(["sub".to_string()].into_iter().collect()),
+        "隐式目录通道同样进委托镜像"
+    );
+
+    // —— ④ 进 sub/ 再按：只选该层两条（整档语义在这一步会仍选上根层）——
+    {
+        let mut d = data.lock().unwrap();
+        d.main.enter_dir("sub");
+        d.rebuild_browse_rows();
+        assert_eq!(
+            d.dir_rows
+                .iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sub/c.txt", "sub/d.txt"],
+            "sub/ 行集"
+        );
+    }
+    while rx.try_recv().is_ok() {}
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    {
+        let d = data.lock().unwrap();
+        assert_eq!(
+            sel_names(&d),
+            vec!["sub/c.txt".to_string(), "sub/d.txt".to_string()],
+            "sub/ 内 Ctrl+A 只选该层两条（不含根层任何 id）"
+        );
+        assert!(d.main.dir_selection().is_empty(), "该层无隐式目录行");
+        assert_eq!(
+            d.main.selection(),
+            row_entity_ids(&d),
+            "选择集 == 行集实体 id"
+        );
+    }
+    // 委托镜像跟随当前层
+    sync_snapshot(vtcx);
+    let expect_sub: std::collections::HashSet<u64> = data
+        .lock()
+        .unwrap()
+        .dir_rows
+        .iter()
+        .filter_map(|r| r.entry_id)
+        .map(|id| id as u64)
+        .collect();
+    let (mirror_ids, _) = delegate_mirror(vtcx);
+    assert_eq!(
+        mirror_ids,
+        Some(expect_sub),
+        "委托镜像跟随当前层行集（不含任何非本层 id）"
+    );
+}
+
+/// T-SEL2 作用域门：**非浏览页**（任务中心/设置）上按 Ctrl+A 不吞动作——
+/// 既不改选择集、也不回投 `EntriesChanged`（`AppShell::visible_rows_action`
+/// 走 `cx.propagate()`，把动作让给上层；将来别的页面想接这个键位也接得住）。
+#[gpui_kit::test]
+fn ctrl_a_on_non_browse_tab_is_not_swallowed(cx: &mut gpui_kit::TestAppContext) {
+    use crate::ui::shell as sh;
+    let (tx, rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        // 已知的非空选择集：不依赖档案——目录通道按路径选（`select_rows` 是
+        // 双通道整组替换的现成出口），这样「未变」是可观测的强断言
+        d.main.select_rows(&[], &["kept".to_string()]);
+    }
+    let data_w = data.clone();
+    let slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "ctrl-a",
+            sh::SelectAll,
+            Some("Main"),
+        )]);
+        let shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_w.clone()),
+            Some(tx.clone()),
+        );
+        let shell = cx.new(|_| shell);
+        *slot2.borrow_mut() = Some(shell.clone());
+        let view: gpui_kit::AnyView = shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = slot.borrow().clone().expect("shell 实体");
+
+    // 离开浏览页（任务中心未开 → `switch_tab` 顺带打开它并切过去）
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.switch_tab(cx, MainTab::Jobs));
+    });
+    vtcx.update(|_, cx| {
+        assert_eq!(
+            shell.read(cx).state.read(cx).tab,
+            MainTab::Jobs,
+            "已离开浏览页（用例前提）"
+        );
+    });
+    vtcx.run_until_parked();
+    // 排空切页签/设置落地产生的信号，下面只认按 Ctrl+A 引起的
+    while rx.try_recv().is_ok() {}
+
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    {
+        let d = data.lock().unwrap();
+        assert_eq!(
+            d.main.dir_selection(),
+            vec!["kept".to_string()],
+            "非浏览页 Ctrl+A 不得改选择集"
+        );
+        assert_eq!(d.main.selection_count(), 1, "选择集原样");
+    }
+    let mut entries_changed = false;
+    while let Ok(sig) = rx.try_recv() {
+        if matches!(sig, crate::viewmodel::VmSignal::EntriesChanged) {
+            entries_changed = true;
+        }
+    }
+    assert!(
+        !entries_changed,
+        "非浏览页不得回投 EntriesChanged（动作已 propagate 出去，未被浏览页吞掉）"
+    );
+}
+
+/// 集成冒烟（T-KEYS 收口）：**配置 → 镜像 → 装配 → 真实按键分发**整条链。
+///
+/// 三段：
+/// ① 默认键位 `ctrl-a` 触发全选；
+/// ② 改键 `select_all = "f2"` → 旧键失效、新键生效；
+/// ③ 禁用 `select_all = "none"` → 新旧键都不触发。
+///
+/// 为什么手动走「`apply_setting` → `keymap::install(cx, &镜像)`」而不是等泵：泵只
+/// 活在 `run_ui` 的进程主循环里（测试不经过它）。这两支箭正是泵在
+/// `runtime.rs` 里做的（`SettingId::Keymap` 批次 → 取镜像 → 重装）。
+/// 设置页自身的上行/渲染由 `ui::views::tests::settings_layout::keys_*` 覆盖。
+#[gpui_kit::test]
+fn rebind_select_all_takes_effect_end_to_end(cx: &mut gpui_kit::TestAppContext) {
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let data_w = data.clone();
+    let slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_w.clone()),
+            Some(tx.clone()),
+        );
+        let shell = cx.new(|_| shell);
+        *slot2.borrow_mut() = Some(shell.clone());
+        let view: gpui_kit::AnyView = shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let _shell = slot.borrow().clone().expect("shell 实体");
+
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ar = dir.path().join("demo.tar");
+    crate::viewmodel::testutil::write_ustar(&ar, &[("a.txt", b"a"), ("b.txt", b"b")]);
+    allow_parking_for_real_io(vtcx);
+    let task = vtcx
+        .update(|_, cx| crate::ui::shell::open_archive_task(cx, data.clone(), ar.clone(), false));
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !data.lock().map(|d| d.main.is_open()).unwrap_or(false) {
+        assert!(std::time::Instant::now() < deadline, "打开档案超时");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        vtcx.run_until_parked();
+    }
+    vtcx.run_until_parked();
+    // 行集由泵后台重建（`rebuild_browse_rows`）——测试不跑泵，手动建一次：
+    // 「Ctrl+A 选的是用户看到的那一屏」，而那一屏就是 `dir_rows`。
+    data.lock().expect("lock").rebuild_browse_rows();
+
+    let sel_len = || data.lock().map(|d| d.main.selection().len()).unwrap_or(0);
+    let clear_sel = || {
+        if let Ok(mut d) = data.lock() {
+            d.main.select_all(true);
+        }
+    };
+    // 置某动作的配置值（走真实「设置变更」入口：写 [keys] + 镜像），再把镜像
+    // 装进 keymap —— 与泵的两步逐字同源。
+    let set_key = |vtcx: &mut gpui_kit::VisualTestContext, field: &str, raw: &str| {
+        let keys = {
+            let mut d = data.lock().expect("lock");
+            let mut k = d.settings.keys.clone();
+            *k.field_mut(field).expect("契约键名") = raw.to_string();
+            d.apply_setting(
+                crate::viewmodel::SettingId::Keymap,
+                &crate::app::settings_registry::SettingValue::Keys(Box::new(k.clone())),
+            );
+            d.settings.keys.clone()
+        };
+        vtcx.update(|_window, cx| crate::ui::shell::keymap::install(cx, &keys));
+        vtcx.run_until_parked();
+    };
+
+    // 启动装配（等价 run_ui 的 startup install）：默认键位
+    set_key(vtcx, "select_all", "");
+
+    // ① 默认 `ctrl-a` 全选
+    clear_sel();
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    assert_eq!(sel_len(), 2, "默认键位 ctrl-a 应全选当前层两行");
+
+    // ② 改键为 `f2`：旧键失效、新键生效
+    set_key(vtcx, "select_all", "f2");
+    clear_sel();
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    assert_eq!(sel_len(), 0, "改键后旧键 ctrl-a 必须不再触发");
+    vtcx.simulate_keystrokes("f2");
+    vtcx.run_until_parked();
+    assert_eq!(sel_len(), 2, "新键 f2 必须生效");
+
+    // ③ 禁用：新旧键都不触发
+    set_key(vtcx, "select_all", "none");
+    clear_sel();
+    vtcx.simulate_keystrokes("f2");
+    vtcx.run_until_parked();
+    assert_eq!(sel_len(), 0, "禁用后 f2 不得触发");
+    vtcx.simulate_keystrokes("ctrl-a");
+    vtcx.run_until_parked();
+    assert_eq!(sel_len(), 0, "禁用后 ctrl-a 同样不得触发");
+}
+
+// 探针动作：绑在 `ctrl-q` 上，用来观测「按键有没有被录制吞掉」。
+gpui_kit::actions!(hzip_gui_shell_keys_probe, [ProbeHotkey]);
+
+/// 录制中**切换主页签**必须释放键盘（T-KEYS 收口）。
+///
+/// 录制态挂的是 `App::intercept_keystrokes`——App 级副作用，不会因为设置面板
+/// 不再渲染而消失。切到浏览页后面板实体仍活着（只是不画），壳层若不在切页签处
+/// 收口，用户会发现键盘全失灵（按什么都被吞）直到切回设置页。本用例用一条绑在
+/// `ctrl-q` 上的探针动作观测「按键是否真的被派发出去」。
+#[gpui_kit::test]
+fn leaving_settings_tab_releases_key_recording(cx: &mut gpui_kit::TestAppContext) {
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let hits: std::rc::Rc<std::cell::Cell<usize>> = std::rc::Rc::default();
+    let counter = hits.clone();
+    let data_w = data.clone();
+    let slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_w.clone()),
+            Some(tx.clone()),
+        );
+        let shell = cx.new(|_| shell);
+        *slot2.borrow_mut() = Some(shell.clone());
+        let view: gpui_kit::AnyView = shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = slot.borrow().clone().expect("shell 实体");
+    // 探针绑定：与设置页的场景测试同一手法（`App::on_action` 全局监听）；
+    // 不复用 `sh::Quit`（那会真去退出进程，测试里不可观测"是否被吞"）。
+    vtcx.update(|_window, cx| {
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "ctrl-q",
+            ProbeHotkey,
+            Some("Main"),
+        )]);
+        cx.on_action(move |_: &ProbeHotkey, _: &mut gpui_kit::App| counter.set(counter.get() + 1));
+    });
+
+    // 先开档案（浏览页签存在，切回浏览才有意义）
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let ar = dir.path().join("demo.tar");
+    crate::viewmodel::testutil::write_ustar(&ar, &[("a.txt", b"a")]);
+    allow_parking_for_real_io(vtcx);
+    let task = vtcx
+        .update(|_, cx| crate::ui::shell::open_archive_task(cx, data.clone(), ar.clone(), false));
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !data.lock().map(|d| d.main.is_open()).unwrap_or(false) {
+        assert!(std::time::Instant::now() < deadline, "打开档案超时");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        vtcx.run_until_parked();
+    }
+    vtcx.run_until_parked();
+
+    // 基线：探针动作能被派发
+    vtcx.simulate_keystrokes("ctrl-q");
+    vtcx.run_until_parked();
+    assert_eq!(hits.get(), 1, "基线：ctrl-q 应派发到探针动作");
+
+    // 打开设置页 → 切到「快捷键」页（下标 7）→ 点「退出」行的键位芯片（进入录制态）
+    vtcx.update(|window, cx| {
+        shell.update(cx, |s, cx| {
+            s.dispatch_toolbar(window, cx, crate::ui::contracts::ToolbarAction::Settings)
+        });
+    });
+    let click = |vtcx: &mut gpui_kit::VisualTestContext, anchor: &'static str| {
+        vtcx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let bounds = vtcx
+            .debug_bounds(anchor)
+            .unwrap_or_else(|| panic!("缺锚点 {anchor}"));
+        vtcx.simulate_click(bounds.center(), gpui_kit::Modifiers::none());
+        vtcx.update(|_window, cx| cx.background_executor().run_until_parked());
+    };
+    let tab_now = |vtcx: &mut gpui_kit::VisualTestContext| -> crate::ui::contracts::MainTab {
+        vtcx.update(|_window, cx| shell.read(cx).state.read(cx).tab)
+    };
+    click(vtcx, "settings-tab-7");
+    click(vtcx, "kc-quit");
+
+    // 录制中：按键被拦下（不派发）
+    vtcx.simulate_keystrokes("ctrl-q");
+    vtcx.run_until_parked();
+    assert_eq!(hits.get(), 1, "录制中 ctrl-q 不得派发（拦截图必须吃掉它）");
+
+    // ① **快照路径**：推一份「打开了新档案」的快照 ⇒ `ShellState::apply` 把页签
+    //    拽回浏览页（生产里由泵投递，测试不跑泵故自推）。壳层必须在这条路上也
+    //    收掉录制——它是「录制中打开压缩包」那条真实用户路径。
+    let snapshot = snap(None, false, "demo.tar");
+    vtcx.update(|_window, cx| {
+        shell.update(cx, |s, cx| s.update_from_state(cx, &snapshot));
+    });
+    vtcx.run_until_parked();
+    vtcx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    assert_eq!(
+        tab_now(vtcx),
+        crate::ui::contracts::MainTab::Browse,
+        "前置：快照应把页签拽回浏览页（否则本段没测到东西）"
+    );
+    vtcx.simulate_keystrokes("ctrl-q");
+    vtcx.run_until_parked();
+    assert_eq!(
+        hits.get(),
+        2,
+        "快照把页签切走后 ctrl-q 必须恢复派发（`update_from_state` 未收口 = 键盘被吞）"
+    );
+
+    // ② **页签切换路径**：重开设置页（面板复用，仍在「快捷键」子页）→ 再点一次
+    //    同一行芯片进录制 → 显式 `switch_tab` 离开设置页。前置必须先让浏览页签
+    //    **真的存在**（`present_tabs` 里没有 Browse 时 `switch_tab` 会早退，
+    //    那样这段就成了空转——第一段推的快照已把 archive_name 设上）。
+    vtcx.update(|window, cx| {
+        shell.update(cx, |s, cx| {
+            s.dispatch_toolbar(window, cx, crate::ui::contracts::ToolbarAction::Settings)
+        });
+    });
+    click(vtcx, "kc-quit");
+    vtcx.simulate_keystrokes("ctrl-q");
+    vtcx.run_until_parked();
+    assert_eq!(hits.get(), 2, "第二次录制中 ctrl-q 同样不得派发");
+
+    vtcx.update(|_window, cx| {
+        shell.update(cx, |s, cx| {
+            s.switch_tab(cx, crate::ui::contracts::MainTab::Browse)
+        });
+    });
+    vtcx.run_until_parked();
+    assert_eq!(
+        tab_now(vtcx),
+        crate::ui::contracts::MainTab::Browse,
+        "前置：`switch_tab` 必须真的离开了设置页（页签不存在会静默早退）"
+    );
+    vtcx.simulate_keystrokes("ctrl-q");
+    vtcx.run_until_parked();
+    assert_eq!(
+        hits.get(),
+        3,
+        "切走设置页后 ctrl-q 必须恢复派发（订阅没 drop = 键盘被永久吞掉）"
+    );
 }

@@ -6,11 +6,13 @@
 //! - [`checkbox`]：复选框封装（修正 kit 行高写死导致的下降部裁切）
 //! - [`number`]：数值步进控件（设置-常规 ▸ 界面字号）
 //! - [`file_icon`]：文件类型图标（系统图标 + 回退；T-ICON）
+//! - [`key_capture`]：按键录制（App 级拦截器 + 可聚焦**键位芯片**；T-KEYS）
 
 pub mod breadcrumb;
 pub mod checkbox;
 pub mod file_icon;
 pub mod icon;
+pub mod key_capture;
 pub mod number;
 pub mod status;
 

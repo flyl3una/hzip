@@ -54,11 +54,13 @@ pub enum SettingsTab {
     Viewer,
     /// 语言
     Language,
+    /// 快捷键（T-KEYS：14 条动作的查看/改键/禁用/恢复默认）
+    Keys,
 }
 
 impl SettingsTab {
     /// 全部页（顺序 = TabBar 下标）。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::General,
         Self::Assoc,
         Self::ContextMenu,
@@ -66,13 +68,14 @@ impl SettingsTab {
         Self::Compress,
         Self::Viewer,
         Self::Language,
+        Self::Keys,
     ];
 
     /// 页签文案 key（顺序 = [`Self::ALL`]）；渲染处经 `crate::tr` 查表。
     ///
     /// 存 **key** 而非文案：页签在 `TabBar` 里构建，文案在渲染时求值——
     /// 运行时切语言后下一帧即得新语言。
-    pub const LABEL_KEYS: [&'static str; 7] = [
+    pub const LABEL_KEYS: [&'static str; 8] = [
         "tab.general",
         "tab.assoc",
         "tab.context_menu",
@@ -80,9 +83,13 @@ impl SettingsTab {
         "tab.compress",
         "tab.viewer",
         "tab.language",
+        "tab.keys",
     ];
 
     /// TabBar 下标 → 分类（越界回落语言页末位守界——防守白名单漂移）。
+    ///
+    /// 守界项**钉死在 `Language`**（而不是「最后一个变体」）：越界是白名单漂移
+    /// 信号，落到一个与下标无关的稳定页比落到新页更可预期（既有语义，勿改）。
     pub fn from_index(ix: usize) -> Self {
         Self::ALL.get(ix).copied().unwrap_or(Self::Language)
     }
@@ -97,6 +104,7 @@ impl SettingsTab {
             Self::Compress => 4,
             Self::Viewer => 5,
             Self::Language => 6,
+            Self::Keys => 7,
         }
     }
 
@@ -126,6 +134,18 @@ pub enum SettingValue {
     Columns(ColumnsConfig),
     /// 数值（步进控件上行；如界面字号 px）
     Number(u32),
+    /// 快捷键绑定整节（T-KEYS：14 条动作一次上行——录制/禁用/恢复默认都写整份）
+    ///
+    /// 为什么整份而不是「单个动作一项」：配置侧就是 `[keys]` 一个表、keymap
+    /// 装配要的也是整份（见 [`crate::ui::shell::keymap::install`]），逐字段上行
+    /// 只会在两侧各加一层拼装。`Keys` 派生 `PartialEq + Eq`（T-KEYS §2 冻结），
+    /// 故可进本枚举。
+    ///
+    /// **为什么 `Box`**：`Keys` 有 14 个 `String`（≈实参 336 B），内联进本枚
+    /// 举会把 `SettingValue` 撑大 ⇒ `DialogEvent`/`ActionKind` 跟着变大
+    /// （clippy `large_enum_variant`，且每次克隆都要真拷 14 个字符串）。
+    /// 装箱后按值传递只剩一次引用计数，`as_keys()`/`keys_of()` 仍返回 `&Keys`。
+    Keys(Box<hzip_config::Keys>),
 }
 
 impl SettingValue {
@@ -176,6 +196,14 @@ impl SettingValue {
             _ => None,
         }
     }
+
+    /// 快捷键整节取值（非 `Keys` → None；store 侧 `let ... else` 守界）。
+    pub fn as_keys(&self) -> Option<&hzip_config::Keys> {
+        match self {
+            Self::Keys(k) => Some(k.as_ref()),
+            _ => None,
+        }
+    }
 }
 
 /// 控件种类（渲染器按此产出 gpui 元素；`Select` 的 label 序列 = 白名单）。
@@ -214,6 +242,13 @@ pub enum WidgetKind {
     FontSelect,
     /// 列顺序/显隐（[`crate::ui::views::settings_render::columns_section`]）
     ColumnsBlock,
+    /// 快捷键块：14 行动作（查看/录制/禁用/恢复默认；T-KEYS
+    /// [`crate::ui::views::settings_render::keys_section`]）。
+    ///
+    /// 与 [`Self::ColumnsBlock`] 同形：**一项一页块**，行集合来自
+    /// [`crate::ui::shell::keymap::ACTIONS`]（不是本枚举携带，避免 app 层
+    /// 依赖 ui 层的动作清单）。
+    KeysBlock,
 }
 
 impl WidgetKind {
@@ -238,6 +273,7 @@ impl WidgetKind {
                 | (Self::Number { .. }, SettingValue::Number(_))
                 | (Self::FontSelect, SettingValue::Text(_))
                 | (Self::ColumnsBlock, SettingValue::Columns(_))
+                | (Self::KeysBlock, SettingValue::Keys(_))
         )
     }
 }
@@ -912,6 +948,25 @@ pub const REGISTRY: &[SettingDef] = &[
         effect: Effect::Locale,
         commit: Commit::Immediate,
     },
+    // —— 快捷键（T-KEYS）——
+    SettingDef {
+        id: SettingId::Keymap,
+        page: SettingsTab::Keys,
+        label: "setting.keymap.label",
+        help: Some("setting.keymap.help"),
+        widget: WidgetKind::KeysBlock,
+        default: default_keys,
+        load: load_keys,
+        store: store_keys,
+        // 数据面 = 写 `[keys]` + 镜像；**生效半场**是 `App` 级 keymap（全局态，
+        // 快照不携带）⇒ 泵按 `SettingId::Keymap` 取 `settings.keys` 镜像后调
+        // `keymap::install`（同 `theme_replay_of` 口径：取镜像不读盘，避免与
+        // 异步落盘赛跑）。
+        // 声明 `DataOnly` 是准确的：本枚举只声明「除数据面外**本层**还要做什么」，
+        // 重装绑定属 UI 半场（与列设置/开关同款口径）。**不新增 Effect 变体**。
+        effect: Effect::DataOnly,
+        commit: Commit::Immediate,
+    },
 ];
 
 /// 设置项 → REGISTRY 下标（穷举匹配：新增变体漏登记 = 编译错误）。
@@ -950,6 +1005,7 @@ pub const fn index(id: SettingId) -> usize {
         SettingId::ViewStyle => 30,
         SettingId::FileTypeIcons => 31,
         SettingId::Lang => 32,
+        SettingId::Keymap => 33,
     }
 }
 
@@ -989,6 +1045,14 @@ fn default_corner_radius() -> SettingValue {
 }
 fn default_density() -> SettingValue {
     SettingValue::Index(Density::Standard.index())
+}
+/// 快捷键出厂默认 = **全空串**（`Keys::default()`）。
+///
+/// 「空串 = 用内置默认键位」是配置层契约（T-KEYS §2 三态）：默认态不在配置里
+/// 写死那 14 个键位串，而是让 `keymap::ACTIONS` 的 `default_spec` 当唯一事实源
+/// ⇒ 改默认键位只需改一处，且「恢复默认」等于写空配置（没有第二份键位表）。
+fn default_keys() -> SettingValue {
+    SettingValue::Keys(Box::default())
 }
 
 // —— 活读视图 ——
@@ -1117,6 +1181,14 @@ impl SettingsView {
     pub fn columns_of(&self, id: SettingId) -> Option<&ColumnsConfig> {
         match self.value(id) {
             Some(SettingValue::Columns(c)) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// 快捷键项当前值（缺项 → None）。设置页「快捷键」页逐行取值用。
+    pub fn keys_of(&self, id: SettingId) -> Option<&hzip_config::Keys> {
+        match self.value(id) {
+            Some(SettingValue::Keys(k)) => Some(k.as_ref()),
             _ => None,
         }
     }
@@ -1375,6 +1447,14 @@ fn load_level(app: &AppData, cfg: &Config) -> SettingValue {
 }
 fn load_columns(app: &AppData, _cfg: &Config) -> SettingValue {
     SettingValue::Columns(app.settings.columns.clone())
+}
+/// 快捷键活读：读 **AppData 镜像**而不是 `cfg.keys`（与其余 ui.* 项同口径）。
+///
+/// 镜像就是「本进程当前生效的那一份」：`store` 已就地更新它，而落盘是异步的
+/// （`persist` → `save_async`）——面板每帧回读镜像，于是「刚录完的键位」与
+/// 「界面显示」永远同拍，不必与后台写线程赛跑。
+fn load_keys(app: &AppData, _cfg: &Config) -> SettingValue {
+    SettingValue::Keys(Box::new(app.settings.keys.clone()))
 }
 fn load_folder_size(app: &AppData, _cfg: &Config) -> SettingValue {
     SettingValue::Bool(app.settings.show_folder_size)
@@ -1690,6 +1770,21 @@ fn store_columns(cfg: &mut Config, app: &mut AppData, v: &SettingValue) {
     let Some(cols) = v.as_columns() else { return };
     cfg.ui.columns = columns_to_pod(cols);
     app.settings.columns = cols.clone();
+}
+
+/// 快捷键整节落库（T-KEYS）：**双写** `[keys]` 与 AppData 镜像。
+///
+/// 本层不做键位校验/归一（`None`/空串/非法串全部原样存下）：
+/// - 三态语义（`""` 默认 / `"none"` 禁用 / 其它 = 键位串）的判读在
+///   [`crate::ui::shell::keymap::binding_of`]，非法串由装配时回落默认 + `warn!`
+///   ——配置层不悄悄改写用户写下的值（手改错的值要留在盘上，用户才看得出错在
+///   哪；若这里悄悄改成默认，用户会以为自己写的东西被程序吃了）；
+/// - 录制路径上行前已由 UI 半场做过 `Keystroke::parse` 校验 + 冲突检测
+///   （`spec_from_keystroke` / `conflict_with`），故此处只做搬运。
+fn store_keys(cfg: &mut Config, app: &mut AppData, v: &SettingValue) {
+    let Some(keys) = v.as_keys() else { return };
+    cfg.keys = keys.clone();
+    app.settings.keys = keys.clone();
 }
 
 #[cfg(test)]

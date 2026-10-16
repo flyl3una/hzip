@@ -6,6 +6,7 @@
 //! |---|---|
 //! | [`mod`]（本文件） | AppShell（chrome 装配渲染）+ ShellState |
 //! | [`dispatch`] | dispatch_toolbar + submit_extract_locked（业务分发） |
+//! | [`keymap`] | 14 条可配置键位（`[keys]` 配置 ↔ gpui keymap 的唯一事实源） |
 //! | [`runtime`] | run_ui + 泵循环 + LaunchIntent/args（启动序列） |
 //! | [`prompt`] | open_prompt_dialog + answer_prompt（请求-应答） |
 //!
@@ -25,6 +26,7 @@ mod clipboard_ops;
 pub(crate) mod dispatch;
 mod errors;
 mod file_ops;
+pub(crate) mod keymap;
 mod open_flow;
 mod prompt;
 mod render;
@@ -68,3 +70,10 @@ pub(crate) use session::{
 #[cfg(test)]
 #[path = "tests/mod_rs.rs"]
 mod tests;
+
+// 键位表用例（T-KEYS）：三态语义 + 「与 kit 共用一个 keymap」的 install 纪律。
+// 与 `tests/mod_rs.rs` 分开挂：本模块的断言面是纯函数 + 真实 `cx.key_bindings()`，
+// 不涉及 AppShell 渲染，合进 mod_rs 只会让那个文件继续膨胀。
+#[cfg(test)]
+#[path = "tests/keymap.rs"]
+mod keymap_tests;

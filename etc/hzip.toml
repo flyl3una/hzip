@@ -95,3 +95,28 @@ dir = ""                  # 日志目录。**留空 = 系统默认**（Windows %
                           # （Windows %APPDATA%\hzip\config.toml）——机器上已有该文件时，
                           # 改这里无效。改日志目录请改那份，或用 GUI「常规 → 日志目录」。
 format = "detailed"       # plain / detailed（detailed = 带源文件名+代码行+target）
+
+[keys]
+# 键盘快捷键（T-KEYS；也可在「设置 ▸ 快捷键」页签里按物理按键直接录制）。
+# 每个动作三态（每行都可解注释后改动）：
+#   整行注释掉 / ""  = 用内置默认键位（= 每行后面注释里写的那条）
+#   "none"           = 禁用该动作：不注册任何键盘绑定；菜单项仍可点击执行，
+#                      只是不再有快捷键、菜单也不再显示快捷键提示
+#   其它             = ASCII 键位串（如 ctrl-shift-n）；解析失败回落默认并告警
+# 键位串口径：修饰键 ctrl- / alt- / shift- 前缀 + 一个键名（a-z、0-9、f1-f12、
+# comma/period/slash/delete/escape 等）；本模板统一用 ctrl-* 口径（跨平台一份）。
+# 只影响键盘快捷键；工具栏/菜单/右键菜单里的同一动作不受影响。
+#open = "ctrl-o"              # 打开档案
+#extract = "ctrl-e"           # 解压
+#new_window = "ctrl-shift-n"  # 新建窗口
+#select_all = "ctrl-a"        # 全选（作用于当前可见行）
+#select_invert = "ctrl-i"     # 反选（作用于当前可见行）
+#copy = "ctrl-c"              # 复制
+#paste = "ctrl-v"             # 粘贴
+#find = "ctrl-f"              # 查找
+#test_integrity = "ctrl-t"    # 测试完整性
+#settings = "ctrl-,"          # 打开设置
+#show_jobs = "ctrl-j"         # 任务中心
+#refresh = "f5"               # 刷新
+#delete = "delete"            # 删除
+#quit = "ctrl-q"              # 退出

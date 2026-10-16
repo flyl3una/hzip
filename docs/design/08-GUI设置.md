@@ -6,7 +6,7 @@
 | 适用范围 | `crates/hzip-gui` 设置面板 + 全部设置项消费点；`crates/hzip-config` 落盘键 |
 | 上游文档 | [02-程序详细设计.md](02-程序详细设计.md) §11、[06-GUI-gpui-kit界面设计.md](06-GUI-gpui-kit界面设计.md) §4（UI 原型）、[07-GUI代码组织与分层约定.md](07-GUI代码组织与分层约定.md)、[T-SET 任务书](../tasks/T-SET/README.md) |
 | 读者 | 需要新增设置项、或排查「改了没反应」的开发者 |
-| 结论摘要 | 设置项的**编辑与落盘链路全通**（25/25）；**生效链路 16/24**（修复轮把「显示 .. 跳上级」「列顺序与显隐」「界面语言」接上，见 §7.1/§7.4/§5.7）。仍不可用的 8 项是**消费者缺失**（压缩页 4 项待 R-GUI3、双击行为与查看器 2 项待预览接线、自动更新待 T43）。**界面语言已升级为全量 i18n**：8 个文案表 / 约 320 key × 2 语言，覆盖框架外壳到对话框（§5.7） |
+| 结论摘要 | 设置项的**编辑与落盘链路全通**（26/26）；**生效链路 18/26**（修复轮把「显示 .. 跳上级」「列顺序与显隐」「界面语言」接上，见 §7.1/§7.4/§5.7；T-KEYS 新增的「快捷键」页已接通 UI 半场，见 §5.8）。仍不可用的 8 项是**消费者缺失**（压缩页 4 项待 R-GUI3、双击行为与查看器 2 项待预览接线、自动更新待 T43）。**界面语言已升级为全量 i18n**：8 个文案表 / 约 320 key × 2 语言，覆盖框架外壳到对话框（§5.7） |
 
 > **本文只描述事实与现状**。§5 逐项给出「设置逻辑 + 生效逻辑」，§6 是核查矩阵，
 > §7 是缺陷清单。修改设置相关代码前先读 §9「扩展指引」。
@@ -21,7 +21,8 @@
 
 覆盖范围：
 
-- **在范围内**：设置面板 7 页共 24 个设置项 + 7 个动作按钮（3 个页级：检查更新、
+- **在范围内**：设置面板 8 页（第 8 页 = T-KEYS 新增的「快捷键」页，见 §5.8）共 24 个设置项
+  + 7 个动作按钮（3 个页级：检查更新、
   应用关联、解除关联；4 个行级：图像查看器/编辑器的 浏览… 与 恢复系统默认）
   + 页脚「恢复默认/关闭」+ 主窗口对设置的消费。
 - **不在范围内**：`[security]`/`[logging]`/`[preview]`/`[extract].delete_after`/
@@ -39,7 +40,8 @@
 │   SettingDef      注册表行：{ id, page, label, desc, widget,             │
 │                              default(), load(), store(), effect }        │
 │   WidgetKind      控件种类：Switch / Select / CheckGroup / ExtGroup /     │
-│                              Text / ColumnsBlock                        │
+│                              Text / Color / Number / FontSelect /        │
+│                              ColumnsBlock / KeysBlock                    │
 │   SettingValue    取值类型：Bool / Index / Text / StrSet / Columns        │
 │   Effect          生效半场声明：DataOnly / Theme / Columns / Deferred /   │
 │                              BackgroundAssoc                            │
@@ -871,7 +873,7 @@ toolbar/argv 解压意图 → submit_extract_locked
      `run_ui` 的异步闭包里，测试不可达；抽出后 §5.7 的回归锚点可直接驱动。）
 - **时机**：A 即时。**现状：✅ 全链路已接线且逐段有锚点**（落库 → 落盘 → 信号 → 泵应用）。
 - **覆盖范围（全量界面文案，2026-09 起）**：`Lang` 影响**全部用户可见文案**——
-  界面框架（菜单/工具栏/页签/状态栏/标题栏）、设置面板（7 页签 + 24 项 label/desc
+  界面框架（菜单/工具栏/页签/状态栏/标题栏）、设置面板（8 页签 + 24 项 label/desc
   + 动作按钮）、下拉候选（主题/级别/冲突/编码/格式/语言）、对话框与请求-应答弹窗、
   任务中心与进度窗口、浏览页列头与空态、系统通知与文件选择器，以及原有的错误原因文案。
   文案表见 `crates/hzip-gui/locales/*.toml`（8 个文件，约 320 key × 2 语言）。
@@ -914,7 +916,104 @@ toolbar/argv 解压意图 → submit_extract_locked
   - 重建语义：`progress::tests::lang_switch_rebuilds_live_output_text`
     （`relocalize` 退化为增量 `apply` 即失败）。
 
-### 5.8 页外动作按钮与页脚
+### 5.8 快捷键页（`SettingsTab::Keys`）
+
+> 本页与其余页的形状不同：它不是「一行一个设置项」，而是**整页一项**——`SettingId::Keymap`
+> 持整份 `hzip_config::Keys`（14 条动作的键位原文），页内 14 行由 `keymap::ACTIONS` 渲染。
+> 页签下标 7（`SettingsTab::ALL` / `LABEL_KEYS` 由 7 项扩到 8 项，文案 `tab.keys`；
+> 越界回落仍然钉在 `Language`，守界语义不变）。
+
+#### 28) 快捷键 · `Keymap`（`settings_registry.rs:953`）
+
+- **设置逻辑**：`WidgetKind::KeysBlock`（渲染分派 → `ui/views/settings_render.rs:1141 keys_section`，
+  录制宿主 `KeysCtx`（`:1016`）、写值 `keys_event`（`:1054`）/ `with_field`（`:1065`）与面板同源），
+  取值 `SettingValue::Keys(hzip_config::Keys)`；`store_keys`（`:1784`）双写 `[keys]` 与镜像
+  `SettingsPrefs.keys`；默认 `default_keys`（`:1054`）= `Keys::default()`（全空串 = 全部用内置键位）。
+  每行按 `keys.field(config_key)` 取原文再判三态（`viewmodel/setting_id.rs` 的 `SettingId::Keymap`，
+  `key()` = `set-keymap`）。
+- **版式（2026-10-15 用户口径改版；2026-10-16 二轮收窄）**：本页**自绘、没有左侧 label 列**
+  （`keys_section` 不交给通用行 `row()`，标题进页头）+ 页头（**标题 + 紧贴其右的 ？ 帮助钮** `khelp`（tooltip = `setting.keymap.help`）为一组，`flex_1` 占位撑开后
+  把「全部恢复默认」`keymap.reset_all` 推到最右；用户口径 2026-10-16：「？ 应该在快捷键词条右侧，而不是
+  全部恢复默认按钮的左侧」）
+  + 每行**一行**（`h_flex`：名称 `flex_1` 靠左 → 尾部三件套成组靠右，组内 `gap(px(1.))`：键位芯片 →
+  ↻ 还原 `krestore-<config_key>` → ✕ 删除绑定 `kremove-<config_key>`）。**两枚图标钮用 gpui-kit `Button`
+  的默认变体 + `with_size(component_size())`**（与设置页其它按钮同档同 hover；不加 `.ghost()`——ghost 的
+  hover 是主题色，而其它按钮是浅灰；icon-only 由 `.icon()` 承担）——用户口径 2026-10-16。+ 行下冲突红字（仅被拒那一行）。
+  **块宽封顶 + 两侧留白（2026-10-16 用户口径）**：块外层 `.max_w(rems(37.5))`（标准档 ≈600px，随界面
+  字号缩放）+ `.ml_auto().mr_auto()`（块在内容列里**居中**）+ `.px(sp(3.))`（标准档 12px）。两个关键点：① 该块**不再包在 `form_field()` 里**——
+  `Form::horizontal` 的标签列即使 `has_label` 为假也占一列宽，实测把整块右推 ≈170px（表现为「整块偏右、
+  名称与右侧键位之间一大片空白」）；② 宽度封顶（≈600px）后行尾不再被顶到内容列最右，且两侧余量均分 ⇒ 整块居中（用户口径 2026-10-16 三轮：「320px 太窄，600px 左右」）。
+  **逐项 ↻ 还原**：写空串（回落内置默认）而不是写回默认键位串——空串才是「默认」的唯一表示。
+- **三态显示**：默认（`""` → 显示内置键位）/ 自定义（其余串，用 `keymap::display_spec` 渲染——
+  macOS 出 `^⌥⌘⇧` 字形，Windows 上单字符键保持可读）/ 未绑定（`"none"` → 显示
+  `keymap.state.unbound`，**取代旧的 `keymap.state.disabled` 与「已禁用」措辞**）。录制中还没
+  按键时芯片显示 `keymap.recording`；录制中的预览由芯片的预览块
+  （`kc-pending-<config_key>`）承担，**不覆盖当前有效键位**。**配置里永远只存 ASCII 规范串**，
+  字形只用于看。行内**没有**「录制」「禁用」「恢复本项默认」文本按钮——三项分别由
+  「点键位芯片」「行尾 ✕」「页头全部恢复默认（或重新录制）」承担。
+- **按钮上行契约**：行尾 ✕ 与页头「全部恢复默认」**一律只发**
+  `DialogEvent::SettingChanged { id: SettingId::Keymap, value: SettingValue::Keys(整份更新后的 Keys) }`
+  ——即「改值」而非新事件，`ACTIONS` 不为它们加 `ActionDef`（§5.9 动作按钮表因此不含它们）。
+  ✕ 的载荷是 `with_field(keys, config_key, KEYS_DISABLED)`（哨兵 `"none"` = 删除该动作的绑定），
+  页头是整份 `Keys::default()`（语义与整页 `SettingsReset` 相同，含已删绑定的项一并复原）。
+- **录制交互（冻结 2026-10-15 版）**：点**键位芯片** = `Window::focus` 该行焦点句柄 + 挂
+  `App::intercept_keystrokes` 拦截器（在**所有** keymap 动作分发之前触发，回调内先
+  `cx.stop_propagation()`）⇒ 录 `ctrl-q` 不会顺手退出程序。**录制中不写配置**：按键只进面板的
+  `pending` 作实时预览，写值挪到**失焦提交**。
+
+| 交互 | 结果 |
+|---|---|
+| 录制中按 `Esc` | 取消录制（丢弃 pending、不写配置） |
+| 录制中按 `Delete` / `Backspace` | **照常录成绑定**（旧「Delete = 禁用」契约作废；删绑定只走 ✕） |
+| 纯修饰键（`Ctrl`/`Alt`/`Shift`…） | 忽略，保持录制继续等（Windows 上它们根本不产生 keystroke） |
+| **焦点离开芯片**（`Context::on_blur` → `commit_recording`） | 有 pending → 冲突检测 → 整份 `Keys` 上行；**无 pending → 只收口不写配置**（等于取消） |
+| 点同一/另一行芯片 | 先把上一行**提交**（不是丢弃）再起新录制；失焦与它只有一方能过守卫 ⇒ 同一行不会被提交两遍 |
+| 与别的动作**冲突**（`keymap::conflict_with`，只比有效键位、排除自身） | **不写配置、不发事件**：红字 `keymap.conflict` **指名占用者**（`{action}`），挂在**被拒的那一行**下面（`kconflict-<config_key>`，行位置靠 `KeysCtx::conflict_on`——冲突在失焦提交那刻才发现，此时录制态已收口） |
+| 真实鼠标点别的可聚焦元素（设置内页签 / ✕ / 开关） | 焦点先被接走 ⇒ 表现为「**先提交、再收口**」（不重复写、也不丢这一次改动） |
+
+- **订阅必须与录制态同生共死**（本页最重的缺陷面）：`Esc`、失焦提交、换一行重录、切设置内页签、
+  面板重载（`SettingsPanel::reload`）、关面板（订阅随实体 drop）都汇到 `SettingsPanel::stop_recording`
+  （`settings_layout.rs:417`，与「提交」出口 `commit_recording`（`:439`）分工见该函数文档），
+  壳层离开设置页的收口是 `AppShell::cancel_recording_if_left_settings`
+  （`shell/app_shell.rs:206` → `settings_layout::cancel_key_recording_if_open`（`settings_layout.rs:87`），
+  覆盖「切页签」与「快照把页签切走（打开新档案 → 聚焦浏览页）」两条路）。漏 drop = 键盘被永久吞掉。
+- **焦点悬空自愈（2026-10-15 实测缺陷）**：芯片是 `track_focus` 元素，点它录制后若**切走主页签**，
+  面板不再渲染而 gpui 不清焦点 ⇒ 焦点悬空在不可见节点上，所有走 `Main` context 的快捷键**静默
+  失效**。壳层渲染帧因此多一条：`window.focused(cx)` 命中面板芯片句柄
+  （`settings_layout::owns_key_focus`（`settings_layout.rs:104`））且当前页签不是设置页 → 把焦点
+  收回壳层（`ui/shell/render.rs:40`）；既有那条自补逻辑只在「完全没有焦点」时生效，管不到这种。
+- **生效逻辑**：`Effect::DataOnly`（数据面 = 写 `[keys]` + 镜像；本层不额外动作）+
+  **UI 半场按 `SettingId::Keymap` 挂钩**：泵批次 `batch_requested(&batch, SettingId::Keymap)` →
+  取 `settings.keys` **镜像**（**不**读盘：与 `theme_replay_of` 同口径，避免与异步落盘赛跑、
+  也避免测试进程读到开发机真实 `config.toml`）→ `ui::shell::keymap::install(cx, &keys)` →
+  `cx.refresh_windows()`（菜单快捷键提示由 kit 反查 keymap，必须重渲才跟随）。启动装配走**同一个**
+  `install`（替换原先内联在 `runtime.rs` 的 14 条 `KeyBinding::new`）。`install` **幂等**，且只换
+  本模块 14 条绑定——`App::clear_key_bindings()` 是 App 级，kit 的 input/list/dialog/菜单绑定必须
+  原样留下（裸清空会打残整台应用的键盘交互）。
+- **时机**：A 即时（下一次泵批 ≤100 ms；`cfg!(test)` 下不落盘，但镜像与 keymap 重装照跑）。
+- **回归锚点**：
+  - 三态与装配：`ui::shell::keymap_tests::{binding_of_maps_the_three_states,
+    effective_spec_covers_default_disabled_custom_and_garbage, installed_bindings_skip_disabled_actions,
+    install_is_idempotent_and_keeps_foreign_bindings, conflict_with_reports_the_occupant_only}`；
+  - 注册表/镜像：`app::settings_registry::tests::{registry_index_is_unique_and_complete,
+    store_keys_dual_writes_config_and_mirror}`、`app::state::tests::reset_restores_defaults`
+    （整页复位覆盖 `[keys]`：含已删除绑定的项一并回默认键位）；
+  - 录制与页内交互：`ui::widgets::key_capture::tests::{recording_swallows_the_bound_action_and_delivers_the_keystroke,
+    dropping_the_subscription_restores_action_dispatch, click_anchor_fires_the_callback_and_registers_the_focus,
+    pending_preview_is_rendered_while_recording, pending_is_ignored_when_not_recording,
+    unbound_state_is_visible_in_the_rendered_tree, bound_state_has_no_unbound_layer}`、
+    `ui::views::settings_layout::tests::{keys_recording_previews_then_commits_on_blur,
+    keys_commit_without_pending_is_a_noop, keys_conflict_on_commit_is_refused_with_occupant,
+    keys_delete_is_recorded_as_binding, keys_remove_button_writes_none, keys_reset_all_restores_defaults,
+    keys_escape_releases_keyboard, keys_stop_recording_discards_pending,
+    keys_clicking_elsewhere_commits_before_release}`、
+    `ui::views::settings_render::tests::{keys_block_is_single_line_per_action, keys_block_marks_unbound_rows,
+    keys_block_previews_pending_on_the_recording_row, keys_block_writes_none_and_reset_all,
+    keys_block_shows_conflict_on_the_rejected_row}`。
+  - 端到端：`ui::shell::tests::{rebind_select_all_takes_effect_end_to_end,
+    leaving_settings_tab_releases_key_recording}`。
+
+### 5.9 页外动作按钮与页脚
 
 #### 行内垂直对齐契约（行带 `ROW_BAND`，2026-09-20）
 
@@ -984,7 +1083,7 @@ nudge 是**同页统一常量**（不按标签逐个算字面）：同排复选�
 把常量改错即失败（实测：置 0 → 报「字面中心应为 +1.87px」）。
 `indicator_centers_with_label` 另证「`items_center` 真的覆盖了组件写死的 `items_start`」。
 
-**回归锚点**：`settings_layout::tests::row_first_line_alignment_is_uniform`——遍历七页
+**回归锚点**：`settings_layout::tests::row_first_line_alignment_is_uniform`——遍历八页
 × 注册表全部行（+ 动作行 + 状态行），用**渲染后的真实边界**断言上述 1–4，容差 0.5px；
 新增设置项自动纳入。改坏任一处（例如某行漏 `band()`）该用例即失败（实测：撤掉
 Switch 行的 `band()` → 报「控件中心比标签中心偏 −5.75px」）。
@@ -1030,10 +1129,12 @@ Switch 行的 `band()` → 报「控件中心比标签中心偏 −5.75px」）�
 | 23 | 列顺序与显隐 | 查看器 | `[ui].columns` | DataOnly | A | ✅ 修复轮修（快照唯一来源，冷启动回放） |
 | 24 | 显示任务中心 | 查看器 | `[ui].show_jobs` | DataOnly | A | ✅ 新增（默认关：只有浏览页、无页签栏） |
 | 25 | 界面语言 | 语言 | `[ui].lang` | Locale | A | ✅ 修复轮修（切换链路通；i18n 覆盖仅错误文案） |
+| 26 | 快捷键（整节 14 条动作） | 快捷键 | `[keys]` | DataOnly（UI 半场按 `SettingId::Keymap` 挂钩） | A | ✅ 新增（T-KEYS；三态 + 点芯片录制/失焦提交/✕ 删除绑定/冲突拒绝/全部恢复默认，见 §5.8） |
 
-**统计（25 项，T-SET 修复轮后 + 2026-09-20 增量）**：✅ 17 项 · ❌ 7 项 · ⛔ 1 项。
+**统计（26 项，T-SET 修复轮后 + 2026-09-20 增量 + T-KEYS）**：✅ 18 项 · ❌ 7 项 · ⛔ 1 项。
 可用 =「解压设置页 8 项 + 文件关联页 3 项 + 常规页『主题』『显示 .. 跳上级』
-+ 查看器页『目录行显示大小』『列顺序与显隐』『显示任务中心』+ 语言页『界面语言（限错误文案）』」；
++ 查看器页『目录行显示大小』『列顺序与显隐』『显示任务中心』+ 语言页『界面语言（限错误文案）』
++ 快捷键页『整节 14 条动作』」；
 不可用 =「常规页『自动更新』（T43）、上下文菜单页『双击档案条目』、
 压缩设置页 4 项（R-GUI3）、查看器页 2 项（图像查看器、编辑器）」。
 
@@ -1234,4 +1335,8 @@ Switch 行的 `band()` → 报「控件中心比标签中心偏 −5.75px」）�
 | 进度窗关窗判定 | `ui/views/progress/mod.rs` `is_close_on_terminal`（勾选「完成后退出」时 Done/Cancelled 排定延迟关窗，`dispatch_rows` 调用）/ 到点执行 `tick_pending_closes`（`runtime.rs` 泵每 tick 兜底驱动） |
 | 语言运行时切换 | `ui/shell/runtime.rs:432`（`init_locale` + `relocalize`）/ `ui/views/progress/mod.rs` `relocalize` / `:272` `ProgressWindow::relocalize` |
 | 主题应用 | `ui/theme.rs:196` `apply_theme` / `:277-330` `ThemeModeChoice` |
+| 快捷键键位表（三态 / 装配 / 冲突检测） | `ui/shell/keymap.rs`（`ACTIONS` / `binding_of` / `effective_spec` / `install` / `conflict_with`）；配置面 `hzip-config` `Keys`（`field` / `field_mut`） |
+| 按键录制（拦截器 + 键位芯片 + 失焦提交） | `ui/widgets/key_capture.rs` `capture_keystrokes` / `key_capture_chip` / `KeyChipState`；面板侧状态机 `ui/views/settings_layout.rs:417` `stop_recording`（收口丢弃）/ `:439` `commit_recording`（失焦提交）；壳层离开设置页收口 `ui/shell/app_shell.rs:206` `cancel_recording_if_left_settings` → `settings_layout.rs:87` `cancel_key_recording_if_open` |
+| 焦点悬空自愈（切走主页签后快捷键静默失效） | `ui/shell/render.rs:40`（渲染帧发现 `window.focused(cx)` 命中面板芯片句柄且当前页签不是设置页 → 焦点收回壳层）；判据 `ui/views/settings_layout.rs:104` `owns_key_focus` |
+| 快捷键页渲染（14 条动作单行 + 页头复位 + 行尾 ✕） | `ui/views/settings_render.rs:1141` `keys_section`（录制宿主 `KeysCtx` `:1016`、写值 `keys_event` `:1054` / `with_field` `:1065`）；注册表行 `app/settings_registry.rs:953`（`SettingId::Keymap`） |
 | 文件关联写注册表 | `ui/shell/dispatch.rs:163-201`（后台线程 + HKCU） |

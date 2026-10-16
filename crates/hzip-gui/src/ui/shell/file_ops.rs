@@ -214,16 +214,9 @@ impl AppShell {
             BrowseCommand::Copy => self.copy_selection(window, cx),
             BrowseCommand::Paste => self.paste_files(window, cx),
             BrowseCommand::SelectAll => {
-                // 与 SelectAll Action 同源（VM 过滤后可见条目）；补发回投
-                // 信号——选择集变化必须确定性刷新快照（行高亮/状态栏统计）
-                if let Some(data) = self.data.as_ref()
-                    && let Ok(mut d) = data.lock()
-                {
-                    d.main.select_all(false);
-                }
-                if let Some(tx) = self.signal_tx.as_ref() {
-                    let _ = tx.try_send(crate::viewmodel::VmSignal::EntriesChanged);
-                }
+                // T-SEL2：与 Ctrl+A 快捷键**同一方法**（可见行全选 + 回投信号）
+                // ——旧实现两入口一处发信号一处不发，行为长期不一致。
+                let _ = self.select_all_visible(cx);
             }
         }
     }

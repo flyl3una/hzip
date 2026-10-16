@@ -589,6 +589,9 @@ fn reset_dispatches_font_and_density_effects() {
         SettingId::CornerRadius,
         SettingId::Density,
         SettingId::FileTypeIcons,
+        // T-KEYS：keymap 是 `App` 级全局态（快照不携带）——不补发信号则
+        // 「配置复位了、按下仍是旧快捷键」。
+        SettingId::Keymap,
     ] {
         assert!(
             got.contains(&want),
@@ -647,6 +650,16 @@ where
 }
 fn text(v: &str) -> settings_registry::SettingValue {
     settings_registry::SettingValue::Text(v.to_string())
+}
+fn keys(v: hzip_config::Keys) -> settings_registry::SettingValue {
+    settings_registry::SettingValue::Keys(Box::new(v))
+}
+/// 非默认 `Keys`：自定义键位（`f2`）+ `"none"` 禁用哨兵（三态里的两种都必须能复位）。
+fn keys_sample() -> hzip_config::Keys {
+    let mut k = hzip_config::Keys::default();
+    *k.field_mut("select_all").expect("select_all 是契约键名") = "f2".into();
+    *k.field_mut("quit").expect("quit 是契约键名") = "none".into();
+    k
 }
 fn changed(id: SettingId, value: settings_registry::SettingValue) -> DialogEvent {
     DialogEvent::SettingChanged { id, value }
@@ -1003,8 +1016,22 @@ fn reset_restores_defaults() {
     assert!(data.consume_dialog_event(&changed(SettingId::Format, ix(4))));
     assert!(data.consume_dialog_event(&changed(SettingId::Level, ix(5))));
     assert!(data.consume_dialog_event(&changed(SettingId::Assoc, set(["zip"]))));
+    // 快捷键（T-KEYS）：先摆一个自定义键位 + 一个「禁用」哨兵，恢复默认后
+    // 整节必须回到全空（= 全部动作走内置默认键位）——`[keys]` 的复位链是
+    // 「REGISTRY 全默认」自动覆盖的，本断言把它钉住，防有人把 Keymap 行漏登记。
+    assert!(data.consume_dialog_event(&changed(SettingId::Keymap, keys(keys_sample()))));
+    assert_eq!(
+        data.settings.keys,
+        keys_sample(),
+        "改动先落地（否则下面断言空转）"
+    );
     assert!(data.consume_dialog_event(&DialogEvent::SettingsReset));
     assert_eq!(data.settings, SettingsPrefs::default());
+    assert_eq!(
+        data.settings.keys,
+        hzip_config::Keys::default(),
+        "整页恢复默认必须复位快捷键（含禁用项 → 回默认键位）"
+    );
 }
 
 // load_settings：从 hzip-config 恢复（含未知值回落；格式/级别读 [defaults] 权威键）
@@ -1015,12 +1042,22 @@ fn load_settings_maps_config_values() {
     config.ui.lang = "en".into();
     config.defaults.format = "7z".into();
     config.defaults.level = "ultra".into();
+    // 快捷键（T-KEYS）：`[keys]` 整节原样进镜像（本层不校验键位串——非法串
+    // 由 `ui::shell::keymap` 装配时回落默认并 warn）
+    config.keys.select_all = "f2".into();
+    config.keys.quit = "none".into();
     let mut data = app();
     data.load_settings(&config);
     assert_eq!(data.settings.theme_ix, 2);
     assert_eq!(data.settings.lang_ix, 2);
     assert_eq!(data.settings.format_ix, 1);
     assert_eq!(data.settings.level_ix, 5);
+    assert_eq!(data.settings.keys, config.keys, "[keys] 整节入镜像");
+    assert_eq!(
+        data.settings.keys.field("select_all"),
+        Some("f2"),
+        "自定义键位原样搬入"
+    );
 
     // 未知值回落默认
     config.ui.theme = "sepia".into();

@@ -38,12 +38,17 @@ use gpui_kit::component::searchable_list::SearchableVec;
 use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, IntoElement, Styled, WeakEntity, Window, div};
+use gpui_kit::{
+    App, Entity, IntoElement, Keystroke, SharedString, Styled, Subscription, WeakEntity, Window,
+    div,
+};
 
 use crate::app::settings_registry::{self, SettingValue, SettingsTab, SettingsView, WidgetKind};
 use crate::ui::contracts::DialogEvent;
 use crate::ui::shell::AppDataHandle;
+use crate::ui::shell::keymap::{self, KeyActionDef, KeyActionId};
 use crate::ui::views::settings_render::{self, PageCtx, SelectEntity};
+use crate::ui::widgets::key_capture::capture_keystrokes;
 use crate::viewmodel::SettingId;
 
 thread_local! {
@@ -70,6 +75,39 @@ pub fn reload_open_panel(cx: &mut App) {
             let _ = weak.update(cx, |panel, cx| panel.reload(cx));
         }
     });
+}
+
+/// 收掉设置面板里**可能存在**的按键录制（离开设置页时由壳层调用）。
+///
+/// 为什么需要这个入口：录制态挂的是 `App::intercept_keystrokes`——App 级副作用，
+/// **不会**因为面板不再渲染而自行消失。主页签切走后面板实体仍活着（只是不画），
+/// 订阅若不由壳层收口，用户切到浏览页会发现键盘全失灵（按什么都被吞掉），
+/// 直到切回设置页。设置面板自己的收口点（`reload` / 设置内部页签切换）覆盖不到
+/// 「主页签切换」这一层，故由 [`SettingsPanel::stop_recording`] 暴露给壳层。
+pub fn cancel_key_recording_if_open(cx: &mut App) {
+    OPEN_PANEL.with(|slot| {
+        let weak = slot.borrow().clone();
+        if let Some(weak) = weak {
+            let _ = weak.update(cx, |panel, _cx| panel.stop_recording());
+        }
+    });
+}
+
+/// 该焦点句柄是否属于**设置面板的键位芯片**（壳层判断「焦点悬空」用）。
+///
+/// 为什么需要：芯片是 `track_focus` 的可聚焦元素；用户点它进入录制后若**切走主页签**
+/// （面板不再渲染、实体仍活着），gpui **不会**自动清掉窗口焦点 ⇒ 按键的派发路径从
+/// 「不在本帧里的节点」出发，所有走 `Main` context 的快捷键**静默失效**（实测：
+/// `simulate_keystrokes("ctrl-q")` 不再命中任何绑定，界面看起来「按什么都没反应」）。
+/// 壳层渲染帧据此把焦点收回到自己身上——它既有那条自补逻辑只在「完全没有焦点」时
+/// 生效（`window.focused(cx).is_none()`），管不到这种「有焦点但悬空」。
+pub fn owns_key_focus(cx: &App, handle: &gpui_kit::FocusHandle) -> bool {
+    OPEN_PANEL.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .is_some_and(|panel| panel.read(cx).key_focus.iter().any(|(_, h)| h == handle))
+    })
 }
 
 /// 设置面板（Modal 容器 + Tabs 状态机；`tab` 选中态内持不外发）。
@@ -101,6 +139,48 @@ pub struct SettingsPanel {
     /// 系统实况缓存（打开期查一次；仅「上下文菜单」页停留时交互重查——
     /// T-PERF 走查 #2：见 [`read_view`] 文档）
     ctx_status: Option<crate::app::state::CtxMenuStatus>,
+    /// **录制态**：`Some((正在录制的动作, 录制订阅))`。
+    ///
+    /// 两个成员必须**同生共死**（`widgets::key_capture` 的生命周期契约）：
+    /// 订阅活着 = 全窗口按键都被它吃掉，所以退出录制（Esc / 失焦提交 / 切页签 /
+    /// reload / 换一行 / 面板关闭）必须 drop 它，否则键盘永久失灵；反过来
+    /// 「录制态在、订阅不在」则是芯片亮着而按什么都没反应。
+    recording: Option<(KeyActionId, Subscription)>,
+    /// 录制中已按下的组合（**实时预览**；`None` = 还没按）。
+    ///
+    /// 录制期间**不写配置**（2026-10-15 改版）：值先放这里，等**失焦提交**
+    /// （[`Self::commit_recording`]）或换行提交时才整份上行。这一条把「按一下就
+    /// 落库」变成「按一下只是预览」，用户因此可以先看结果再决定（移开焦点即生效）。
+    pending: Option<String>,
+    /// 每行动作一个焦点句柄（`new_entity` 装配期建，渲染层把它交给芯片
+    /// `track_focus`，点击时 `Window::focus` 它）。
+    ///
+    /// 为什么每行各建一个：失焦判据是「焦点从**这一行的句柄**移走」
+    /// （`Context::on_blur` 比的是句柄 id），共用一个句柄就分不清是哪一行。
+    ///
+    /// 装进 `Rc` 是为了让渲染帧只做一次引用计数克隆（帧内按 id 查表的那层
+    /// 闭包建在渲染里，与 `PageCtx::refresh` 同一取舍）；句柄本身也因此活到
+    /// 面板释放，不会因为没人读而在中途失效。
+    key_focus: Rc<Vec<(KeyActionId, gpui_kit::FocusHandle)>>,
+    /// 每行动作的失焦监听，`Context::on_blur(&handle, …)` → [`Self::commit_recording`]。
+    ///
+    /// 订阅只增不减（面板生命周期内一直有效）：真正决定「提交谁」的是
+    /// `commit_recording` 的守卫（录制中的行对不上就返回）。字段名带下划线是
+    /// 因为除了「活着」它没有别的用途——drop 它才需要理由，不是读它。
+    _key_blur: Vec<Subscription>,
+    /// 冲突红字所属的行（[`settings_render::KeysCtx::conflict_on`] 的来源）。
+    ///
+    /// 冲突在**失焦提交**时才发现，那一刻录制态已经收口 ⇒ 光记占用者
+    /// （[`Self::conflict`]）已经不知道红字该挂哪一行，故单独留一个行标识。
+    conflict_on: Option<KeyActionId>,
+    /// 上一次按键被别的动作占用（红字提示的占用者；`None` = 无冲突）。
+    ///
+    /// 冲突**不写配置**：只把占用者记下来提示用户（红字挂在被拒的那一行下面），
+    /// 用户重新点芯片再录一遍即可——不必先取消再来一遍。
+    conflict: Option<&'static KeyActionDef>,
+    /// 起录制的闭包（`WeakEntity` + 挂 App 级拦截器）。存一份而非每帧现造：
+    /// 渲染帧不该做无谓分配，且挂/收订阅的时序只在一处。
+    start_recording: crate::ui::views::settings_render::StartRecording,
 }
 
 /// 活读投影：`Config::load()` 在锁外读一次（不把磁盘 I/O 放进 AppData 锁内）。
@@ -196,6 +276,55 @@ impl SettingsPanel {
         let entity = cx.new(|cx| {
             let selects = build_selects(window, cx, &view, &on, &fonts);
             let pickers = build_pickers(window, cx, &view, &on);
+            // 每行一个焦点句柄 + 一个失焦监听（§9.2 表：**焦点离开芯片即提交**）。
+            // 句柄在装配期建、随实体活：失焦监听比的是句柄 id，句柄一换监听就失效；
+            // 而监听需要 `&mut Window` 注册，只有装配期与渲染帧拿得到 window——
+            // 渲染帧每帧可能跑多次（且不发通知时根本不跑），故只能在这里注册。
+            let mut key_focus: Vec<(KeyActionId, gpui_kit::FocusHandle)> =
+                Vec::with_capacity(keymap::ACTIONS.len());
+            let mut key_blur: Vec<Subscription> = Vec::with_capacity(keymap::ACTIONS.len());
+            for def in keymap::ACTIONS {
+                let handle = cx.focus_handle();
+                key_blur.push(cx.on_blur(&handle, window, {
+                    let id = def.id;
+                    move |panel, _window, cx| panel.commit_recording(id, cx)
+                }));
+                key_focus.push((def.id, handle));
+            }
+            // 句柄表装进 `Rc`：渲染帧按 id 查表（`focus_of` 闭包）只复制引用计数
+            let key_focus = Rc::new(key_focus);
+            // 录制起手式（快捷键页用）：提交上一行 → 挂 App 级拦截器 → 记状态。
+            // 为什么在这里造：挂拦截器要 `&mut App`，而实体方法只拿得到
+            // `Context<Self>`（它的 `Deref` 只到 `&App`）——故只有「拿到 `&mut App`
+            // 的调用点」能起录制，芯片点击回调正是这样的点。
+            let start_recording: crate::ui::views::settings_render::StartRecording = {
+                let panel = cx.weak_entity();
+                Rc::new(move |id, cx| {
+                    // ① **先把上一行提交**（不是丢弃）：用户点新行 = 认可上一行录到
+                    //    的键位（§9.2 表）。**与失焦的先后无关**：失焦监听在帧边界
+                    //    才派发，可能晚于这里——那时 `recording` 已换行，迟到的失焦
+                    //    被 `commit_recording` 的守卫挡掉（只有一方能提交）。
+                    let _ = panel.update(cx, |panel, cx| {
+                        if let Some(prev) = panel.recording.as_ref().map(|(id, _)| *id) {
+                            panel.commit_recording(prev, cx);
+                        }
+                    });
+                    // ② 挂新拦截器：回调内已先 `stop_propagation`（widget 内完成），
+                    //    故录制 `ctrl-q` 不会顺手退出程序
+                    let sink = panel.clone();
+                    let subscription = capture_keystrokes(cx, move |keystroke, _window, cx| {
+                        let _ = sink.update(cx, |panel, cx| panel.on_captured_key(keystroke, cx));
+                    });
+                    // ③ 订阅与「录制态」同生共死（见本结构体 `recording` 的说明）。
+                    //    冲突提示**不清**：被拒的红字要活到用户看见为止（那条提示
+                    //    往往正是「点新行」这一下逼出来的——在这里清等于瞬间抹掉）。
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.recording = Some((id, subscription));
+                        panel.pending = None;
+                        cx.notify();
+                    });
+                })
+            };
             Self {
                 tab: SettingsTab::default(),
                 view,
@@ -207,6 +336,13 @@ impl SettingsPanel {
                 pickers,
                 built_locale: crate::current_locale(),
                 ctx_status,
+                recording: None,
+                pending: None,
+                key_focus,
+                _key_blur: key_blur,
+                conflict_on: None,
+                conflict: None,
+                start_recording,
             }
         });
         // 登记弱句柄：后台效果完成后由主线程泵触发 reload（见 OPEN_PANEL 说明）
@@ -221,6 +357,11 @@ impl SettingsPanel {
     /// 语言变了必须换掉候选项，否则下拉仍是旧语言直到面板重开——该换文动作
     /// 在 [`Self::render`] 帧内完成（帧里有 `&mut Window`）。
     fn reload(&mut self, cx: &mut Context<Self>) {
+        // 录制态在此**收口**：reload 意味着面板内容要重读重画，而「录制态」
+        // （拦截器订阅）是跨帧的 App 级副作用——留着它就会出现「界面上已经
+        // 不显示录制、按键却全被吞掉」。关面板同理：订阅是面板字段，随实体
+        // drop 一起释放。
+        self.stop_recording();
         // 仅「上下文菜单」页停留时重查系统实况（状态行只在那一页被消费；
         // 其余页交互复用缓存——注册表/文件系统 I/O 不再撞弹层收起动画）
         if self.tab == SettingsTab::ContextMenu {
@@ -260,6 +401,108 @@ impl SettingsPanel {
             entity.update(cx, |state, cx| state.set_items(items, window, cx));
         }
         self.built_locale = locale;
+    }
+
+    /// 结束录制：**drop 拦截器订阅**（不 drop 就是全窗口键盘永久失灵的重症 bug）
+    /// + 丢弃未提交的 pending + 清冲突提示。
+    ///
+    /// # 与 [`Self::commit_recording`] 的分工（本切片的交互核心）
+    ///
+    /// | 出口 | 语义 |
+    /// |---|---|
+    /// | 失焦 / 换行（[`Self::commit_recording`]） | 用户**认可**这一下按键 ⇒ 提交（写配置） |
+    /// | 本函数（Esc / 切页签 / reload / 关面板 / 壳层离开设置页） | 这次录作废 ⇒ **丢弃** pending |
+    ///
+    /// 全部「非提交」退出路径都汇到这里；本函数一律**不写配置**。
+    pub(crate) fn stop_recording(&mut self) {
+        self.recording = None;
+        self.pending = None;
+        self.conflict = None;
+        self.conflict_on = None;
+    }
+
+    /// 当前整份快捷键（活读投影；缺项 → 出厂默认 = 全空串）。
+    fn current_keys(&self) -> hzip_config::Keys {
+        self.view
+            .keys_of(SettingId::Keymap)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// **失焦/换行提交**：把该行录到的键位写进配置（冲突则只提示、不写）。
+    ///
+    /// 守卫「`recording` 必须是这一行」不可省：失焦监听是**逐行**注册的，而点
+    /// 新行时 blur 与 `start_recording` 都会来一次（谁先到不确定）——不守卫就会
+    /// 把同一行提交两遍，或误收口别处正在进行的录制。
+    ///
+    /// 与 [`Self::stop_recording`] 的区别见后者的表格。
+    pub(crate) fn commit_recording(&mut self, id: KeyActionId, cx: &mut Context<Self>) {
+        // 迟到的失焦（这一行已经不是录制行 / 录制早已收口）→ 什么都不做。
+        // 两个来源都会调到这里：①失焦监听（帧边界派发，可能**晚于**下一次
+        // 「点新行」）；②`start_recording` 换行时的显式提交。二者只有一方能过守卫。
+        if self.recording.as_ref().map(|(cur, _)| *cur) != Some(id) {
+            return;
+        }
+        let def = keymap::def_of(id);
+        // 收口先做：`recording = None` 连同 `Subscription` 一起 drop（拦截器多挂
+        // 一瞬就可能多吃一个按键）。剩下的分支只决定「写不写 + 留不留提示」。
+        self.recording = None;
+        let Some(spec) = self.pending.take() else {
+            // 点进来一个字没按就移开焦点：只收口，不写配置（等于取消）
+            self.stop_recording();
+            cx.notify();
+            return;
+        };
+        // 冲突检测：只比「有效键位」且排除自身（禁用项不占键，见 keymap 文档）
+        let current = self.current_keys();
+        if let Some(occupant) = keymap::conflict_with(&current, &spec, id) {
+            // 冲突：**不写配置、不发事件**，只把占用者留在那一行下面（红字）。
+            // 冲突提示故意**保留**（不随录制态一起清）：它正是刚被拒的证据。
+            self.conflict = Some(occupant);
+            self.conflict_on = Some(id);
+            cx.notify();
+            return;
+        }
+        let next = settings_render::with_field(&current, def.config_key, &spec);
+        // 上一次的冲突提示随这次成功提交清掉（`pending` 已在上面 take 走）
+        self.stop_recording();
+        (self.on)(settings_render::keys_event(next));
+        cx.notify();
+    }
+
+    /// 录制中按下一个键（App 级拦截器回调 → 面板）。
+    ///
+    /// 状态机（T-KEYS §9.2，2026-10-15 改版）：
+    ///
+    /// | 按下的键 | 结果 |
+    /// |---|---|
+    /// | `Esc` | 取消录制（丢 pending、收订阅，不写配置） |
+    /// | 纯修饰键 | 忽略（Windows 上它根本不产生 keystroke，不构成键位） |
+    /// | 其余（**含 Delete/Backspace**） | 记进 [`Self::pending`] 当**预览**，不写配置 |
+    ///
+    /// 旧契约里 `Delete`/`Backspace` = 禁用的专用手势已作废（删除绑定改由行尾 ✕）；
+    /// 写值全部挪到失焦提交——**本函数一个字都不落配置**。
+    fn on_captured_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        if self.recording.is_none() {
+            // 防御：按键来自刚被收掉的拦截器（同一轮事件里切了页签/关了面板）。
+            // 此时**不能**往下走——没有「正在录制的动作」就没有写哪一行的依据。
+            return;
+        }
+        if keystroke.key == "escape" {
+            self.stop_recording();
+            cx.notify();
+            return;
+        }
+        // 纯修饰键（ctrl/alt/shift/…）：不是键位，保持录制继续等 —— `None` 分支即空转
+        if let Some(spec) = keymap::spec_from_keystroke(keystroke) {
+            // 预览：只记 pending（芯片上显示），**不写配置**——提交看失焦
+            self.pending = Some(spec);
+            // 用户又开始按键 = 正在改上一次被拒的那一下 ⇒ 旧的红字（若还在）
+            // 立即让位；这次提交若再撞车，红字会带着新的占用者回来。
+            self.conflict = None;
+            self.conflict_on = None;
+            cx.notify();
+        }
     }
 }
 
@@ -518,10 +761,32 @@ impl gpui_kit::Render for SettingsPanel {
         let tab = self.tab;
         // 刷新手柄用 Weak（强句柄会被 Select 订阅/元素回调长期持有 → 面板泄漏）
         let this = cx.weak_entity();
+        // 行焦点句柄表（装配期建）：这里只克隆一次 `Rc`，帧内查表不再复制 Vec
+        let key_focus = self.key_focus.clone();
         let ctx = PageCtx {
             on: self.on.clone(),
             refresh: Rc::new(move |cx: &mut App| {
                 let _ = this.update(cx, |this, cx| this.reload(cx));
+            }),
+            // 快捷键页的录制宿主：**录制态归面板持有**（拦截器订阅是 App 级
+            // 副作用，生命周期必须跟面板字段同生共死），这里只把读值 +
+            // 「起录制」闭包递下去，渲染层于是不必知道订阅的存在。
+            keys: Some(settings_render::KeysCtx {
+                recording: self.recording.as_ref().map(|(id, _)| *id),
+                pending: self.pending.clone().map(SharedString::from),
+                conflict: self.conflict,
+                conflict_on: self.conflict_on,
+                focus_of: Rc::new(move |id: KeyActionId| {
+                    match key_focus.iter().find(|(action, _)| *action == id) {
+                        Some((_, handle)) => handle.clone(),
+                        // 表是装配期按 `ACTIONS` 建的，缺项即代码错——`unreachable!`
+                        // 而不是 `expect`（后者在本 workspace 是 deny 级门禁）
+                        None => unreachable!(
+                            "每行动作都有焦点句柄（装配期建，见 SettingsPanel::key_focus）"
+                        ),
+                    }
+                }),
+                start: self.start_recording.clone(),
             }),
         };
         let content =
@@ -568,6 +833,9 @@ impl gpui_kit::Render for SettingsPanel {
             }
             rail = rail.child(item.on_click(cx.listener(move |this, _, _, cx| {
                 this.tab = SettingsTab::from_index(ix);
+                // 切页签即离开快捷键页 ⇒ 录制必须收口（拦截器是 App 级的，
+                // 留着它用户已经看不见录制态，按键却全被吞）
+                this.stop_recording();
                 cx.notify();
             })));
         }

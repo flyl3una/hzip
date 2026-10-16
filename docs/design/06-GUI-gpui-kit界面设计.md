@@ -401,6 +401,83 @@ flowchart TD
 
 五项设置与现版一致；主题切换即时改 `ActiveTheme` 全局 token。
 
+### 4.8.1 设置 ▸ 快捷键页（T-KEYS，2026-10-15 用户口径）
+
+竖排页签的第 8 项（`SettingsTab::Keys`，下标 7；文案 `tab.keys`），前 7 项沿用
+（常规 / 文件关联 / 上下文菜单 / 解压 / 压缩 / 查看器 / 语言）。本页不再用 `form_field()`
+的 label 列（`WidgetKind::KeysBlock` 走**全宽自绘**：页头 + 行 + 说明行，理由 = 用户口径
+「每行太宽、不要左侧 label 列」）：
+
+```text
+快捷键 ⓘ                       [全部恢复默认]   ← 页头（标题 + 紧贴其右的 ？ 悬浮帮助；动作钮最右）
+打开档案                    Ctrl+O   ↻  ✕   ← 每行**一行**（块宽封顶 ≈600px、居中；尾部三件套 1px 紧贴）
+全选                              Ctrl+A    ↻   ✕
+退出                              未绑定    ↻   ✕
+…                                                    ← 交互说明只在 ？ 悬浮里（页底常驻行已下线）
+```
+
+- **动作清单只有一份**：14 行、顺序 = `ui::shell::keymap::ACTIONS`（启动装配、菜单快捷键
+  提示、冲突检测、本页都读它）；行文案 `keymap.action.<config_key>`、键位芯片文案
+  `keymap.state.default` / `keymap.state.unbound` / `keymap.recording`、页头按钮
+  `keymap.reset_all`、行尾 ✕ 的 tooltip `keymap.remove_binding`、冲突红字 `keymap.conflict`
+  （含 `{action}` 占位 = 占用者动作名）。
+- **行内布局**：`h_flex` → 名称（`flex_1` + `truncate`，左）→ 键位芯片（点它即进入录制）→
+  ↻ 还原钮（`krestore-<config_key>`，tooltip `keymap.reset_one`，**写空串** = 回落内置默认；
+  2026-10-16 用户口径「✕ 旁边增加一个还原的图标按钮」）→ ✕ 删除绑定（最右）。两者都是
+  **kit `Button` 默认变体 + `with_size(component_size())` + `.icon(...)`**（icon-only，与设置页其它
+  按钮同档同 hover——用户口径 2026-10-16：ghost 的 hover 是主题色、其它按钮是浅灰），尾部三件套
+  组内 `gap(px(1.))`（同口径「margin 调到 1px」）。**行内没有「禁用」「恢复本项默认」「录制」文本按钮**。
+- **块宽、居中与留白（2026-10-16 用户口径）**：块外层 `.max_w(rems(37.5))`（标准档 ≈600px，随界面
+  字号缩放）+ `.ml_auto().mr_auto()`（块宽小于内容列时**居中**）+ `.px(sp(3.))`；并且**不再包在 `form_field()` 里**——`Form::horizontal` 的标签列即使
+  `has_label` 为假也占一列宽，实测把整块右推 ≈170px（症状：整块偏右、名称与右侧键位之间留一大片
+  空白）。标题旁的 ？ 是本页唯一常驻说明入口。
+- **三态显示**（`keymap.state.unbound` 取代旧的 `keymap.state.disabled`）：默认（显示内置
+  键位，`""`）/ 自定义（显示用户键位，其余串）/ 未绑定（`"none"`，芯片显示「未绑定」）。
+  键位显示走 `keymap::display_spec`（macOS 出 `^⌥⌘⇧` 字形、单字符键保持可读），录制中
+  按键的预览由芯片自己的预览块（`kc-pending-<config_key>`）承担，**与当前有效键位互不覆盖**
+  ——用户一眼看出「原来是什么、即将变成什么」。**配置里永远只存 ASCII 规范串**。
+
+| 交互 | 行为 |
+|---|---|
+| **点键位芯片** | `window.focus(行焦点句柄)` + 挂 `App::intercept_keystrokes` 拦截器进入录制态 |
+| 录制中按键 | 只记进面板的 `pending`（芯片上**实时预览**，`kc-pending-*`）；**不写配置** |
+| 录制中按 `Esc` | 取消：丢弃 pending + 收订阅（不写配置） |
+| **焦点离开芯片** | **提交**：有 pending → 冲突检测（占用则只提示不写）→ 整份 `Keys` 上行；无 pending → 只收口（等于取消） |
+| 再次点同一/另一行芯片 | 先把上一行**提交**（不是丢弃）再起新录制；与失焦的先后顺序无关（守卫保证只有一方能提交） |
+| 切设置内页签 / 关面板 / **离开设置主页签** | 收口：**丢弃**未提交的 pending（壳层 `cancel_key_recording_if_open`） |
+| 录制中按 `Delete` / `Backspace` | **照常录成绑定**（旧「Delete = 禁用」契约作废——删绑定改由 ✕ 按钮） |
+| 纯修饰键（`Ctrl`/`Alt`/`Shift`…） | 忽略，保持录制继续等（Windows 上它们根本不产生 keystroke） |
+| 与别的动作**冲突** | **不写配置、不发事件**：红字 `keymap.conflict` 带**占用者动作名**，挂在**被拒的那一行**下面（`kconflict-<config_key>`）；冲突由**失焦提交**触发（非键入时） |
+| 写完一行 | 整份 `Keys` 上行：`DialogEvent::SettingChanged { id: SettingId::Keymap, value: SettingValue::Keys(..) }` |
+
+**键位录制是「按下物理按键」，不是输入字符串**：拦截器是 App 级的（在**所有** keymap 动作
+分发之前触发，回调内先 `cx.stop_propagation()`），因此录 `ctrl-q` 不会顺手退出程序；订阅与
+录制态**同生共死**——`Esc`、失焦提交、切页签、被快照切走（打开新档案 → 聚焦浏览页）、关面板、
+面板重载都会 drop 订阅（不 drop 就是「键盘被永久吞掉」的重症 bug，有专门用例守）。**真实鼠标
+点别的可聚焦元素**会先把焦点接走 ⇒ 表现为「**先提交、再收口**」，不重复写也不丢这一次改动。
+✕ 与页头「全部恢复默认」都只经上面那一条「改值」事件落地，**不新增** `DialogEvent`/`ActionKind`
+变体；删绑定后该动作仍可从菜单/工具栏触发，只是不再有快捷键与菜单提示。
+
+**焦点悬空自愈（2026-10-15 实测缺陷）**：芯片是 `track_focus` 的可聚焦元素，用户点它进入录制后
+若**切走主页签**，面板不再渲染而 gpui **不会**清掉窗口焦点 ⇒ 焦点悬空在「不在本帧的节点」上，
+按键派发路径因此从不可见节点出发，所有走 `Main` context 的快捷键**静默失效**（界面看起来
+「按什么都没反应」，`ctrl-q` 也不再命中）。修法在壳层渲染帧：`window.focused(cx)` 命中的若是
+面板芯片句柄（`settings_layout::owns_key_focus`）且当前页签不是设置页，就把焦点收回壳层
+（`ui/shell/render.rs` 的 `shell_focus.focus(..)`）——既有那条自补逻辑只在「完全没有焦点」时
+生效，管不到「有焦点但悬空」。
+
+回归锚点：`ui::views::settings_layout::tests::keys_*`（列出全部动作 / 预览后失焦提交 / 提交写整份
+配置 / 无 pending 提交是 no-op / 冲突拒绝并留占用者 / Delete 可录成绑定 / ✕ 写 `"none"` /
+全部恢复默认 / Esc 释放键盘 / 收口丢弃 pending / 点别处先提交后收口）、
+`ui::views::settings_render::tests::{chip_display_covers_the_three_states,
+keys_block_is_single_line_per_action, keys_block_marks_unbound_rows,
+keys_block_previews_pending_on_the_recording_row, keys_block_writes_none_and_reset_all,
+keys_block_shows_conflict_on_the_rejected_row}`（单行版式 / 三态芯片 / 预览 / ✕ 与复位 / 冲突挂对行）、
+`ui::widgets::key_capture::tests::*`（录制吞掉原动作并回收 keystroke、drop 后恢复派发、预览只在录制中渲染）、
+`ui::shell::keymap_tests::*`（三态语义、安装幂等且保留 kit 绑定）、
+`ui::shell::tests::{rebind_select_all_takes_effect_end_to_end, leaving_settings_tab_releases_key_recording}`
+（端到端改键生效 + 离开设置页释放键盘，后者覆盖「焦点悬空」那条路）。
+
 ### 4.9 主题 token（对齐 gpui-kit ActiveTheme）
 
 | Token | 浅色 | 语义 | 现值来源 |

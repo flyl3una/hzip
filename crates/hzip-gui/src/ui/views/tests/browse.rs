@@ -1783,6 +1783,12 @@ fn rename_and_new_folder_commands_enter_inline_edit(cx: &mut gpui_kit::TestAppCo
             .to_string()
     });
     assert_eq!(typed, "c.txt", "键入须替换全选的原名（F2 改名惯例）");
+    // ⚠️ 改写**前的**档案 stat 必须在这里取：提交后任务可能**毫秒级**就完成落定，
+    // 等到下面才开始记基线就会「基线已是新档」⇒ 变化永远等不到，白等满整个截止
+    //（本机实测过一次 90 s 全耗在这上面，随后内容断言其实是过的）。
+    let stat_before = std::fs::metadata(&zip)
+        .ok()
+        .map(|m| (m.modified().ok(), m.len()));
     vtcx.simulate_keystrokes("enter");
     let (edit_gone, job_kind) = {
         let d = data.lock().unwrap();
@@ -1808,13 +1814,46 @@ fn rename_and_new_folder_commands_enter_inline_edit(cx: &mut gpui_kit::TestAppCo
     // （隔离跑 0.13 s 即过）——数百个测试并发时后台编辑任务可能被饿到原
     // 10 s 截止之外。硬化三点，**断言未改**：①处理器建一次（旧实现每轮重建
     // 注册表）；②改写中途档案可能瞬时不可开（Windows 原子替换窗口）→ 轮询
-    // 容忍该瞬时错误而不是直接 expect 炸；③截止 20 s（常态 0.13 s 的三位数
-    // 余量，真回归时也不必等满 1 分钟），失败信息带最后观察到的错误与名字集。
+    // 容忍该瞬时错误而不是直接 expect 炸；③截止 20 s。
+    //
+    // 2026-10-16 复测：20 s 仍被击穿一次（531 个测试并行 + 同机 clippy/workspace
+    // 构建时，本轮实测失败即停在第 20 s 边界；常态仍 0.13 s）。截止放宽到 60 s
+    // ——循环命中即退出，**正常路径零代价**，只有真回归才会等满（失败信息带最后
+    // 观察到的错误与名字集，足以定位）。
     let handler = engine_probe.registry().handler("zip").expect("zip");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // ②′ 等**后台改写落定**，再 open 一次读内容做断言。
+    //
+    // ⚠️ 不能「边轮询边 open」（旧实现每 50 ms 开一次源档案）：本仓库既有实测
+    // （`AppData::browse_session_reopen_request` 的注释，2026-09-29）——**目标被打开
+    // 时 Windows 的原子替换会失败（os error 5）**，编辑任务不重试 ⇒ 我们的轮询等于
+    // 持续把改写挡在门外。2026-10-16 实测复现：跑满 60 s 截止、档案仍是原结构
+    // （`["a.txt","b.txt"]`）、`last_err None`——是「任务被挡」而不是「读失败」。
+    // 也不能等「任务行终局」：本用例不跑泵，`JobsVm` 的行状态不会被事件推进
+    // （实测：等满整个截止后内容其实早已改好 ⇒ 白等 60 s 且掩盖了真正的信号）。
+    // 故改为 **stat 轮询**（`metadata` 只取属性、不持会挡替换的句柄）：mtime/长度一变
+    // 即说明替换已落定，随后单次 open 断言内容。
+    // 基线在上文 `stat_before`（提交**之前**取，见那里的说明）
+    let before = stat_before;
+    // 90 s：常态 0.1 s（命中即退出），但**首次执行刚链接出来的测试二进制**时 Windows
+    // Defender 会扫一遍新 exe，后台任务可能被拖到几十秒。放宽只影响真回归的等待时长。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let mut rewrote = false;
+    while std::time::Instant::now() < deadline {
+        let now = std::fs::metadata(&zip)
+            .ok()
+            .map(|m| (m.modified().ok(), m.len()));
+        if now != before {
+            rewrote = true;
+            break;
+        }
+        // 顺手驱动测试执行器：任务提交/落账若还有 gpui 侧的一段调度，别靠 sleep 干等
+        vtcx.update(|_window, cx| cx.background_executor().run_until_parked());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // 落定后单次读内容（仍给几次重试，容忍替换瞬间的瞬时错误）
     let mut names: Vec<String> = Vec::new();
     let mut last_err: Option<String> = None;
-    while std::time::Instant::now() < deadline {
+    for _ in 0..20 {
         match handler.open_reader(
             hzip_format::Source::File(zip.clone()),
             &hzip_format::OpenOptions::default(),
@@ -1838,7 +1877,7 @@ fn rename_and_new_folder_commands_enter_inline_edit(cx: &mut gpui_kit::TestAppCo
     }
     assert!(
         names.iter().any(|n| n == "c.txt") && !names.iter().any(|n| n == "a.txt"),
-        "档案须已在后台重写为改名后的结构（实得 {names:?}；末次错误 {last_err:?}）"
+        "档案须已在后台重写为改名后的结构（实得 {names:?}；档案 stat 是否变化 {rewrote}；末次读取错误 {last_err:?}）"
     );
 
     // ③ 新建文件夹：草稿行 + 行内编辑

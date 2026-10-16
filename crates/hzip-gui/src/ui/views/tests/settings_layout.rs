@@ -85,12 +85,15 @@ fn row_first_line_alignment_is_uniform(cx: &mut gpui_kit::TestAppContext) {
     });
     let panel = slot.borrow().clone().expect("面板实体");
 
-    // 本 fork 的 `debug_bounds` 只收 `&'static str`（gpui-pre 0.3.8
-    // test_context.rs:990；0.3.4 时代同签名——本仓当时同样靠 leak 调用）；
-    // 锚点名按注册表 id 动态生成，故 leak 少量短串换取「全量遍历」。测试进程
-    // 退出即回收，不影响任何进程外状态。
+    // `debug_bounds` 在本 fork 只收 `&'static str`（`gpui-pre` 0.3.8
+    // test_context.rs:990——它内部其实是 `FxHashMap<String, _>`，只是签名收窄
+    // 了），而锚点名按注册表 id 现拼；故统一走 `settings_render::test_anchor`
+    // 的**进程级静态表**（一次构建、终身复用，引用即 `'static`），不做
+    // `Box::leak`（那是把每个短串永久泄漏出进程）。表里没登记的名字会 panic：
+    // 「锚点查不到」这种断言失误应当立刻可见。
     let bounds = |vtcx: &mut gpui_kit::VisualTestContext, name: String| {
-        vtcx.debug_bounds(Box::leak(name.into_boxed_str()))
+        let selector = crate::ui::views::settings_render::test_anchor(name.clone());
+        vtcx.debug_bounds(selector)
             .map(|b| (f32::from(b.origin.y), f32::from(b.size.height)))
     };
 
@@ -105,6 +108,20 @@ fn row_first_line_alignment_is_uniform(cx: &mut gpui_kit::TestAppContext) {
         });
         for def in REGISTRY.iter().filter(|d| d.page == tab) {
             let key = def.id.key();
+            // 快捷键块（T-KEYS §9.1）是**全宽自绘块**：用户口径不要左侧 label 列，
+            // 故没有「标签列 ↔ 控件列」这对锚点，本用例的同轴前提不成立。块内
+            // 自己的版式（单行：名称/芯片/✕）由 `settings_render::tests` 的
+            // `keys_block_is_single_line_per_action` 与 keys_* 用例守；这里只
+            // 确认它**画出来了**（每行锚点在 ⇒ 注册表每行都被消费，计数与实际
+            // 行数一致）。
+            if matches!(def.widget, WidgetKind::KeysBlock) {
+                assert!(
+                    bounds(vtcx, format!("krow-{}", keymap::ACTIONS[0].config_key)).is_some(),
+                    "[{tab:?}] {key}: 快捷键块首行未渲染"
+                );
+                checked += 1;
+                continue;
+            }
             let lbl = bounds(vtcx, format!("lbl-{key}"))
                 .unwrap_or_else(|| panic!("[{tab:?}] 缺标签锚点 lbl-{key}"));
             let ctl = bounds(vtcx, format!("ctl-{key}"))
@@ -1508,5 +1525,817 @@ fn ctx_apply_button_click_emits_event(cx: &mut gpui_kit::TestAppContext) {
             .iter()
             .any(|ev| matches!(ev, DialogEvent::SettingsContextMenuApply)),
         "点击「应用到系统」必须上行 SettingsContextMenuApply（实得 {events:?}）"
+    );
+}
+
+// —— 快捷键页（T-KEYS）：录制生命周期 + 三态上行 ——
+
+/// 从上行事件里取出整份快捷键（非本类事件 → None）。
+fn keys_of_event(ev: &DialogEvent) -> Option<hzip_config::Keys> {
+    match ev {
+        DialogEvent::SettingChanged { id, value } if *id == SettingId::Keymap => {
+            value.as_keys().cloned()
+        }
+        _ => None,
+    }
+}
+
+/// 快捷键页端到端场景：真实面板（事件捕获 + **真实应用**）+ 发布 `Main` 上下文的宿主。
+///
+/// `on` 走真实上行路径（`AppData::consume_dialog_event` 五步流程），于是
+/// 「上行 → 落库/镜像 → reload 回读」整条链都可断言；`quits` 记 `sh::Quit` 的
+/// 派发次数——「录制吞掉按键」与「Esc 取消后按键恢复派发」是同一条订阅的两面，
+/// 没有它就无法区分「订阅已 drop」与「订阅还在、只是不再写配置」。
+struct KeysScene {
+    panel: Entity<SettingsPanel>,
+    events: Rc<std::cell::RefCell<Vec<DialogEvent>>>,
+    quits: Rc<std::cell::Cell<usize>>,
+}
+
+/// 快捷键页宿主：给面板套一层 `key_context("Main")` 并自持焦点。
+///
+/// 生产里 14 条加速键挂在 AppShell 的 `Main` 上下文上（`ui::shell::render`）；
+/// 测试里没有壳体，少了这层上下文，绑定永远匹配不到——「按键被吞 / 恢复派发」
+/// 就都观测不到（会以「基线没派发」的形式假绿）。
+struct KeysHost {
+    panel: Entity<SettingsPanel>,
+    focus: gpui_kit::FocusHandle,
+}
+
+impl gpui_kit::Render for KeysHost {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .key_context("Main")
+            .track_focus(&self.focus)
+            .child(self.panel.clone())
+    }
+}
+
+// 探针动作：绑在 `ctrl-q` 上，用来观测「按键有没有被录制吞掉」。
+//
+// 不复用 `ui::shell::actions::Quit`（那是私有模块，跨模块不可达），本用例要证的
+// 也只是「按键是否派发出去」，与具体动作语义无关。
+gpui_kit::actions!(hzip_gui_keys_probe, [KeysProbeKey]);
+
+/// 造快捷键页场景：面板切到快捷键页 → 画帧 → 聚焦宿主 → 绑 `ctrl-q` = 探针动作。
+fn keys_scene(cx: &mut gpui_kit::TestAppContext) -> (&mut gpui_kit::VisualTestContext, KeysScene) {
+    let engine = std::sync::Arc::new(crate::viewmodel::testutil::engine());
+    let data: AppDataHandle = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::app::state::AppData::new(engine),
+    ));
+    let events: Rc<std::cell::RefCell<Vec<DialogEvent>>> = Rc::default();
+    let hits = events.clone();
+    let sink = data.clone();
+    let on: Rc<dyn Fn(DialogEvent)> = Rc::new(move |ev| {
+        hits.borrow_mut().push(ev.clone());
+        if let Ok(mut d) = sink.lock() {
+            let _ = d.consume_dialog_event(&ev);
+        }
+    });
+    let app = data.clone();
+    let slot: Rc<std::cell::RefCell<Option<Entity<SettingsPanel>>>> = Rc::default();
+    let focus_slot: Rc<std::cell::RefCell<Option<gpui_kit::FocusHandle>>> = Rc::default();
+    let slot2 = slot.clone();
+    let focus_slot2 = focus_slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let panel = SettingsPanel::new_entity(window, cx, app, Vec::new(), on);
+        panel.update(cx, |p, cx| {
+            p.tab = SettingsTab::Keys;
+            cx.notify();
+        });
+        *slot2.borrow_mut() = Some(panel.clone());
+        let host = cx.new(|cx| KeysHost {
+            panel,
+            focus: cx.focus_handle(),
+        });
+        *focus_slot2.borrow_mut() = Some(host.read(cx).focus.clone());
+        let view: gpui_kit::AnyView = host.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let panel = slot.borrow().clone().expect("面板实体");
+    let focus = focus_slot.borrow().clone().expect("宿主焦点");
+
+    // 画一帧先登记元素树（`track_focus` 在 prepaint 注册），再聚焦 + 绑键
+    vtcx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        window.focus(&focus, cx);
+        window.activate_window();
+    });
+    let quits: Rc<std::cell::Cell<usize>> = Rc::default();
+    let counter = quits.clone();
+    vtcx.update(|_window, cx| {
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "ctrl-q",
+            KeysProbeKey,
+            Some("Main"),
+        )]);
+        cx.on_action(move |_: &KeysProbeKey, _: &mut App| counter.set(counter.get() + 1));
+    });
+
+    (
+        vtcx,
+        KeysScene {
+            panel,
+            events,
+            quits,
+        },
+    )
+}
+
+/// 画一帧（锚点/命中区只在**已渲染帧**里可查）。
+fn keys_draw(vtcx: &mut gpui_kit::VisualTestContext) {
+    vtcx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+}
+
+/// 锚点名 → `&'static str`（`debug_bounds` 只收 `&'static str`）。
+///
+/// 走 `settings_render::test_anchor`（进程级静态表，不做 `Box::leak`）——锚点
+/// 按 `config_key`/页签下标现拼，而表里登记的是本页锚点的全量名单。
+fn keys_sel(name: impl AsRef<str>) -> &'static str {
+    crate::ui::views::settings_render::test_anchor(name)
+}
+
+/// 真实点击某个测试锚点（先画一帧保证命中区已登记）。
+fn keys_click(vtcx: &mut gpui_kit::VisualTestContext, anchor: &'static str) {
+    keys_draw(vtcx);
+    let bounds = vtcx
+        .debug_bounds(anchor)
+        .unwrap_or_else(|| panic!("缺锚点 {anchor}"));
+    vtcx.simulate_click(bounds.center(), gpui_kit::Modifiers::none());
+    vtcx.update(|_window, cx| cx.background_executor().run_until_parked());
+}
+
+/// 面板重读活读投影（生产里由泵在 `SettingApplied` 后调 `reload_open_panel`）。
+fn keys_reload(vtcx: &mut gpui_kit::VisualTestContext, scene: &KeysScene) {
+    vtcx.update(|_window, cx| {
+        scene.panel.update(cx, |p, cx| p.reload(cx));
+    });
+    keys_draw(vtcx);
+}
+
+/// 面板当前录制态（`Some` = 拦截图在挂；订阅与它同生共死）。
+fn keys_recording(
+    vtcx: &mut gpui_kit::VisualTestContext,
+    scene: &KeysScene,
+) -> Option<crate::ui::shell::keymap::KeyActionId> {
+    vtcx.update(|_window, cx| {
+        scene
+            .panel
+            .update(cx, |p, _cx| p.recording.as_ref().map(|(id, _)| *id))
+    })
+}
+
+/// 面板当前 pending（录制中已按下、**尚未提交**的组合）。
+fn keys_pending(vtcx: &mut gpui_kit::VisualTestContext, scene: &KeysScene) -> Option<String> {
+    vtcx.update(|_window, cx| scene.panel.update(cx, |p, _cx| p.pending.clone()))
+}
+
+/// 直接把某一行「失焦提交」（不依赖焦点事件——它要等帧边界才派发）。
+fn keys_commit(vtcx: &mut gpui_kit::VisualTestContext, scene: &KeysScene, id: KeyActionId) {
+    vtcx.update(|_window, cx| {
+        scene.panel.update(cx, |p, cx| p.commit_recording(id, cx));
+    });
+}
+
+/// 面板收口录制（切页签/关面板/离开设置页走的就是这条路）。
+fn keys_stop(vtcx: &mut gpui_kit::VisualTestContext, scene: &KeysScene) {
+    vtcx.update(|_window, cx| {
+        scene.panel.update(cx, |p, _cx| p.stop_recording());
+    });
+}
+
+/// ① 渲染：第 8 个页签是「快捷键」，**没有左侧 label 列**，逐行列出 14 条动作
+/// （名称 / 芯片 / ✕ 同一行），页头是「全部恢复默认」。
+#[gpui_kit::test]
+fn keys_page_lists_every_action(cx: &mut gpui_kit::TestAppContext) {
+    use crate::ui::shell::keymap;
+
+    let (vtcx, _scene) = keys_scene(cx);
+    keys_draw(vtcx);
+
+    // 8 个页签：快捷键在下标 7（`SettingsTab::ALL` 末位）
+    assert_eq!(SettingsTab::ALL.len(), 8);
+    assert!(
+        vtcx.debug_bounds(keys_sel("settings-tab-7")).is_some(),
+        "第 8 个页签（快捷键）未渲染"
+    );
+    // **无左侧 label 列**：快捷键块不走通用行 ⇒ 通用行的标签/控件锚点都不该在
+    // （`ctl-set-keymap` 是 `row()` 给每个注册表控件打的锚点，`lbl-*` 是标签列）。
+    assert!(
+        vtcx.debug_bounds("ctl-set-keymap").is_none(),
+        "快捷键块不该走通用行（用户口径：不要左侧 label 列）"
+    );
+    assert!(
+        vtcx.debug_bounds("lbl-set-keymap").is_none(),
+        "快捷键块不该有标签列单元格"
+    );
+    // 页头：标题左 + 「全部恢复默认」右，且在**所有动作行之上**
+    let reset = vtcx
+        .debug_bounds("kreset-all")
+        .expect("页头缺「全部恢复默认」");
+    let first_row = vtcx
+        .debug_bounds(keys_sel(format!("krow-{}", keymap::ACTIONS[0].config_key)))
+        .expect("缺首行动作锚点");
+    assert!(
+        reset.origin.y < first_row.origin.y,
+        "「全部恢复默认」应在页头（动作行之上）"
+    );
+    for def in keymap::ACTIONS {
+        let row = vtcx
+            .debug_bounds(keys_sel(format!("krow-{}", def.config_key)))
+            .unwrap_or_else(|| panic!("缺动作行锚点：{}", def.config_key));
+        let chip = vtcx
+            .debug_bounds(keys_sel(format!("kc-{}", def.config_key)))
+            .unwrap_or_else(|| panic!("缺键位芯片锚点：{}", def.config_key));
+        let remove = vtcx
+            .debug_bounds(keys_sel(format!("kremove-{}", def.config_key)))
+            .unwrap_or_else(|| panic!("缺 ✕ 锚点：{}", def.config_key));
+        let restore = vtcx
+            .debug_bounds(keys_sel(format!("krestore-{}", def.config_key)))
+            .unwrap_or_else(|| panic!("缺 ↻ 还原锚点：{}", def.config_key));
+        // 三者同在一行内（单行版式）：中心线重合 + x 递增（名称 → 芯片 → ↻ → ✕）
+        let cy = |b: gpui_kit::Bounds<gpui_kit::Pixels>| {
+            f32::from(b.origin.y) + f32::from(b.size.height) / 2.
+        };
+        assert!(
+            (cy(chip) - cy(remove)).abs() <= 0.5 && (cy(chip) - cy(restore)).abs() <= 0.5,
+            "{}: 芯片 / ↻ / ✕ 不在同一行（中心差 {:+.2}/{:+.2}px）",
+            def.config_key,
+            cy(chip) - cy(remove),
+            cy(chip) - cy(restore)
+        );
+        assert!(
+            chip.origin.x >= row.origin.x
+                && restore.origin.x >= chip.origin.x
+                && remove.origin.x >= restore.origin.x,
+            "{}: 行内顺序应为 名称 → 芯片 → ↻ 还原 → ✕",
+            def.config_key
+        );
+        assert!(
+            f32::from(row.size.height)
+                <= f32::from(crate::ui::views::settings_render::row_band())
+                    + 2. * f32::from(crate::ui::spacing::row_gap())
+                    + 1.,
+            "{}: 行高超过一带——行应为单行版式（旧的两行式版式会到两带）",
+            def.config_key
+        );
+    }
+    // 左右留白（用户口径 2026-10-16：「两侧都要 padding，右侧键位与按钮贴着边框
+    // 不好看」）：块内容与内容列左右缘之间必须各有一段空隙。用**相对量**断言——
+    // 绝对 x 会随页签轨道宽度/弹窗位置一起漂（同 `settings-content` 锚点的原意）。
+    let content = vtcx
+        .debug_bounds("settings-content")
+        .expect("缺内容列锚点（settings-content）");
+    let left_gap = f32::from(first_row.origin.x) - f32::from(content.origin.x);
+    let row0_remove = vtcx
+        .debug_bounds(keys_sel(format!(
+            "kremove-{}",
+            keymap::ACTIONS[0].config_key
+        )))
+        .expect("缺首行 ✕ 锚点");
+    let right_gap = (f32::from(content.origin.x) + f32::from(content.size.width))
+        - (f32::from(row0_remove.origin.x) + f32::from(row0_remove.size.width));
+    assert!(
+        left_gap >= 10.0,
+        "左侧缺留白（{left_gap:.1}px）：动作行紧贴内容列左缘"
+    );
+    assert!(
+        right_gap >= 10.0,
+        "右侧缺留白（{right_gap:.1}px）：键位芯片/✕ 贴到面板右缘"
+    );
+    // 整块**收窄 + 居中**（用户口径 2026-10-16：「内容需要居中对齐……320px 太窄，600px 左右」）
+    // + **不再被 Form 标签列推右**（那会把整块右移 ≈170px）；尺寸相对**本窗口的 rem
+    // 基准**量，绝对 px 会随字号漂。
+    let block = vtcx.debug_bounds("kblock").expect("缺块根锚点（kblock）");
+    let rem = vtcx.update(|window, _cx| window.rem_size());
+    let cap = f32::from(gpui_kit::rems(settings_render::KEYS_BLOCK_W_REM).to_pixels(rem));
+    let block_w = f32::from(block.size.width);
+    assert!(
+        block_w <= cap + 1.0,
+        "快捷键块宽 {block_w:.1}px 超过封顶 {cap:.1}px——整块被拉宽，名称与键位之间会出现大片空白"
+    );
+    // 居中：左右余量均分（差 ≤2px）。注意**不能**量「离右缘还有多少」——测试窗口宽
+    // 1920、内容列 1769px，那个余量恒真（第一版断言就是这么写废的）。
+    let content_left = f32::from(content.origin.x);
+    let content_right = content_left + f32::from(content.size.width);
+    let left_margin = f32::from(block.origin.x) - content_left;
+    let right_margin = content_right - (f32::from(block.origin.x) + block_w);
+    assert!(
+        (left_margin - right_margin).abs() <= 2.0,
+        "块未居中：左余量 {left_margin:.1}px、右余量 {right_margin:.1}px"
+    );
+    let row_in_block = f32::from(first_row.origin.x) - f32::from(block.origin.x);
+    assert!(
+        row_in_block >= 8.0,
+        "块内左侧留白不足（{row_in_block:.1}px）"
+    );
+    // 页头两枚控件也必须落在块内（收窄到 ≈600px 后仍要放得下 标题 + ？ + 全部恢复默认）
+    let block_left = f32::from(block.origin.x);
+    let block_right = block_left + block_w;
+    for (anchor, what) in [("kreset-all", "「全部恢复默认」"), ("khelp", "？ 帮助钮")] {
+        let b = vtcx
+            .debug_bounds(anchor)
+            .unwrap_or_else(|| panic!("缺页头锚点 {anchor}"));
+        let x = f32::from(b.origin.x);
+        let right = x + f32::from(b.size.width);
+        assert!(
+            x >= block_left && right <= block_right + 1.0,
+            "{what} 跑出块外（控件 {x:.1}..{right:.1}，块 {block_left:.1}..{block_right:.1}）"
+        );
+    }
+    // ① ？ 必须紧贴**标题右侧**、而不是挨着「全部恢复默认」（用户口径 2026-10-16）：
+    //    离块左缘一小段（标题宽 + 间距），且与动作钮之间留出**大段余量**。
+    let help = vtcx.debug_bounds("khelp").expect("缺页头 ？ 锚点");
+    let reset = vtcx.debug_bounds("kreset-all").expect("缺页头动作钮锚点");
+    let help_left = f32::from(help.origin.x) - block_left;
+    let help_to_reset =
+        f32::from(reset.origin.x) - (f32::from(help.origin.x) + f32::from(help.size.width));
+    assert!(
+        help_left <= 80.0,
+        "？ 不在标题右侧（离块左缘 {help_left:.1}px；标题≈35px + 间距≈8px）"
+    );
+    assert!(
+        help_to_reset >= 100.0,
+        "？ 仍挨着「全部恢复默认」（两者只差 {help_to_reset:.1}px）"
+    );
+    // ② 行尾三件套：芯片 ↔ ↻ ↔ ✕ 各 1px（用户口径 2026-10-16「margin 调到 1px」），
+    //    且两枚图标钮与设置页其它按钮**同款**（默认变体 + `component_size()`：
+    //    高度与页头动作钮一致、icon-only ⇒ 近似正方形）。
+    let chip0 = vtcx
+        .debug_bounds(keys_sel(format!("kc-{}", keymap::ACTIONS[0].config_key)))
+        .expect("缺芯片锚点");
+    let restore0 = vtcx
+        .debug_bounds(keys_sel(format!(
+            "krestore-{}",
+            keymap::ACTIONS[0].config_key
+        )))
+        .expect("缺 ↻ 锚点");
+    let remove0 = vtcx
+        .debug_bounds(keys_sel(format!(
+            "kremove-{}",
+            keymap::ACTIONS[0].config_key
+        )))
+        .expect("缺 ✕ 锚点");
+    let right_edge =
+        |b: gpui_kit::Bounds<gpui_kit::Pixels>| f32::from(b.origin.x) + f32::from(b.size.width);
+    assert!(
+        f32::from(restore0.origin.x) - right_edge(chip0) <= 2.0,
+        "芯片与 ↻ 之间不是 1px（实得 {:.1}px）",
+        f32::from(restore0.origin.x) - right_edge(chip0)
+    );
+    assert!(
+        f32::from(remove0.origin.x) - right_edge(restore0) <= 2.0,
+        "↻ 与 ✕ 之间不是 1px（实得 {:.1}px）",
+        f32::from(remove0.origin.x) - right_edge(restore0)
+    );
+    for (b, what) in [(restore0, "↻ 还原"), (remove0, "✕ 删除")] {
+        let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+        assert!(
+            (w - h).abs() <= 1.0,
+            "{what} 不是 icon-only（{w:.1}×{h:.1}）"
+        );
+        assert!(
+            (h - f32::from(reset.size.height)).abs() <= 1.0,
+            "{what} 与设置页其它按钮档位不一致（高 {h:.1} vs {:.1}）",
+            f32::from(reset.size.height)
+        );
+    }
+    // 交互说明从页底常驻行改为标题旁 ？ 悬浮（用户口径 2026-10-16）
+    assert!(
+        vtcx.debug_bounds("khelp").is_some(),
+        "页头缺 ？ 帮助钮（交互说明应改为悬浮提示）"
+    );
+    // 行内旧按钮（「禁用」/「恢复本项默认」）与行内恢复默认锚点都不该再有
+    assert!(vtcx.debug_bounds(keys_sel("kdisable-open")).is_none());
+    assert!(vtcx.debug_bounds(keys_sel("kreset-open")).is_none());
+    assert!(vtcx.debug_bounds(keys_sel("kreset-all")).is_some());
+}
+
+/// ② 改键：点芯片 → 按键**只预览** → 焦点移开（提交）→ 整份上行
+/// （`SettingChanged{Keymap, Keys}`）。
+///
+/// 走**真实拦截器**（`vtcx.simulate_keystrokes`，与用户按键盘同一条链路），
+/// 不是直调 `on_captured_key`——那样测不出「录制中按键被吞」这一层。
+#[gpui_kit::test]
+fn keys_recording_previews_then_commits_on_blur(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    keys_click(vtcx, "kc-select_all");
+    assert_eq!(
+        keys_recording(vtcx, &scene),
+        Some(crate::ui::shell::keymap::KeyActionId::SelectAll),
+        "点键位芯片应进入该行的录制态"
+    );
+    keys_draw(vtcx);
+    assert!(
+        vtcx.debug_bounds("kc-rec-select_all").is_some(),
+        "录制态文案块未渲染（芯片视觉没跟着录制态走）"
+    );
+    assert!(
+        vtcx.debug_bounds("kc-idle-select_all").is_none(),
+        "录制中的芯片不该还是空闲态"
+    );
+
+    // 按下组合：**只做预览，不写配置**（新交互：写值看失焦提交）
+    vtcx.simulate_keystrokes("ctrl-shift-a");
+    keys_draw(vtcx);
+    assert!(
+        vtcx.debug_bounds("kc-pending-select_all").is_some(),
+        "按下的组合应作为预览显示在芯片上"
+    );
+    assert_eq!(
+        keys_pending(vtcx, &scene).as_deref(),
+        Some("ctrl-shift-a"),
+        "pending 应记下物理键的规范串（ASCII，不是显示字形）"
+    );
+    assert!(
+        scene.events.borrow().is_empty(),
+        "录制中不得写配置（实得上行 {:?}）",
+        scene.events.borrow()
+    );
+
+    // 焦点移开 = 提交。真实路径是点**另一行**芯片：`window.focus` 换行 ⇒
+    // 这一行失焦 ⇒ 提交（面板在换行/失焦两处都会尝试，只有一方能过守卫）。
+    keys_click(vtcx, "kc-open");
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), 1, "提交只该上行一条：{events:?}");
+    let keys = keys_of_event(&events[0]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(keys.field("select_all"), Some("ctrl-shift-a"));
+    assert_eq!(keys.field("open"), Some(""), "其余动作不动");
+    assert_eq!(keys_pending(vtcx, &scene), None, "提交后 pending 清空");
+    assert_eq!(
+        keys_recording(vtcx, &scene),
+        Some(crate::ui::shell::keymap::KeyActionId::Open),
+        "换行后录制态转到新行（上一行已提交）"
+    );
+    keys_stop(vtcx, &scene);
+    assert_eq!(keys_recording(vtcx, &scene), None, "收口后无录制态");
+}
+
+/// ②b 提交的第二个入口：直接调 `commit_recording`（不依赖失焦事件的帧边界派发）。
+///
+/// 「点别的元素」在生产里也会走真实失焦，但那条链要等一帧才派发——本用例把
+/// 状态机本身钉死，`keys_recording_previews_then_commits_on_blur` 负责通路。
+#[gpui_kit::test]
+fn keys_commit_writes_whole_config(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    keys_click(vtcx, "kc-select_all");
+    vtcx.simulate_keystrokes("ctrl-shift-a");
+    keys_commit(
+        vtcx,
+        &scene,
+        crate::ui::shell::keymap::KeyActionId::SelectAll,
+    );
+
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), 1, "提交只该上行一条：{events:?}");
+    let keys = keys_of_event(&events[0]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(keys.field("select_all"), Some("ctrl-shift-a"));
+    assert_eq!(keys.field("open"), Some(""), "其余动作不动");
+    assert_eq!(keys_recording(vtcx, &scene), None, "提交即结束录制");
+
+    // 落库 → 镜像 → 回读：行态跟着变（芯片回空闲态，显示新键位）
+    keys_reload(vtcx, &scene);
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-idle-select_all")).is_some(),
+        "提交结束后芯片回到空闲态文案"
+    );
+    assert!(
+        vtcx.debug_bounds("kc-pending-select_all").is_none(),
+        "pending 已清，芯片不该还挂着预览"
+    );
+}
+
+/// ②c 没按键就移开焦点 = 取消（收口但不写配置）。
+#[gpui_kit::test]
+fn keys_commit_without_pending_is_a_noop(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    keys_click(vtcx, "kc-select_all");
+    keys_commit(
+        vtcx,
+        &scene,
+        crate::ui::shell::keymap::KeyActionId::SelectAll,
+    );
+
+    assert!(
+        scene.events.borrow().is_empty(),
+        "一个字没按就移开焦点不得写配置（实得 {:?}）",
+        scene.events.borrow()
+    );
+    assert_eq!(keys_recording(vtcx, &scene), None, "录制应收口");
+    // 键盘必须同时恢复：没有订阅残留
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(scene.quits.get(), 1, "收口后 ctrl-q 应恢复派发");
+}
+
+/// ③ 冲突拒绝：录到已被别的动作占用的键 → 失焦提交**无**上行事件 +
+/// 指名占用者 + 录制收口（键盘不再被吞）。
+///
+/// 冲突发生在**提交**（失焦）而不是键入时：录制中按键只进 pending，用户可以先
+/// 看完预览再决定；被拒时红字挂在那一行下面。
+#[gpui_kit::test]
+fn keys_conflict_on_commit_is_refused_with_occupant(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    // 基线（反假绿）：没在录制时 `ctrl-q` 真的会派发「退出」
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(scene.quits.get(), 1, "未录制时 ctrl-q 应派发探针动作");
+
+    keys_click(vtcx, "kc-select_all");
+    vtcx.simulate_keystrokes("ctrl-q");
+    keys_draw(vtcx);
+    assert_eq!(
+        scene.quits.get(),
+        1,
+        "录制中 ctrl-q 必须被吞（不得退出程序）"
+    );
+    assert!(
+        scene.events.borrow().is_empty(),
+        "录制中不写配置（实得上行 {:?}）",
+        scene.events.borrow()
+    );
+    assert!(
+        vtcx.debug_bounds("kconflict-select_all").is_none(),
+        "冲突由**失焦提交**触发——键入时不该报"
+    );
+
+    // 失焦提交 → 撞上「退出」占用
+    keys_commit(
+        vtcx,
+        &scene,
+        crate::ui::shell::keymap::KeyActionId::SelectAll,
+    );
+    keys_draw(vtcx);
+    assert!(
+        scene.events.borrow().is_empty(),
+        "冲突必须**不写配置**（实得上行 {:?}）",
+        scene.events.borrow()
+    );
+    assert_eq!(keys_recording(vtcx, &scene), None, "被拒后录制收口");
+    assert_eq!(keys_pending(vtcx, &scene), None, "被拒后 pending 清空");
+    assert!(
+        vtcx.debug_bounds("kconflict-select_all").is_some(),
+        "冲突提示应渲染在**被拒的那一行**"
+    );
+    assert!(
+        vtcx.debug_bounds("kconflict-open").is_none(),
+        "冲突提示不该跑到别的行"
+    );
+    // 提示文案真的点名占用者（`{action}` 已替换成动作名）
+    let hint = settings_render::conflict_hint(crate::ui::shell::keymap::def_of(
+        crate::ui::shell::keymap::KeyActionId::Quit,
+    ));
+    assert!(
+        hint.contains(&crate::tr("keymap.action.quit")),
+        "冲突提示应含占用者动作名：{hint}"
+    );
+    // 录制已收口 ⇒ 键盘恢复派发（订阅必须随冲突一起释放，否则键盘被永久吞掉）
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(
+        scene.quits.get(),
+        2,
+        "被拒之后 ctrl-q 必须恢复派发（拦截图不得滞留）"
+    );
+}
+
+/// ④ `Delete` 照常录成绑定（旧契约的「Delete = 禁用」作废：删除绑定改由 ✕）。
+///
+/// 前提：`delete` 默认被「删除」动作占着，得先腾出来（`delete` 如今只是个普通
+/// 键位串，不再有「按下即写入哨兵」的特权）。
+#[gpui_kit::test]
+fn keys_delete_is_recorded_as_binding(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    // 腾键位：✕ 掉「删除」动作的绑定
+    keys_click(vtcx, keys_sel("kremove-delete"));
+    keys_reload(vtcx, &scene);
+    let before = scene.events.borrow().len();
+
+    keys_click(vtcx, "kc-open");
+    vtcx.simulate_keystrokes("delete");
+    assert_eq!(
+        keys_pending(vtcx, &scene).as_deref(),
+        Some("delete"),
+        "Delete 应作为普通键位进 pending"
+    );
+    keys_commit(vtcx, &scene, crate::ui::shell::keymap::KeyActionId::Open);
+
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), before + 1, "实得 {events:?}");
+    let keys = keys_of_event(&events[before]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(
+        keys.field("open"),
+        Some("delete"),
+        "Delete 该被录成绑定，而不是禁用哨兵"
+    );
+    assert_eq!(keys_recording(vtcx, &scene), None, "提交即结束录制");
+    assert_eq!(
+        keys.field("delete"),
+        Some(settings_render::KEYS_DISABLED),
+        "腾键位那一步写的是「未绑定」哨兵"
+    );
+}
+
+/// ⑤ ✕ = 删除该动作的绑定：上行 `Keys{该字段 == "none"}`，行态转「未绑定」。
+#[gpui_kit::test]
+fn keys_remove_button_writes_none(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    keys_click(vtcx, keys_sel("kremove-open"));
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), 1, "点 ✕ 只该上行一条：{events:?}");
+    let keys = keys_of_event(&events[0]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(
+        keys.field("open"),
+        Some(settings_render::KEYS_DISABLED),
+        "✕ 写的是「未绑定」哨兵"
+    );
+    assert_eq!(keys.field("select_all"), Some(""), "其余动作不受影响");
+
+    // 落库 → 回读：该行芯片转「未绑定」态（行内不再有旧版式的「禁用」按钮）
+    keys_reload(vtcx, &scene);
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-unbound-open")).is_some(),
+        "删除绑定后该行应显示「未绑定」"
+    );
+    assert!(vtcx.debug_bounds(keys_sel("kdisable-open")).is_none());
+    assert!(vtcx.debug_bounds(keys_sel("kreset-open")).is_none());
+}
+
+/// ⑥ 页头「全部恢复默认」→ 整份出厂默认（未绑定的行一并复位）。
+#[gpui_kit::test]
+fn keys_reset_all_restores_defaults(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    // 先删掉一个绑定（「整份复位」才有可观测差异）
+    keys_click(vtcx, keys_sel("kremove-select_all"));
+    keys_reload(vtcx, &scene);
+    let before = scene.events.borrow().len();
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-unbound-select_all"))
+            .is_some(),
+        "删掉绑定后该行应为「未绑定」"
+    );
+
+    keys_click(vtcx, "kreset-all");
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), before + 1, "实得 {events:?}");
+    let keys = keys_of_event(&events[before]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(keys, hzip_config::Keys::default());
+
+    keys_reload(vtcx, &scene);
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-unbound-select_all"))
+            .is_none(),
+        "全部恢复默认后不该再有「未绑定」行"
+    );
+}
+
+/// ⑦ Esc 取消：丢弃 pending、不写配置，且**真的退订**——此后同一个键恢复原有派发。
+///
+/// 这条用例守的是本切片最容易出的重症 bug：只把「录制态」清掉而漏 drop
+/// `Subscription`，界面看不出区别（芯片回空闲态），但全窗口键盘从此被吞——
+/// 所以断言面必须是「按键恢复派发」，不能只看 `recording` 字段。
+#[gpui_kit::test]
+fn keys_escape_releases_keyboard(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(scene.quits.get(), 1, "基线：未录制时 ctrl-q 正常派发");
+
+    keys_click(vtcx, "kc-select_all");
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(scene.quits.get(), 1, "录制中 ctrl-q 被吞");
+    assert_eq!(keys_pending(vtcx, &scene).as_deref(), Some("ctrl-q"));
+    let seen = scene.events.borrow().len();
+
+    vtcx.simulate_keystrokes("escape");
+    keys_draw(vtcx);
+    assert_eq!(keys_recording(vtcx, &scene), None, "Esc 应结束录制");
+    assert_eq!(
+        keys_pending(vtcx, &scene),
+        None,
+        "Esc 应丢弃未提交的 pending"
+    );
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-pending-select_all"))
+            .is_none(),
+        "取消后芯片上不该还挂着预览"
+    );
+    assert_eq!(
+        scene.events.borrow().len(),
+        seen,
+        "Esc 取消不得写配置（不得上行任何事件）"
+    );
+    assert!(
+        vtcx.debug_bounds(keys_sel("kconflict-select_all"))
+            .is_none(),
+        "取消后冲突提示应一并清掉"
+    );
+
+    // 订阅真的没了：同一个键恢复原有派发
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(
+        scene.quits.get(),
+        2,
+        "Esc 之后 ctrl-q 必须恢复派发（订阅没 drop = 键盘被永久吞）"
+    );
+}
+
+/// ⑧ 收口路径（切主页签 / 关面板 / 壳层离开设置页 / reload）：**丢弃**未提交的
+/// pending——与「失焦提交」是两条语义相反的路。
+///
+/// 走的是壳层调的那个入口（`stop_recording`，见
+/// `shell::tests::leaving_settings_tab_releases_key_recording`），即**没有焦点变化**
+/// 的那条路：焦点若已经移开，`§9.2` 的「焦点离开芯片 = 提交」会先落地（见下一条
+/// 用例）——本节只管「录到一半被收口」这半边：丢弃 + 释放键盘。
+#[gpui_kit::test]
+fn keys_stop_recording_discards_pending(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(scene.quits.get(), 1);
+
+    keys_click(vtcx, "kc-select_all");
+    vtcx.simulate_keystrokes("ctrl-shift-a");
+    assert_eq!(
+        keys_pending(vtcx, &scene).as_deref(),
+        Some("ctrl-shift-a"),
+        "先确认录制里真的攒下了 pending"
+    );
+    assert_eq!(
+        keys_recording(vtcx, &scene),
+        Some(crate::ui::shell::keymap::KeyActionId::SelectAll)
+    );
+
+    keys_stop(vtcx, &scene);
+    assert_eq!(keys_recording(vtcx, &scene), None, "收口应结束录制");
+    assert_eq!(
+        keys_pending(vtcx, &scene),
+        None,
+        "收口应丢弃未提交的 pending"
+    );
+    assert!(
+        scene.events.borrow().is_empty(),
+        "收口不得提交（实得上行 {:?}）",
+        scene.events.borrow()
+    );
+
+    // 画一帧：芯片上不该还挂着预览（pending 已丢）
+    keys_draw(vtcx);
+    assert!(
+        vtcx.debug_bounds(keys_sel("kc-pending-select_all"))
+            .is_none()
+    );
+    // 键盘同时恢复派发（拦截图必须随录制态一起释放）
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(
+        scene.quits.get(),
+        2,
+        "收口后 ctrl-q 必须恢复派发（订阅没 drop = 键盘被永久吞）"
+    );
+}
+
+/// ⑧b 真实鼠标点别处（这里点设置内页签）：焦点先离开芯片 ⇒ 按 §9.2 的
+/// 「焦点离开芯片 = 提交」**先落地**，页签处理器随后收口（不重复写、键盘释放）。
+///
+/// 这一条把「移开焦点即生效」钉在**真实鼠标链路**上：gpui 的可聚焦元素在点击
+/// 时会接过焦点，而焦点事件在帧边界派发——故「点页签丢弃 pending」在生产里
+/// 通常表现为「先提交、再收口」。收口那一半的语义由
+/// [`keys_stop_recording_discards_pending`] 单独守住。
+#[gpui_kit::test]
+fn keys_clicking_elsewhere_commits_before_release(cx: &mut gpui_kit::TestAppContext) {
+    let (vtcx, scene) = keys_scene(cx);
+
+    keys_click(vtcx, "kc-select_all");
+    vtcx.simulate_keystrokes("ctrl-shift-a");
+    assert!(scene.events.borrow().is_empty(), "录制中不写配置");
+
+    // 点「常规」页签（下标 0）：焦点离开芯片 → 提交；随后页签处理器收口
+    keys_click(vtcx, keys_sel("settings-tab-0"));
+    keys_draw(vtcx);
+    let events = scene.events.borrow().clone();
+    assert_eq!(events.len(), 1, "焦点移开应提交一条（实得 {events:?}）");
+    let keys = keys_of_event(&events[0]).expect("上行必须是 SettingChanged{Keymap, Keys}");
+    assert_eq!(keys.field("select_all"), Some("ctrl-shift-a"));
+    assert_eq!(keys_recording(vtcx, &scene), None, "页签切换应收口录制");
+    assert_eq!(keys_pending(vtcx, &scene), None);
+
+    vtcx.simulate_keystrokes("ctrl-q");
+    assert_eq!(
+        scene.quits.get(),
+        1,
+        "收口后 ctrl-q 必须恢复派发（拦截图必须随录制态一起释放）"
     );
 }

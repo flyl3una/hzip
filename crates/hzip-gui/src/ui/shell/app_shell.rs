@@ -141,12 +141,16 @@ impl AppShell {
     pub fn update_from_state(&mut self, cx: &mut App, snap: &AppStateUiSnapshot) {
         self.state.update(cx, |s, cx| {
             // T-PERF2：未变化不 notify——apply 的变化检测就是重渲门控
-            //（旧实现无条件 notify，检测成本照付、收益为零；任务运行时
+            //（旧实现无条件 notify，检测成本照付、收益为零，任务运行时
             // 10 Hz 进度 tick 从此不再触发全窗口重渲）
             if s.apply(snap) {
                 cx.notify();
             }
         });
+        // 快照可能把页签从设置页切走（`ShellState::apply` 的「聚焦浏览页」）——
+        // 那条路不经过 `switch_tab`，录制态必须在这里同样收口（见
+        // `cancel_recording_if_left_settings`）。
+        self.cancel_recording_if_left_settings(cx);
     }
     /// 配置缓存刷新（T-PERF3）：设置落盘 / MRU·菜单数据变化后由泵调用——
     /// 渲染帧的 MenuContext/工具栏样式读 `ShellState.cfg` 缓存，读盘只发生
@@ -189,6 +193,24 @@ impl AppShell {
             }
         });
         (self.handlers.on_tab)(tab);
+        self.cancel_recording_if_left_settings(cx);
+    }
+
+    /// 离开设置页时收掉可能存在的按键录制（T-KEYS：录制挂在 App 级拦截器上，
+    /// 不随面板不渲染而释放）。
+    ///
+    /// 两个调用点覆盖两条切页签路径：① [`Self::switch_tab`]（页签点击/菜单/快捷键
+    /// 直接改 `ShellState.tab`，不会经过快照）；② [`Self::update_from_state`]
+    /// （快照驱动——例如「打开/更换档案 → 聚焦浏览页」那条 `ShellState::apply`
+    /// 内的切换）。不加②时，录制中打开一个新档案就会把键盘留在被吞状态。
+    fn cancel_recording_if_left_settings(&mut self, cx: &mut App) {
+        if self.settings_panel.is_none() {
+            return; // 面板没开过：无录制可收
+        }
+        if self.state.read(cx).tab == MainTab::Settings {
+            return; // 还在设置页：录制继续
+        }
+        crate::ui::views::settings_layout::cancel_key_recording_if_open(cx);
     }
 
     /// 关闭页签（页签栏关闭钮唯一入口）。

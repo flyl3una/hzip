@@ -347,27 +347,13 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
         );
         cx.set_quit_mode(gpui_kit::QuitMode::LastWindowClosed);
         // 菜单加速键（设计 §1.6；`Main` = AppShell 的 key_context）。
+        // 唯一事实源 = `ui::shell::keymap::ACTIONS`（含 `[keys]` 配置的三态语义：
+        // 空串=默认 / `"none"`=禁用 / 自定义串需可解析，见该模块文档）。
+        // `install` 幂等且**保留 kit 自己绑的键**（kit 的 input/list/dialog/菜单
+        // 都用同一个 App 级 keymap，裸清空会打残整台应用的键盘）。
         // 菜单项的快捷键提示由 kit 按 `Kbd::binding_for_action` 反查本表
-        // （`PopupMenu::render_key_binding`）——没有绑定就不显示。
-        {
-            use crate::ui::shell as sh;
-            cx.bind_keys([
-                gpui_kit::KeyBinding::new("ctrl-o", sh::Open, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-e", sh::Extract, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-shift-n", sh::NewWindow, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-a", sh::SelectAll, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-i", sh::SelectInvert, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-c", sh::CopyFiles, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-v", sh::Paste, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-f", sh::FindFile, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-t", sh::TestIntegrity, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-,", sh::Settings, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-j", sh::ShowJobs, Some("Main")),
-                gpui_kit::KeyBinding::new("f5", sh::RefreshView, Some("Main")),
-                gpui_kit::KeyBinding::new("delete", sh::DeleteFiles, Some("Main")),
-                gpui_kit::KeyBinding::new("ctrl-q", sh::Quit, Some("Main")),
-            ]);
-        }
+        // （`PopupMenu::render_key_binding`）——被禁用的动作没有绑定，也就不显示。
+        crate::ui::shell::keymap::install(cx, &config.keys);
         let on_closed = {
             let data = data.clone();
             let registry = registry.clone();
@@ -882,13 +868,14 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                             // 刷：每个窗口有自己的 AppData（浏览态/任务/设置投影）
                             // 与 shell 实体。
                             // 主窗口（primary）先刷——它是进度窗/弹窗宿主首选。
-                            // 值在锁内取出（`theme_replay`/`lang_ix`/`job_rows` 必被赋值：
-                            // 唯一赋值点在下方的 primary 锁内）。
+                            // 值在锁内取出（`theme_replay`/`lang_ix`/`keymap_replay`/
+                            // `job_rows` 必被赋值：唯一赋值点在下方的 primary 锁内）。
                             let prompt_now: Option<crate::ui::contracts::UiDialogPrompt>;
                             let lang_ix;
                             let theme_replay;
                             let density_ix;
                             let file_icons_system;
+                            let keymap_replay: Option<hzip_config::Keys>;
                             let job_rows_all: std::sync::Arc<Vec<crate::viewmodel::JobRow>>;
                             // 锁外要执行的后台请求（见下方 spawn 调用）
                             let reopen_path: Option<std::path::PathBuf>;
@@ -936,6 +923,18 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                                     crate::viewmodel::SettingId::FileTypeIcons,
                                 )
                                 .then_some(d.settings.file_type_icons_ix == 0);
+                                // 键位（T-KEYS）：与 theme/density/file_icons **同款
+                                // 内存镜像口径**——`store_keys` 已就地更新镜像，而
+                                // 落盘是异步的（读盘会拿到上一拍的值，见上方
+                                // `theme_replay` 的用户实报缺陷）；`cfg!(test)` 下
+                                // `persist` 根本不落盘，读盘还会读到开发机的真实
+                                // config.toml。
+                                // 用**惰性** `then`（不是 `then_some`）：泵每 wake 都
+                                // 跑这段，`then_some` 会无条件克隆 14 个 `String`
+                                // ——只有真的收到 `SettingId::Keymap` 才该付这笔钱。
+                                keymap_replay =
+                                    batch_requested(&batch, crate::viewmodel::SettingId::Keymap)
+                                        .then(|| d.settings.keys.clone());
                                 job_rows_all = snap.job_rows.clone();
                                 drop(d);
                                 // 锁外：起后台线程干真活（见上「只请求」注释）
@@ -1033,6 +1032,19 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                                 // 重新登记）。重绘让本帧立刻换掉/换上系统位图。
                                 if let Some(system) = file_icons_system {
                                     crate::ui::widgets::file_icon::set_enabled(cx, system);
+                                    cx.refresh_windows();
+                                }
+                                // 快捷键（T-KEYS）：`keymap_replay` 只在本批出现
+                                // `SettingId::Keymap` 时才被赋值（判定就那一次调用，
+                                // 别在这里再问一遍批），值取 **AppData 内存镜像**，
+                                // 与 theme/density/file_icons 同款口径——落盘是异步的
+                                // （读盘会慢一拍；`cfg!(test)` 下 `persist` 不落盘，
+                                // 读盘还会命开发机的真实 config.toml）。`install`
+                                // 幂等且保留 kit 绑定（见 keymap 模块文档）。
+                                // 必须重绘：菜单项的快捷键提示是 kit 按 keymap
+                                // 反查出来的，绑定变了提示才会跟着变。
+                                if let Some(keys) = &keymap_replay {
+                                    crate::ui::shell::keymap::install(cx, keys);
                                     cx.refresh_windows();
                                 }
                                 crate::ui::views::progress::dispatch_rows(cx, &job_rows_all);

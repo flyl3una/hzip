@@ -24,6 +24,8 @@ fn defaults_match_b1() {
     assert_eq!(c.ui.font_family, "");
     assert_eq!(c.ui.font_size, FONT_SIZE_DEFAULT);
     assert_eq!(c.ui.density, DENSITY_DEFAULT);
+    // 快捷键：出厂 = 全空串 = 全部走内置默认键位（T-KEYS）
+    assert_eq!(c.keys, Keys::default());
 }
 
 /// 圆角弧度归一：0 是**合法值**（直角），越界回落默认（0），界内原样。
@@ -414,4 +416,217 @@ fn load_sees_value_enqueued_by_save_async() {
     assert_eq!(Config::load().ui.font_size, 19);
 
     unsafe { std::env::remove_var("HZIP_CONFIG") };
+}
+
+// ===== [keys] 快捷键（T-KEYS；切片 A） =====
+
+/// 冻结契约：14 个动作字段（顺序 = 设置页「快捷键」页签行序 = T-KEYS §2 表）。
+const KEYS_FIELDS: [&str; 14] = [
+    "open",
+    "extract",
+    "new_window",
+    "select_all",
+    "select_invert",
+    "copy",
+    "paste",
+    "find",
+    "test_integrity",
+    "settings",
+    "show_jobs",
+    "refresh",
+    "delete",
+    "quit",
+];
+
+/// 各字段的内置默认键位（GUI `keymap::ACTIONS::default_spec` 的同一批字面量；
+/// 模板注释里写的就是这批）。本 crate 不认识键位语义，这里只用来守住模板不漂移。
+const KEYS_DEFAULTS: [(&str, &str); 14] = [
+    ("open", "ctrl-o"),
+    ("extract", "ctrl-e"),
+    ("new_window", "ctrl-shift-n"),
+    ("select_all", "ctrl-a"),
+    ("select_invert", "ctrl-i"),
+    ("copy", "ctrl-c"),
+    ("paste", "ctrl-v"),
+    ("find", "ctrl-f"),
+    ("test_integrity", "ctrl-t"),
+    ("settings", "ctrl-,"),
+    ("show_jobs", "ctrl-j"),
+    ("refresh", "f5"),
+    ("delete", "delete"),
+    ("quit", "ctrl-q"),
+];
+
+/// 取出 `DEFAULT_TEMPLATE` 里 `[keys]` 段的字段行（模板要求**全部注释掉**），
+/// 返回 `(键名, 去掉行首注释符后的整行)`；同时断言段内没有解注释的赋值行。
+fn template_keys_assignments() -> Vec<(String, String)> {
+    let is_assignment = |body: &str| -> Option<String> {
+        let name: String = body
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let rest = body[name.len()..].trim_start();
+        (!name.is_empty() && rest.starts_with('=')).then_some(name)
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut in_keys = false;
+    for line in DEFAULT_TEMPLATE.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_keys = t == "[keys]";
+            continue;
+        }
+        if !in_keys {
+            continue;
+        }
+        match t.strip_prefix('#') {
+            Some(rest) => {
+                let body = rest.trim();
+                if let Some(name) = is_assignment(body) {
+                    out.push((name, body.to_string()));
+                }
+            }
+            // 模板是**给人手改的初始状态**：全默认 ⇒ 每一行都该是注释
+            None => assert!(
+                is_assignment(t).is_none() || t.is_empty(),
+                "[keys] 模板不得预置解注释的字段行：{t:?}"
+            ),
+        }
+    }
+    out
+}
+
+#[test]
+fn keys_field_unknown_key_is_none() {
+    let mut k = Keys::default();
+    // 未知键名 → None（不 panic、不猜一个「最像」的字段）
+    assert_eq!(k.field("nope"), None);
+    assert_eq!(k.field(""), None);
+    assert_eq!(k.field("delete_all"), None);
+    // 大小写敏感：TOML 键名就是小写下划线字面量，不做大小写折叠
+    assert_eq!(k.field("OPEN"), None);
+    assert!(k.field_mut("nope").is_none());
+    assert!(k.field_mut("").is_none());
+    assert!(k.field_mut("SelectAll").is_none());
+}
+
+#[test]
+fn keys_field_roundtrip_all_known_keys() {
+    let mut k = Keys::default();
+    for (i, name) in KEYS_FIELDS.iter().enumerate() {
+        let raw = format!("ctrl-{i}");
+        *k.field_mut(name).unwrap_or_else(|| panic!("未知键 {name}")) = raw.clone();
+        assert_eq!(k.field(name), Some(raw.as_str()), "{name} 写入后应读回");
+    }
+    // 两个 match（field / field_mut）的键名集合必须一致：换个前缀逐个再验一遍
+    for (i, name) in KEYS_FIELDS.iter().enumerate() {
+        *k.field_mut(name).expect("field_mut 认识该键") = format!("alt-{i}");
+        assert_eq!(k.field(name), Some(format!("alt-{i}").as_str()));
+    }
+    // 序列化键名 + 顺序 = 冻结字段表（改字段名/换顺序会在这里失败；
+    // 顺序即设置页行序，GUI 那边不再单独维护一份）
+    let text = toml::to_string(&Keys::default()).expect("序列化");
+    let names: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.split('=').next())
+        .map(str::trim)
+        .collect();
+    assert_eq!(names, KEYS_FIELDS, "Keys 字段名/顺序与契约漂移");
+}
+
+/// 三态原样存取：`""`（内置默认）/ `"none"`（禁用）/ 自定义串——**逐字**往返，
+/// 本层不做任何归一（非法串回落默认是 GUI 消费方的运行时裁定）。
+#[test]
+fn keys_three_state_roundtrips_verbatim() {
+    let mut k = Keys::default();
+    k.field_mut("select_all").expect("键存在").clear(); // "" = 内置默认
+    *k.field_mut("select_invert").expect("键存在") = "none".into(); // 禁用
+    *k.field_mut("open").expect("键存在") = "ctrl-alt-x".into(); // 自定义
+    *k.field_mut("quit").expect("键存在") = "kbd-nonsense-".into(); // 非法串也直存
+
+    // ① 结构层往返
+    let text = toml::to_string(&k).expect("序列化");
+    assert_eq!(toml::from_str::<Keys>(&text).expect("反序列化"), k);
+
+    // ② 整份配置落盘再读（GUI 的真实路径：save → 冷启动 load）
+    let mut cfg = Config::defaults();
+    cfg.keys = k.clone();
+    let d = tmp();
+    let p = d.path().join("cfg.toml");
+    std::fs::write(&p, toml::to_string(&cfg).expect("序列化")).expect("write");
+    let back = Config::load_from(&p);
+    assert_eq!(back.keys, k, "三态不得被归一或改写");
+    assert_eq!(back.keys.field("select_all"), Some(""), "空串 = 用内置默认");
+    assert_eq!(back.keys.field("select_invert"), Some("none"), "禁用哨兵");
+    assert_eq!(back.keys.field("open"), Some("ctrl-alt-x"));
+    assert_eq!(back.keys.field("quit"), Some("kbd-nonsense-"));
+}
+
+/// 旧配置（没有 `[keys]` 节）必须静默回落默认，而不是报错/丢整份配置。
+#[test]
+fn keys_section_absent_or_partial_falls_back_to_default() {
+    // ① 完全没有 [keys] 节
+    let c: Config = toml::from_str("[ui]\ntheme = \"dark\"\n").expect("解析");
+    assert_eq!(c.keys, Keys::default(), "缺 [keys] ⇒ 全默认（全空串）");
+    assert_eq!(c.ui.theme, "dark", "同文件其余节照常生效");
+
+    // ② 只写了一个字段：其余各自回落
+    let c: Config = toml::from_str("[keys]\nopen = \"none\"\n").expect("解析");
+    assert_eq!(c.keys.field("open"), Some("none"));
+    assert_eq!(c.keys.field("extract"), Some(""));
+
+    // ③ 未知动作名忽略（旧版本删掉的动作 / 用户手滑）
+    let c: Config =
+        toml::from_str("[keys]\nopen = \"f2\"\nfuture_action = \"ctrl-y\"\n").expect("解析");
+    assert_eq!(c.keys.field("open"), Some("f2"));
+
+    // ④ 空表也算「写了但什么都没设」
+    let c: Config = toml::from_str("[keys]\n").expect("解析");
+    assert_eq!(c.keys, Keys::default());
+}
+
+/// 模板（编译期内嵌单一来源）必须覆盖全部 14 个动作，且注释里给出的默认键位与
+/// 冻结表一致——用户照着模板手改时看到的就是「恢复默认」会回到的那条键位。
+#[test]
+fn default_template_documents_all_keys() {
+    assert!(
+        DEFAULT_TEMPLATE.lines().any(|l| l.trim() == "[keys]"),
+        "模板缺 [keys] 段"
+    );
+    let lines = template_keys_assignments();
+    assert_eq!(
+        lines.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+        KEYS_FIELDS,
+        "模板 [keys] 字段名/顺序与 Keys 漂移（漏写或多写）"
+    );
+
+    // 解注释后必须能解析：守住「模板里写的是合法 TOML + 合法字段名」。
+    // 整组解注释后按**整份配置**解析（`[keys]` 是表头，直接解析成 `Keys` 会
+    // 因为根表里没有 open 而静默回落全默认——那样这条测试就白测了）。
+    let text = format!(
+        "[keys]\n{}\n",
+        lines
+            .iter()
+            .map(|(_, l)| l.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let parsed = toml::from_str::<Config>(&text)
+        .expect("模板 [keys] 段解注释后可解析")
+        .keys;
+    for (name, want) in KEYS_DEFAULTS {
+        assert_eq!(
+            parsed.field(name),
+            Some(want),
+            "模板里 {name} 的默认键位漂移"
+        );
+    }
+
+    // 模板整份解析出来仍是「全空串」= 全用内置默认（注释掉的部分不参与）
+    assert_eq!(
+        toml::from_str::<Config>(DEFAULT_TEMPLATE)
+            .expect("模板可解析")
+            .keys,
+        Keys::default()
+    );
 }
