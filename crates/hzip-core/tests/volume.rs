@@ -403,3 +403,104 @@ fn edit_batch_renames_a_file_inside_a_volume() {
         "旧名字应消失：{names:?}"
     );
 }
+
+/// **多分区镜像**的编辑保存：变更必须落到**它自己那个分区**，隔壁分区一个字节不动。
+///
+/// 用户实报（2026-10-16）：「该镜像含多个卷（分区），暂不支持在其内部编辑」——多分区
+/// （EFI + root 是常态）此前一律拒绝写回。本用例用**真两分区 MBR 盘 + 两个真 ext4**
+/// 跑完 GUI 同款的链路（browse 拿读侧投影 id → `EditBatch + Replace` → 就地写），
+/// 并断言「改的是目标分区、另一个分区未被误写」——这是「按分区归集」唯一有意义的验收面。
+#[test]
+fn edit_batch_inside_a_two_partition_image_hits_the_right_partition() {
+    use hzip_core::jobs::{JobKind, JobSpec};
+    use hzip_format::{Change, ChangeSet};
+    use hzip_format_testkit::vol::{mbr_only, write_fs_into};
+    use hzip_progress::Outcome;
+
+    // 两个 1 MiB 对齐的 ext4 分区（各 8 MiB，与单分区夹具同量级）
+    let fs0 = FixtureFs::Ext4.image(&[("/p1.txt", b"one" as &[u8])]);
+    let fs1 = FixtureFs::Ext4.image(&[("/p2.txt", b"two" as &[u8])]);
+    const SECTOR: u64 = 512;
+    let start0 = 1u64 << 20;
+    let start1 = start0 + (fs0.len() as u64).next_multiple_of(1 << 20);
+    let total = start1 + fs1.len() as u64;
+    let mut disk = mbr_only(
+        &[
+            (
+                0x83,
+                (start0 / SECTOR) as u32,
+                (fs0.len() as u64 / SECTOR) as u32,
+            ),
+            (
+                0x83,
+                (start1 / SECTOR) as u32,
+                (fs1.len() as u64 / SECTOR) as u32,
+            ),
+        ],
+        total,
+    );
+    write_fs_into(&mut disk, start0, FixtureFs::Ext4, &[("/p1.txt", b"one")]);
+    write_fs_into(&mut disk, start1, FixtureFs::Ext4, &[("/p2.txt", b"two")]);
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("two-disks.img");
+    std::fs::write(&path, &disk).unwrap();
+    let local = dir.path().join("new.txt");
+    std::fs::write(&local, b"TWO").unwrap(); // 与原文等长：只考路由，不考扩容
+
+    let eng = engine(1, 1);
+    // ① 读侧投影：两个顶层行 + 各自分区内的条目（GUI 拿的就是这些 id）
+    let b = eng
+        .browse(hzip_format::Source::File(path.clone()), &Default::default())
+        .expect("打开两分区镜像");
+    let rows: Vec<(usize, String)> = b
+        .entries()
+        .iter()
+        .map(|e| (e.id, e.name.as_str().to_string()))
+        .collect();
+    let find = |want: &str| {
+        rows.iter()
+            .find(|(_, n)| n == want)
+            .map(|(id, _)| *id)
+            .unwrap_or_else(|| panic!("投影里应有 {want}：{rows:?}"))
+    };
+    let id_p1 = find("Partition 1/p1.txt");
+    let id_p2 = find("Partition 2/p2.txt");
+    assert!(
+        id_p2 > id_p1,
+        "分区 2 的条目 id 应排在分区 1 之后：{rows:?}"
+    );
+    drop(b);
+
+    // ② 改**分区 2** 的文件（GUI 双击编辑保存同款变更）
+    let mut spec = JobSpec::new(JobKind::EditBatch, path.clone());
+    spec.changes = Some(ChangeSet {
+        changes: vec![Change::Replace {
+            entry: id_p2,
+            src: local,
+        }],
+    });
+    let h = eng.submit(spec).unwrap();
+    match h.wait().unwrap() {
+        Outcome::Done(_) => {}
+        other => panic!("两分区镜像内的替换应 Done，实得 {other:?}"),
+    }
+
+    // ③ 复核：目标分区那条变了；**另一个分区一个字节没动**
+    let b = eng
+        .browse(hzip_format::Source::File(path.clone()), &Default::default())
+        .expect("提交后仍能打开");
+    let mut buf = Vec::new();
+    use std::io::Read as _;
+    b.read_entry(id_p2, PasswordRef::none())
+        .expect("读分区 2 的条目")
+        .read_to_end(&mut buf)
+        .unwrap();
+    assert_eq!(buf, b"TWO", "分区 2 的条目应为改后内容");
+    let mut keep = Vec::new();
+    b.read_entry(id_p1, PasswordRef::none())
+        .expect("读分区 1 的条目")
+        .read_to_end(&mut keep)
+        .unwrap();
+    assert_eq!(keep, b"one", "分区 1 的条目必须原样（不得被误写）");
+}

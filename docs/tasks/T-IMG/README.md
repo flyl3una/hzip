@@ -161,7 +161,7 @@ flowchart LR
 - [x] **T-IMG10 部分**（分区行：硬盘图标/类型列/语言化名 + `locales/vol.toml` 53 键双向完整性测试）——余：只读徽标与理由 tooltip、CLI 写侧动词
 - [ ] **T-IMG6 覆盖写与提交**（覆盖层/回放/幂等已实现并有用例；**余**：覆盖层扩容支持——VMDK 分配 grain 类写在覆盖模式下现以 `vol.unsupported.resize` 干净失败，见该卡 §已定边界）
 - [ ] **T-IMG0 组合/嵌套写回**（读侧组合链已通；写回外层未做）
-- [~] **T-IMG9 编辑管线接线**：core 的**路径选择**（单格式卷容器 ⇒ 就地写）与**变更路由**（档案级名/id → 卷内；单卷口径，多卷按键拒绝）已落地并有现实验证（`hzip-core/tests/volume.rs::edit_batch_inside_a_volume_writes_in_place`、`hzip-vol/tests/editor.rs` 7 条）；余：设置页三态开关、多分区归集（**「外部编辑器保存写回」已于 2026-10-16 落地**，见 T-IMG9「落地记录」）
+- [~] **T-IMG9 编辑管线接线**：core 的**路径选择**（单格式卷容器 ⇒ 就地写）与**变更路由**（档案级名/id → 卷内；**单卷与多卷都按分区归集**，2026-10-16 起）已落地并有现实验证（`hzip-core/tests/volume.rs::edit_batch_inside_a_volume_writes_in_place` + `::edit_batch_inside_a_two_partition_image_hits_the_right_partition`、`hzip-vol/tests/editor.rs` 11 条）；余：设置页三态开关（**「外部编辑器保存写回」与「多分区归集」已于 2026-10-16 落地**，见 T-IMG9「落地记录」）
 - [ ] **T-IMG13 加固**（fuzz/配额门槛/性能基线/交叉验证脚本）
 - [ ] **T-IMG14 文档与打包**（01/README/02 附录 C 已同步；余 CI/打包/体积登记）
 

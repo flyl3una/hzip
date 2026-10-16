@@ -492,6 +492,27 @@ pub fn selection_row_bg(cx: &App) -> Hsla {
         .blend(cx.theme().accent.opacity(SELECTION_ROW_BG_ALPHA))
 }
 
+/// **「大框」圆角 = 设置里的圆角 × 2**（用户口径 2026-10-16）。
+///
+/// 进度窗输出框、内容面板这类「大框」比按钮/输入框大一圈，圆角用**同一倍率**
+/// 直接套基础档会显得过方（用户实报）；故这类容器按 2 倍取。基础档仍是唯一事实源
+/// （配置 `[ui].corner_radius` → `theme.radius`），所以：
+///
+/// - 设置 = 0（直角）⇒ 大框也是 0（kit 方形模式的一致性不被破坏）；
+/// - 设置 = 6 ⇒ 大框 12；设置 = 20（上限）⇒ 40。
+///
+/// 与 `theme.radius_lg`（kit Dialog/Notification 档，4/3 倍）**不是一回事**：那个
+/// 由 `apply_theme_values` 写进全局主题、供 kit 组件内部消费，本函数是 hzip 自绘
+/// 容器的显式取值点。
+#[must_use]
+pub fn big_radius(cx: &App) -> gpui_kit::Pixels {
+    use gpui_kit::component::ActiveTheme as _;
+    cx.theme().radius * BIG_RADIUS_SCALE
+}
+
+/// 「大框」圆角倍率（[`big_radius`] 的唯一数源；0 与直角模式互不冲突）。
+pub const BIG_RADIUS_SCALE: f32 = 2.0;
+
 /// 浅色覆写（`init` 装配路径；T-GUI T25 起为 [`apply_theme`] 特例）。
 pub fn apply_light_theme(cx: &mut gpui_kit::App) {
     apply_theme(ThemeModeChoice::Light, cx);

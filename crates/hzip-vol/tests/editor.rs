@@ -505,3 +505,360 @@ fn append_keeps_the_trailing_slash_into_the_driver() {
         "尾 `/` 必须保到驱动那边"
     );
 }
+
+// ------------------------------------------------------------------ 多分区归集（2026-10-16）
+
+/// 两分区 mock：分区 0 = `etc/*`、分区 1 = `boot/*`（无标签 ⇒ 顶层行名 `Partition 1/2`）。
+///
+/// 用户实报「该镜像含多个卷（分区），暂不支持在其内部编辑」——多分区镜像（EFI + root 是
+/// 常态）此前一律拒绝写回。本组用例守的就是「按分区归集」：**id 型变更按 id 区间、
+/// 名字型变更按根名前缀**选分区，选不中一律拒绝，且 id 算术必须与读侧投影逐位一致。
+struct TwoPartFs {
+    part: usize,
+    indexed: AtomicBool,
+    applied: Recorder,
+}
+
+impl TwoPartFs {
+    fn new(part: usize, applied: Recorder) -> Self {
+        Self {
+            part,
+            indexed: AtomicBool::new(false),
+            applied,
+        }
+    }
+}
+
+impl FsVolume for TwoPartFs {
+    fn fs_id(&self) -> &'static str {
+        "mockfs"
+    }
+
+    fn caps(&self) -> FsCaps {
+        FsCaps {
+            write: true,
+            delete: true,
+            rename: true,
+            mkdir: true,
+            symlink: false,
+            times: false,
+            mode: false,
+            name_max: 255,
+            read_only_reason: None,
+        }
+    }
+
+    fn entries(&self, _limit: &EntryLimit, _cancel: &CancellationToken) -> VolResult<EntryTree> {
+        self.indexed.store(true, Ordering::SeqCst);
+        let mut tree = EntryTree::default();
+        match self.part {
+            0 => {
+                tree.entries.push(dir(0, "etc"));
+                tree.entries.push(file(1, "etc/fstab", 13));
+            }
+            _ => {
+                tree.entries.push(dir(0, "boot"));
+                tree.entries.push(file(1, "boot/vmlinuz", 5));
+            }
+        }
+        Ok(tree)
+    }
+
+    fn read_at(&self, _id: usize, _offset: u64, buf: &mut [u8]) -> VolResult<usize> {
+        buf.fill(0);
+        Ok(buf.len())
+    }
+
+    fn size_of(&self, _id: usize) -> VolResult<u64> {
+        Ok(13)
+    }
+
+    fn apply(
+        &mut self,
+        change: &Change,
+        _local: Option<&Path>,
+        _cancel: &CancellationToken,
+    ) -> VolResult<()> {
+        if !self.indexed.load(Ordering::SeqCst) {
+            return Err(VolError::Image("条目 ID 越界: 1（先调 entries()）".into()));
+        }
+        self.applied
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(match change {
+                Change::Replace { entry, .. } => format!("replace:{entry}"),
+                Change::Delete(id) => format!("delete:{id}"),
+                Change::Append { name, .. } => format!("append:{}", name.as_str()),
+                Change::MakeDir { name } => format!("mkdir:{}", name.as_str()),
+                Change::Rename { from, to } => {
+                    format!("rename:{}->{}", from.as_str(), to.as_str())
+                }
+                _ => "other".to_string(),
+            });
+        Ok(())
+    }
+
+    fn flush(&mut self) -> VolResult<()> {
+        Ok(())
+    }
+
+    fn audit(&self) -> VolResult<AuditSummary> {
+        Ok(AuditSummary::clean())
+    }
+}
+
+struct TwoPartHandler {
+    /// 每个分区一份记录器（断言「变更落到了哪个分区」）。
+    applied: [Recorder; 2],
+}
+
+impl VolumeHandler for TwoPartHandler {
+    fn id(&self) -> &'static str {
+        "mock"
+    }
+
+    fn open(&self, _dev: Arc<dyn BlockDevice>, _opts: &VolOptions) -> VolResult<Box<dyn Volume>> {
+        Ok(Box::new(TwoPartVolume {
+            applied: self.applied.clone(),
+        }))
+    }
+}
+
+struct TwoPartVolume {
+    applied: [Recorder; 2],
+}
+
+impl Volume for TwoPartVolume {
+    fn geometry(&self) -> Geometry {
+        Geometry {
+            virtual_size: 32 << 20,
+            sector_size: 512,
+            table: None,
+            is_sparse: false,
+            has_backing: false,
+        }
+    }
+
+    fn partitions(&self) -> VolResult<Vec<PartitionView>> {
+        Ok((0..2)
+            .map(|id| PartitionView {
+                id,
+                start: (id as u64 + 1) << 20,
+                len: 8 << 20,
+                type_byte: Some(0x83),
+                label: None, // 无标签 ⇒ 顶层行名 `Partition N`（界面同款）
+                type_name: "Linux".to_string(),
+                fs: Some(hzip_vol::FsKind::Ext4),
+            })
+            .collect())
+    }
+
+    fn open_fs(&self, part: Option<usize>) -> VolResult<Option<Box<dyn FsVolume>>> {
+        let ix = part.unwrap_or(0);
+        Ok(Some(Box::new(TwoPartFs::new(ix, self.applied[ix].clone()))))
+    }
+
+    fn caps(&self) -> VolCaps {
+        VolCaps {
+            writable: true,
+            in_place: true,
+            read_only_reason: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn flush(&mut self) -> VolResult<()> {
+        Ok(())
+    }
+}
+
+/// 两分区编辑器 + 两份记录器。
+fn two_part_editor(src: PathBuf) -> (VolumeEditor<TwoPartHandler>, Recorder, Recorder) {
+    let p0: Recorder = Arc::new(Mutex::new(Vec::new()));
+    let p1: Recorder = Arc::new(Mutex::new(Vec::new()));
+    let ed = VolumeEditor::open(
+        TwoPartHandler {
+            applied: [p0.clone(), p1.clone()],
+        },
+        Source::File(src),
+        VolOptions::default(),
+    )
+    .unwrap();
+    (ed, p0, p1)
+}
+
+fn cs(changes: Vec<Change>) -> ChangeSet {
+    ChangeSet { changes }
+}
+
+/// id 型变更：`Replace{entry}`/`Delete(id)` 按**读侧投影的 id 区间**落到对应分区。
+///
+/// 投影（两分区 × 各 2 条）：`0 = Partition 1`、`1 = Partition 1/etc`、
+/// `2 = Partition 1/etc/fstab`、`3 = Partition 2`、`4 = Partition 2/boot`、
+/// `5 = Partition 2/boot/vmlinuz`。
+#[test]
+fn multi_partition_id_changes_land_in_the_right_partition() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (ed, p0, p1) = two_part_editor(base_file(tmp.path()));
+    let ctx = Ctx::new(hzip_format::VolumeWriteMode::Overlay);
+
+    // 分区 2 的第 2 条（全局 5 → 卷内 1 = boot/vmlinuz）
+    ed.write_in_place(
+        cs(vec![Change::Replace {
+            entry: 5,
+            src: PathBuf::from("/tmp/x"),
+        }]),
+        &ctx.write_ctx(),
+    )
+    .expect("分区 2 的替换应成功");
+    // 分区 1 的第 2 条（全局 2 → 卷内 1 = etc/fstab）
+    ed.write_in_place(cs(vec![Change::Delete(2)]), &ctx.write_ctx())
+        .expect("分区 1 的删除应成功");
+
+    assert_eq!(recorded(&p0), vec!["delete:1"], "分区 1 只该收到自己那一条");
+    assert_eq!(
+        recorded(&p1),
+        vec!["replace:1"],
+        "分区 2 只该收到自己那一条（id 需减去本分区基数 4）"
+    );
+}
+
+/// 名字型变更：`Append`/`MakeDir`/`Rename` 按 `"{根名}/"` 前缀选分区并剥掉前缀。
+#[test]
+fn multi_partition_name_changes_land_in_the_right_partition() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (ed, p0, p1) = two_part_editor(base_file(tmp.path()));
+    let ctx = Ctx::new(hzip_format::VolumeWriteMode::Overlay);
+    let local = base_file(tmp.path());
+
+    ed.write_in_place(
+        cs(vec![
+            Change::Append {
+                src: local.clone(),
+                name: "Partition 2/boot/new.txt".into(),
+            },
+            Change::MakeDir {
+                name: "Partition 1/etc/sub/".into(),
+            },
+        ]),
+        &ctx.write_ctx(),
+    )
+    .expect("按名字选分区应成功");
+
+    assert_eq!(
+        recorded(&p0),
+        vec!["mkdir:etc/sub/"],
+        "尾 `/` 必须保到驱动（只建目录语义）"
+    );
+    assert_eq!(recorded(&p1), vec!["append:boot/new.txt"]);
+
+    // Rename 两种形态都过：完整路径（GUI 形态）与裸叶名（契约形态）
+    ed.write_in_place(
+        cs(vec![Change::Rename {
+            from: "Partition 2/boot/vmlinuz".into(),
+            to: "Partition 2/boot/vmlinuz2".into(),
+        }]),
+        &ctx.write_ctx(),
+    )
+    .expect("分区 2 内改名应成功");
+    ed.write_in_place(
+        cs(vec![Change::Rename {
+            from: "Partition 1/etc/fstab".into(),
+            to: "fstab2".into(),
+        }]),
+        &ctx.write_ctx(),
+    )
+    .expect("分区 1 内改名（裸叶名）应成功");
+
+    assert_eq!(
+        recorded(&p1),
+        vec!["append:boot/new.txt", "rename:boot/vmlinuz->boot/vmlinuz2"]
+    );
+    assert_eq!(
+        recorded(&p0),
+        vec!["mkdir:etc/sub/", "rename:etc/fstab->fstab2"]
+    );
+}
+
+/// 定不到目标的变更**一律拒绝**（顶层行、越界 id、无前缀名、跨分区改名），且不落驱动。
+#[test]
+fn unroutable_changes_are_refused_without_touching_any_partition() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (ed, p0, p1) = two_part_editor(base_file(tmp.path()));
+    let ctx = Ctx::new(hzip_format::VolumeWriteMode::Overlay);
+    let want_refusal = |cs: ChangeSet, why: &str| {
+        let err = ed.write_in_place(cs, &ctx.write_ctx()).unwrap_err();
+        assert!(
+            matches!(&err, hzip_error::HzipError::Unsupported { what }
+                if what == "vol.unsupported.change-route"),
+            "{why} 应拒绝：{err:?}"
+        );
+    };
+
+    want_refusal(cs(vec![Change::Delete(0)]), "顶层行（分区 1 本身）");
+    want_refusal(cs(vec![Change::Delete(3)]), "顶层行（分区 2 本身）");
+    want_refusal(
+        cs(vec![Change::Replace {
+            entry: 99,
+            src: PathBuf::from("/x"),
+        }]),
+        "越界 id",
+    );
+    want_refusal(
+        cs(vec![Change::Append {
+            src: PathBuf::from("/x"),
+            name: "boot/new.txt".into(),
+        }]),
+        "没有分区前缀的名字",
+    );
+    want_refusal(
+        cs(vec![Change::Rename {
+            from: "Partition 1/etc/fstab".into(),
+            to: "Partition 2/boot/fstab".into(),
+        }]),
+        "跨分区改名",
+    );
+
+    assert!(recorded(&p0).is_empty(), "被拒的变更不得落到分区 1");
+    assert!(recorded(&p1).is_empty(), "被拒的变更不得落到分区 2");
+}
+
+/// **id 算术必须与读侧投影一致**（防止写侧偏移与读侧漂移——漂了就写到隔壁分区去）。
+///
+/// 直接拿同一份两分区卷跑 [`VolumeReader`]，把它的行序/名字钉下来；上面的用例正是按
+/// 这份投影取 id 的（`entry_base` 的语义由此锚定）。
+#[test]
+fn editor_id_space_matches_the_read_projection() {
+    use hzip_format::ArchiveReader as _;
+    use hzip_format_testkit::vol::MemDevice;
+    use hzip_vol::reader::VolumeReader;
+
+    let handler = TwoPartHandler {
+        applied: [
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(Vec::new())),
+        ],
+    };
+    let dev: Arc<dyn BlockDevice> = Arc::new(MemDevice::new(1 << 20));
+    let vol = handler.open(dev, &VolOptions::default()).unwrap();
+    let reader = VolumeReader::build(vol, &EntryLimit::default(), &CancellationToken::new())
+        .expect("读侧投影应能建起来");
+    let rows: Vec<(usize, String)> = reader
+        .entries()
+        .unwrap()
+        .iter()
+        .map(|e| (e.id, e.name.as_str().to_string()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (0, "Partition 1".to_string()),
+            (1, "Partition 1/etc".to_string()),
+            (2, "Partition 1/etc/fstab".to_string()),
+            (3, "Partition 2".to_string()),
+            (4, "Partition 2/boot".to_string()),
+            (5, "Partition 2/boot/vmlinuz".to_string()),
+        ],
+        "读侧投影的 id/名字序即写侧路由的锚点"
+    );
+}

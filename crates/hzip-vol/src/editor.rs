@@ -20,6 +20,24 @@
 //! 绝不累积上一次的暂存。流源只在 `open_editor` 时 spool **一次**（流不可重放），
 //! 之后各次调用都以那个临时文件为底。
 //!
+//! # 多分区镜像：按分区归集（2026-10-16 起）
+//!
+//! 一个镜像可以有多个分区（EFI + root 是常态），读侧投影把每个分区做成一个**顶层行**
+//! 并给其条目加 `"{分区行名}/"` 前缀；写侧因此必须**按分区归集**：
+//!
+//! ```text
+//! 读侧投影 id（顺序编号）        写侧路由（route_to）
+//! 0  顶层行：Partition 1         名字型变更 → 按 "{根名}/" 前缀选分区
+//! 1  条目：Partition 1/etc       id 型变更 → 按 [entry_base, entry_base+count) 选分区
+//! 2  条目：Partition 1/etc/x      ↓
+//! 3  顶层行：Partition 2          目标分区的 FsVolume::apply（卷内路径 / 卷内 id）
+//! 4  条目：Partition 2/boot
+//! ```
+//!
+//! 两张表在 [`VolumeEditor::mount_routable`] 里**同时**建出来（同一遍列条目），且与读侧
+//! 同序、同限、同命名（`volume_root_names` 是唯一事实源）⇒ 不会漂移。指不到任何分区的
+//! 变更一律拒绝（`vol.unsupported.change-route`），**不猜**。
+//!
 //! # 失败语义（如实，不假装原子）
 //!
 //! - 应用变更/自检阶段失败 ⇒ **原档一个字节未动**（覆盖层随链丢弃）；
@@ -33,7 +51,15 @@ use crate::error::{VolError, VolResult};
 use crate::materialize::{self, SpoolFile};
 use crate::{FsVolume, VolOptions, VolumeHandler};
 use hzip_error::HzipError;
-use hzip_format::{ArchiveEditor, Change, ChangeSet, EntryName, Sink, WriteCtx, WriteReport};
+use hzip_format::{
+    ArchiveEditor, Change, ChangeSet, EntryId, EntryName, Sink, WriteCtx, WriteReport,
+};
+
+/// 「这条变更指不到任何分区」的稳定拒绝键。
+///
+/// 命中条件：名字不带任何分区根名前缀、或 id 落在所有分区的条目区间之外（含顶层行）。
+/// 拒绝好过猜——猜错分区会改坏**另一个**文件系统。
+const KEY_CHANGE_ROUTE: &str = "vol.unsupported.change-route";
 
 /// 编辑器持有的一次性源（流源在此 spool 一次，供多次调用复用）。
 enum OpenedSource {
@@ -55,6 +81,20 @@ impl OpenedSource {
     fn is_real(&self) -> bool {
         matches!(self, Self::File(_))
     }
+}
+
+/// 一个**可写分区**的路由目标（[`VolumeEditor::mount_routable`] 的产物）。
+///
+/// 三件事必须齐全，缺一条就会写错地方：
+/// - `root`：投影里的顶层行名（= 条目名前缀，唯一事实源 `volume_root_names`）；
+/// - `entry_base` / `count`：本分区在**读侧投影**里占的 id 区间
+///   （`[entry_base, entry_base + count)`）——id 型变更（`Replace`/`Delete`）靠它定位；
+/// - `fs`：本分区已挂载（且已建索引）的文件系统，变更直接交给它。
+struct Mounted {
+    root: String,
+    fs: Box<dyn FsVolume>,
+    entry_base: usize,
+    count: usize,
 }
 
 /// 卷编辑器：持有 handler（构造卷）+ 源 + 注册表。
@@ -109,64 +149,79 @@ impl<H: VolumeHandler + Send + Sync + 'static> VolumeEditor<H> {
         )
     }
 
-    /// 挂载卷里**可写**的文件系统（取第一个可挂载的分区），并返回该卷的**顶层行名**
-    /// （写侧路由要用它剥前缀——与读侧投影同一份命名逻辑，见 `volume_root_names`）。
+    /// 挂载卷里**每个可写分区**，并建出「全局投影 id ↔ （分区, 卷内 id）」的对照表。
     ///
     /// # 为什么这里必须先列一次条目（2026-10-16 由 vmdk 代理实测暴露的缺陷）
     ///
     /// 驱动们的 `EntryId` 是**它们 `entries()` 里那张表的下标**（ext4 = inode/路径表、
     /// FAT/NTFS = id→路径表）；`entries()` 之前表是空的，而 `apply` 只认那张表 ⇒
     /// 不先列一次就 `apply`，`Change::Replace{entry}` / `Delete(id)` 必然报
-    /// 「条目 ID 越界（先调 entries()）」。故挂载后**先列一次**（结果丢弃，要的是建表
-    /// 这个副作用）。`Append` 不需要 id，早先用例因此没暴露它。
+    /// 「条目 ID 越界（先调 entries()）」。
     ///
-    /// # 单卷限制（本里程碑）
+    /// # 列条目同时承担 **id 算术**（多分区写回的前提）
     ///
-    /// 多分区镜像的变更需要**按分区归集**（core 侧还得知道每个条目的分区），
-    /// 本期明确拒绝（`vol.unsupported.change-route`）而不是猜一个分区去写。
-    fn mount_writable(
+    /// 读侧投影（[`hzip_vol::reader::VolumeReader::build`]）的全局 id 是**顺序编号**：
+    /// 逐分区依次「顶层行占 1 个 id → 该分区逐条占 id」，且同序同限（`EntryLimit::
+    /// default()`）。故写侧要按 id 找到分区，必须**按同样顺序把每个分区都列一遍**并
+    /// 累加偏移 —— 这也是为什么本函数对**不可写**的分区同样要列（它们照样占 id，
+    /// 漏掉就会把变更写到隔壁分区去）。两份投影因此不会漂移（同序、同限、同命名
+    /// `volume_root_names`）。
+    ///
+    /// # 单分区与多分区同一条路
+    ///
+    /// 曾经「多分区一律拒绝」（`vol.unsupported.change-route`，2026-10-16 用户实报
+    /// 「该镜像含多个卷（分区），暂不支持在其内部编辑」）；现在按分区归集，只有
+    /// **认不出目标分区**的变更才拒绝（见 [`route_to`]）——拒绝永远优于猜一个分区去写。
+    fn mount_routable(
         &self,
         chain: &Chain,
         cancel: &hzip_progress::CancellationToken,
-    ) -> VolResult<(Box<dyn FsVolume>, String)> {
+    ) -> VolResult<Vec<Mounted>> {
         let vol = self.handler.open(chain.device(), &self.opts)?;
         let parts = vol.partitions()?;
         let has_table = !parts.is_empty();
         let views: Vec<crate::PartitionView> = if has_table {
-            parts.clone()
+            parts
         } else {
             vec![crate::partition::whole_view(chain.device().size_bytes())]
         };
         let roots = crate::reader::volume_root_names(&views, has_table);
-        if views.len() > 1 {
-            return Err(VolError::Unsupported("vol.unsupported.change-route"));
-        }
-        let candidates: Vec<Option<usize>> = if has_table {
-            parts.iter().map(|p| Some(p.id)).collect()
-        } else {
-            vec![None]
-        };
-        for part in candidates {
-            if let Some(fs) = vol.open_fs(part)?
-                && fs.caps().write
-            {
-                // 建索引（缺这一步 Replace/Delete 全废，见上方文档）
-                let _ = fs.entries(&crate::EntryLimit::default(), cancel)?;
-                return Ok((fs, roots[0].0.clone()));
+        let mut out: Vec<Mounted> = Vec::new();
+        // 下一个**全局投影 id**（读侧同口径：顶层行先占一个，再逐条条目）
+        let mut next_id = 0usize;
+        for (idx, _view) in views.iter().enumerate() {
+            let (root, _label) = roots[idx].clone();
+            let part = if has_table { Some(idx) } else { None };
+            next_id += 1; // 顶层行本身（`push_dir`）
+            let Some(fs) = vol.open_fs(part)? else {
+                continue; // 未识别卷：只有顶层行，0 条目
+            };
+            let tree = fs.entries(&crate::EntryLimit::default(), cancel)?;
+            let count = tree.entries.len();
+            if fs.caps().write {
+                out.push(Mounted {
+                    root,
+                    fs,
+                    entry_base: next_id,
+                    count,
+                });
             }
+            next_id += count;
         }
-        Err(VolError::ReadOnly(crate::ReadOnlyReason::OuterNotEditable))
+        if out.is_empty() {
+            // 没有任何分区可写（全部只读/未识别）——理由与单分区时代同一档
+            return Err(VolError::ReadOnly(crate::ReadOnlyReason::OuterNotEditable));
+        }
+        Ok(out)
     }
 
     /// 应用整份变更集（顺序即契约：core 已定序）。
     ///
-    /// **先把「档案级」变更翻成「卷内」变更**（[`route_change`]）：读侧投影把条目名
-    /// 加了分区前缀（`Partition 1/etc/x`），而文件系统驱动要的是卷内相对路径
-    /// （`/etc/x`）；id 也一样（投影 id 含根行，卷内 id 从 0 起）。不翻就会写到
-    /// **卷内一个叫 `Partition 1/...` 的错路径**。
+    /// 逐条经 [`route_to`] 定目标分区 + 翻成「卷内」变更：读侧投影给条目名加了分区
+    /// 前缀（`Partition 1/etc/x`）、id 也整体偏移；而文件系统驱动要的是卷内相对路径与
+    /// 本分区局部 id。不翻就会写到**卷内一个叫 `Partition 1/...` 的错路径**。
     fn apply_all(
-        fs: &mut Box<dyn FsVolume>,
-        root: &str,
+        mounted: &mut [Mounted],
         changes: &ChangeSet,
         ctx: &WriteCtx<'_>,
     ) -> VolResult<usize> {
@@ -175,15 +230,17 @@ impl<H: VolumeHandler + Send + Sync + 'static> VolumeEditor<H> {
             if ctx.cancel.is_cancelled() {
                 return Err(VolError::Cancelled);
             }
-            let routed = route_change(change, root)?;
+            let (ix, routed) = route_to(change, mounted)?;
             let local = local_of(&routed);
-            fs.apply(&routed, local.as_deref(), ctx.cancel)?;
+            mounted[ix]
+                .fs
+                .apply(&routed, local.as_deref(), ctx.cancel)?;
             n += 1;
         }
         Ok(n)
     }
 
-    /// 应用 + 自检；任一步失败都让调用方**不提交**（原档因此不变）。
+    /// 应用 + 自检（**逐分区**）；任一步失败都让调用方**不提交**（原档因此不变）。
     fn prepare(
         &self,
         mode: WriteMode,
@@ -191,13 +248,19 @@ impl<H: VolumeHandler + Send + Sync + 'static> VolumeEditor<H> {
         ctx: &WriteCtx<'_>,
     ) -> VolResult<(Chain, usize)> {
         let chain = self.chain(mode)?;
-        let (mut fs, root) = self.mount_writable(&chain, ctx.cancel)?;
-        let applied = Self::apply_all(&mut fs, &root, changes, ctx)?;
-        fs.flush()?;
-        let audit = fs.audit()?;
-        if !audit.is_clean() {
-            tracing::warn!(findings = ?audit.findings, "提交前自检未通过，放弃写入");
-            return Err(VolError::Unsupported("vol.err.audit"));
+        let mut mounted = self.mount_routable(&chain, ctx.cancel)?;
+        let applied = Self::apply_all(&mut mounted, changes, ctx)?;
+        for m in mounted.iter_mut() {
+            m.fs.flush()?;
+            let audit = m.fs.audit()?;
+            if !audit.is_clean() {
+                tracing::warn!(
+                    root = %m.root,
+                    findings = ?audit.findings,
+                    "提交前自检未通过，放弃写入"
+                );
+                return Err(VolError::Unsupported("vol.err.audit"));
+            }
         }
         Ok((chain, applied))
     }
@@ -289,14 +352,14 @@ fn local_of(change: &Change) -> Option<PathBuf> {
     }
 }
 
-/// 「档案级」变更 → 「卷内」变更（**单卷**口径；多卷在 `mount_writable` 已拒）。
+/// 「档案级」变更 → **（目标分区, 卷内变更）**。
 ///
-/// | 变更 | 翻译 |
-/// |---|---|
-/// | `Replace{entry, ..}` / `Delete(id)` | 全局 id → 卷内 id：投影是 `[根行] ++ [卷内条目]`，故 `local = id - 1`（`id == 0` 是根行本身 ⇒ 拒绝） |
-/// | `Append{name}` / `MakeDir{name}` | 剥 `"{根名}/"` 前缀 ⇒ 卷内相对路径（两者契约都是「档案内**完整**路径」） |
-/// | `Rename{from, to}` | `from` 必是完整路径 ⇒ 剥前缀；`to` **两种形态都合法**（见下） |
-/// | 其它（`#[non_exhaustive]` 新变体） | 原样交给驱动（由驱动决定支不支持） |
+/// | 变更 | 定位方式 | 翻译 |
+/// |---|---|---|
+/// | `Replace{entry, ..}` / `Delete(id)` | **id 区间**（`entry_base ≤ id < entry_base + count`） | 全局 id → 本分区卷内 id（`id - entry_base`）。落在任何分区区间之外（含顶层行本身）⇒ 拒绝 |
+/// | `Append{name}` / `MakeDir{name}` | **名字前缀**（`"{根名}/"`） | 剥前缀 ⇒ 卷内相对路径（两者契约都是「档案内**完整**路径」） |
+/// | `Rename{from, to}` | `from` 按名字前缀 | `from` 剥前缀；`to` **两种形态都合法**（见下） |
+/// | 其它（`#[non_exhaustive]` 新变体） | — | 单分区时原样交给驱动（保持旧行为）；多分区时**无法判定目标 ⇒ 拒绝** |
 ///
 /// # `Rename.to` 的两种形态
 ///
@@ -304,62 +367,118 @@ fn local_of(change: &Change) -> Option<PathBuf> {
 /// `parent(from) + '/' + to` 拼回去），但 GUI 传的是**完整路径**
 /// （`app/state.rs::commit_name_edit` 传的 `new_full`），而 ext4/FAT 驱动两种都吃
 /// （`rename_target` / `destination_name` 里的 `to.contains('/')` 分支）。故这里：
-/// 带本卷前缀 ⇒ 剥；**不带 `/` 的裸叶名 ⇒ 原样放行**；带 `/` 却无本卷前缀 ⇒ 拒绝
-/// （它指向别处，猜不得）。
+/// 带**本分区**前缀 ⇒ 剥；**不带 `/` 的裸叶名 ⇒ 原样放行**；带 `/` 却指向**别的分区**
+/// 或没有任何分区前缀 ⇒ 拒绝（跨分区改名/来路不明，猜不得）。
 ///
-/// 名字**必须以「根名 + `/`」开头**：不匹配说明这个变更不是冲这个卷来的（或界面传来的
-/// 是错的），此时**拒绝**（`vol.unsupported.change-route`）比猜一个路径去写安全得多。
-fn route_change(change: &Change, root: &str) -> VolResult<Change> {
-    let strip = |name: &EntryName| -> VolResult<EntryName> {
-        let raw = name.as_str();
-        // 尾 `/` 是**语义标记**（ext4/FAT 的 `Append` 契约：名字以 `/` 结尾 ⇒ **只建目录**），
-        // 而 `parse_entry_name` 按 N5 丢弃空段 ⇒ 会把 `etc/sub/` 规范化成 `etc/sub`，
-        // 于是驱动转去建一个**空文件**。故先取下标记，规范化后再挂回去。
-        let dir_marker = raw.ends_with('/');
-        let rel = raw
-            .strip_prefix(root)
-            .and_then(|rest| rest.strip_prefix('/'))
-            .ok_or(VolError::Unsupported("vol.unsupported.change-route"))?;
-        if rel.is_empty() {
-            return Err(VolError::Unsupported("vol.unsupported.change-route"));
-        }
-        let normalized = hzip_format::parse_entry_name(rel)
-            .map_err(|e| VolError::Image(format!("卷内路径不合法（{rel}）：{e}")))?;
-        Ok(if dir_marker {
-            EntryName::new(format!("{}/", normalized.as_str()))
-        } else {
-            normalized
-        })
-    };
-    let local_id = |id: usize| -> VolResult<usize> {
-        // 0 是根行（分区/整卷本身），不是卷内条目
-        id.checked_sub(1)
-            .ok_or(VolError::Unsupported("vol.unsupported.change-route"))
-    };
+/// # 为什么宁可拒绝
+///
+/// 名字**必须以「某根名 + `/`」开头**、id **必须落在某分区的条目区间内**——两者都是
+/// 「这条变更确实是冲那个分区来的」的证据。对不上时拒绝（`vol.unsupported.change-route`）
+/// 远比猜一个分区去写安全：猜错的后果是**改坏另一个分区的文件系统**。
+fn route_to(change: &Change, mounted: &[Mounted]) -> VolResult<(usize, Change)> {
     Ok(match change {
-        Change::Replace { entry, src } => Change::Replace {
-            entry: local_id(*entry)?,
-            src: src.clone(),
-        },
-        Change::Delete(id) => Change::Delete(local_id(*id)?),
-        Change::Append { src, name } => Change::Append {
-            src: src.clone(),
-            name: strip(name)?,
-        },
-        Change::MakeDir { name } => Change::MakeDir { name: strip(name)? },
+        Change::Replace { entry, src } => {
+            let (ix, local) = split_id(*entry, mounted)?;
+            (
+                ix,
+                Change::Replace {
+                    entry: local,
+                    src: src.clone(),
+                },
+            )
+        }
+        Change::Delete(id) => {
+            let (ix, local) = split_id(*id, mounted)?;
+            (ix, Change::Delete(local))
+        }
+        Change::Append { src, name } => {
+            let (ix, rel) = strip_root(name, mounted)?;
+            (
+                ix,
+                Change::Append {
+                    src: src.clone(),
+                    name: rel,
+                },
+            )
+        }
+        Change::MakeDir { name } => {
+            let (ix, rel) = strip_root(name, mounted)?;
+            (ix, Change::MakeDir { name: rel })
+        }
         Change::Rename { from, to } => {
-            let to = if to.as_str().contains('/') {
-                strip(to)? // 完整路径（GUI 形态）
+            let (ix, rel_from) = strip_root(from, mounted)?;
+            let rel_to = if to.as_str().contains('/') {
+                let (jx, rel) = strip_root(to, mounted)?;
+                if jx != ix {
+                    // 跨分区改名：语义含糊（两个分区各有一套 id/路径空间）⇒ 拒绝
+                    return Err(VolError::Unsupported(KEY_CHANGE_ROUTE));
+                }
+                rel
             } else {
                 to.clone() // 裸叶名：驱动按 `parent(from) + '/' + to` 拼
             };
-            Change::Rename {
-                from: strip(from)?,
-                to,
+            (
+                ix,
+                Change::Rename {
+                    from: rel_from,
+                    to: rel_to,
+                },
+            )
+        }
+        // 未登记的新变体：单分区时无从歧义（旧行为原样放行），多分区时无法判定目标
+        other => {
+            if mounted.len() == 1 {
+                (0, other.clone())
+            } else {
+                return Err(VolError::Unsupported(KEY_CHANGE_ROUTE));
             }
         }
-        other => other.clone(),
     })
+}
+
+/// **id 型**定位：全局投影 id → `(分区下标, 本分区卷内 id)`。
+///
+/// 区间来自 [`VolumeEditor::mount_routable`] 的 `entry_base`/`count`（与读侧投影同序同限）。
+/// 顶层行本身不在任何条目区间内 ⇒ 命中不了 ⇒ 拒绝（改分区行没有意义）。
+fn split_id(id: EntryId, mounted: &[Mounted]) -> VolResult<(usize, usize)> {
+    mounted
+        .iter()
+        .enumerate()
+        .find(|(_, m)| id >= m.entry_base && id < m.entry_base + m.count)
+        .map(|(ix, m)| (ix, id - m.entry_base))
+        .ok_or(VolError::Unsupported(KEY_CHANGE_ROUTE))
+}
+
+/// **名字型**定位：`"{根名}/{卷内路径}"` → `(分区下标, 卷内相对路径)`。
+///
+/// 尾 `/` 是**语义标记**（ext4/FAT 的 `Append` 契约：名字以 `/` 结尾 ⇒ **只建目录**），
+/// 而 `parse_entry_name` 按 N5 丢弃空段 ⇒ 会把 `etc/sub/` 规范化成 `etc/sub`，
+/// 于是驱动转去建一个**空文件**。故先取下标记，规范化后再挂回去。
+fn strip_root(name: &EntryName, mounted: &[Mounted]) -> VolResult<(usize, EntryName)> {
+    let raw = name.as_str();
+    let dir_marker = raw.ends_with('/');
+    for (ix, m) in mounted.iter().enumerate() {
+        let Some(rel) = raw
+            .strip_prefix(m.root.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+        else {
+            continue;
+        };
+        if rel.is_empty() {
+            // 指向根行自身：不是卷内条目
+            return Err(VolError::Unsupported(KEY_CHANGE_ROUTE));
+        }
+        let normalized = hzip_format::parse_entry_name(rel)
+            .map_err(|e| VolError::Image(format!("卷内路径不合法（{rel}）：{e}")))?;
+        let rel = if dir_marker {
+            EntryName::new(format!("{}/", normalized.as_str()))
+        } else {
+            normalized
+        };
+        return Ok((ix, rel));
+    }
+    // 没有任何根名匹配 ⇒ 这条变更不是冲这个卷来的（或界面传来的是错的）
+    Err(VolError::Unsupported(KEY_CHANGE_ROUTE))
 }
 
 /// 供 handler 复用：把 `EntryName` 转成文件系统内的相对路径（去掉潜在前导 `/`）。

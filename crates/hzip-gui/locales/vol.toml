@@ -149,8 +149,10 @@ en = "This filesystem does not support that change"
 zh-CN = "该文件系统不支持这种变更"
 
 [vol.unsupported.change-route]
-en = "This image has several volumes; editing inside it is not supported yet"
-zh-CN = "该镜像含多个卷（分区），暂不支持在其内部编辑"
+# 多分区**已支持**（按分区归集，2026-10-16）⇒ 本键只剩「这条变更指不到任何分区」一种含义：
+# 名字没有分区前缀、id 落在所有分区之外（含顶层行）、或跨分区改名。措辞必须说清「没写」。
+en = "Cannot tell which volume this change targets; nothing was written"
+zh-CN = "无法判断这条变更属于哪个卷（未写入任何分区）"
 
 [vol.unsupported.compressed]
 en = "File is WOF-compressed or encrypted; not supported"

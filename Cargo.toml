@@ -25,31 +25,31 @@ repository = "https://github.com/flyl3una/hzip"
 
 [workspace.dependencies]
 # —— workspace 内部（path + version，供发布时互相引用）——
-hzip-error    = { path = "crates/hzip-error",    version = "0.1.0" }
-hzip-progress = { path = "crates/hzip-progress", version = "0.1.0" }
-hzip-platform = { path = "crates/hzip-platform", version = "0.1.0" }
-hzip-codec    = { path = "crates/hzip-codec",    version = "0.1.0" }
-hzip-format   = { path = "crates/hzip-format",   version = "0.1.0" }
-hzip-config   = { path = "crates/hzip-config",   version = "0.1.0" }
-hzip-fmt-zip  = { path = "crates/hzip-fmt-zip",  version = "0.1.0" }
-hzip-fmt-7z   = { path = "crates/hzip-fmt-7z",   version = "0.1.0" }
-hzip-fmt-rar  = { path = "crates/hzip-fmt-rar",  version = "0.1.0" }
-hzip-fmt-tar  = { path = "crates/hzip-fmt-tar",  version = "0.1.0" }
-hzip-fmt-single = { path = "crates/hzip-fmt-single", version = "0.1.0" }
-hzip-fmt-cpio = { path = "crates/hzip-fmt-cpio", version = "0.1.0" }
+hzip-error    = { path = "crates/hzip-error",    version = "0.2.0" }
+hzip-progress = { path = "crates/hzip-progress", version = "0.2.0" }
+hzip-platform = { path = "crates/hzip-platform", version = "0.2.0" }
+hzip-codec    = { path = "crates/hzip-codec",    version = "0.2.0" }
+hzip-format   = { path = "crates/hzip-format",   version = "0.2.0" }
+hzip-config   = { path = "crates/hzip-config",   version = "0.2.0" }
+hzip-fmt-zip  = { path = "crates/hzip-fmt-zip",  version = "0.2.0" }
+hzip-fmt-7z   = { path = "crates/hzip-fmt-7z",   version = "0.2.0" }
+hzip-fmt-rar  = { path = "crates/hzip-fmt-rar",  version = "0.2.0" }
+hzip-fmt-tar  = { path = "crates/hzip-fmt-tar",  version = "0.2.0" }
+hzip-fmt-single = { path = "crates/hzip-fmt-single", version = "0.2.0" }
+hzip-fmt-cpio = { path = "crates/hzip-fmt-cpio", version = "0.2.0" }
 # 磁盘镜像（计划 docs/tasks/T-IMG/）：卷层框架 + 镜像容器 + 文件系统驱动
-hzip-vol      = { path = "crates/hzip-vol",      version = "0.1.0" }
-hzip-fmt-raw  = { path = "crates/hzip-fmt-raw",  version = "0.1.0" }
-hzip-fmt-qcow2 = { path = "crates/hzip-fmt-qcow2", version = "0.1.0" }
-hzip-fmt-vmdk = { path = "crates/hzip-fmt-vmdk", version = "0.1.0" }
-hzip-fs-ext4  = { path = "crates/hzip-fs-ext4",  version = "0.1.0" }
-hzip-fs-fat   = { path = "crates/hzip-fs-fat",   version = "0.1.0" }
-hzip-fs-ntfs  = { path = "crates/hzip-fs-ntfs",  version = "0.1.0" }
-hzip-fs-xfs   = { path = "crates/hzip-fs-xfs",   version = "0.1.0" }
-hzip-core     = { path = "crates/hzip-core",     version = "0.1.0", default-features = false }
-hzip-log      = { path = "crates/hzip-log",      version = "0.1.0" }  # 日志收口（02 §12.3）
+hzip-vol      = { path = "crates/hzip-vol",      version = "0.2.0" }
+hzip-fmt-raw  = { path = "crates/hzip-fmt-raw",  version = "0.2.0" }
+hzip-fmt-qcow2 = { path = "crates/hzip-fmt-qcow2", version = "0.2.0" }
+hzip-fmt-vmdk = { path = "crates/hzip-fmt-vmdk", version = "0.2.0" }
+hzip-fs-ext4  = { path = "crates/hzip-fs-ext4",  version = "0.2.0" }
+hzip-fs-fat   = { path = "crates/hzip-fs-fat",   version = "0.2.0" }
+hzip-fs-ntfs  = { path = "crates/hzip-fs-ntfs",  version = "0.2.0" }
+hzip-fs-xfs   = { path = "crates/hzip-fs-xfs",   version = "0.2.0" }
+hzip-core     = { path = "crates/hzip-core",     version = "0.2.0", default-features = false }
+hzip-log      = { path = "crates/hzip-log",      version = "0.2.0" }  # 日志收口（02 §12.3）
 # T21 合入时未自登记；T22/T24 conformance 需 workspace=true 引用（02 §8.6 dev crate）
-hzip-format-testkit = { path = "crates/hzip-format-testkit", version = "0.1.0" }
+hzip-format-testkit = { path = "crates/hzip-format-testkit", version = "0.2.0" }
 
 # —— 外部依赖：04 §3.1 清单（版本唯一来源）——
 zip         = { version = "4", default-features = false, features = ["aes-crypto", "deflate", "bzip2", "zstd"] }

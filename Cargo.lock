@@ -3451,7 +3451,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-cli"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -3480,7 +3480,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-codec"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "bzip2 0.4.4",
  "crc32fast",
@@ -3493,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-config"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-platform",
  "serde",
@@ -3504,7 +3504,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-core"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "chardetng",
  "crossbeam-channel",
@@ -3545,7 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-error"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "smol_str",
  "thiserror 2.0.20",
@@ -3553,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-7z"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-cpio"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-qcow2"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3604,7 +3604,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-rar"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3620,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-raw"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3635,7 +3635,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-single"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "bzip2 0.4.4",
  "flate2",
@@ -3655,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-tar"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3672,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-vmdk"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3689,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fmt-zip"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "aes",
  "chardetng",
@@ -3714,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-format"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "bzip2 0.4.4",
  "flate2",
@@ -3731,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-format-testkit"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "fatfs",
  "hzip-error",
@@ -3748,7 +3748,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fs-ext4"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fs-fat"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "fatfs",
  "hzip-error",
@@ -3778,7 +3778,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fs-ntfs"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3793,7 +3793,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-fs-xfs"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -3809,7 +3809,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-gui"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "embed-resource",
@@ -3842,7 +3842,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-log"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-platform",
  "tempfile",
@@ -3854,7 +3854,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-platform"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "dirs 6.0.0",
  "hzip-error",
@@ -3879,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-progress"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "hzip-error",
@@ -3888,7 +3888,7 @@ dependencies = [
 
 [[package]]
 name = "hzip-vol"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "hzip-error",
  "hzip-format",
@@ -9862,7 +9862,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.4"
+version = "0.2.0"
 
 [[package]]
 name = "xz2"

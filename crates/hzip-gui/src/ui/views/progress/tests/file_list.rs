@@ -152,3 +152,79 @@ fn output_tab_roundtrip() {
     assert_eq!(OutputTab::from_index(9), OutputTab::Fail);
     assert_eq!(OutputTab::Ok.index(), 1);
 }
+
+// ── 输出行折行 & 大框圆角（用户口径 2026-10-16）──
+
+/// 折行实证（**真实 List 路径**）：同一宽度（760px）下按名字长度逐档量**条目**尺寸
+/// ——短名保持单行 20px，长名折行后条目随行数长高；且条目宽 = 列表宽（宽度约束必须
+/// 传到 item，否则长文本会按 max-content 排成一行再被裁掉——那正是「内容显示不全」）。
+///
+/// 旧实现行内 `.truncate()`（= nowrap + 省略号）⇒ 长路径只画一行、尾巴被吞。本用例把
+/// 它钉在几何上（用 `ListState::bounds_for_item` 读**真实虚拟列表**测出的条目框）。
+#[gpui_kit::test]
+fn long_names_wrap_and_short_names_stay_one_line(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{Context, IntoElement, ListAlignment, ListState, Render, Window, list, px};
+
+    /// 名字长度（1/60 = 单行放得下；216 = 真实长路径，必须折行）
+    const NAMES: [usize; 4] = [1, 20, 60, 216];
+    /// 输出框/列表宽（真实窗口内容列量级）
+    const WIDTH: f32 = 760.;
+
+    struct Probe {
+        state: ListState,
+    }
+    impl Render for Probe {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let st = self.state.clone();
+            div()
+                .w(px(WIDTH))
+                .h(px(400.))
+                .debug_selector(|| "wrap-host".into())
+                .child(list(st, move |ix, _w, cx| {
+                    let line = OutLine {
+                        name: "a".repeat(NAMES[ix]),
+                        tail: "12.4 KiB".into(),
+                        failed: false,
+                    };
+                    out_row(OutputTab::Result, &line, cx).into_any_element()
+                }))
+        }
+    }
+
+    let shared = ListState::new(NAMES.len(), ListAlignment::Top, OUTPUT_LIST_OVERDRAW);
+    let probe = shared.clone();
+    let (host, vtcx) = cx.add_window_view(|_window, cx| {
+        gpui_kit::component::init(cx);
+        Probe { state: shared }
+    });
+    vtcx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+
+    let mut single = 0;
+    let mut wrapped = 0;
+    for (ix, n) in NAMES.iter().enumerate() {
+        let b = probe.bounds_for_item(ix).expect("条目已测量");
+        assert_eq!(
+            px(WIDTH),
+            b.size.width,
+            "{n} 字符：条目宽必须 = 列表宽（否则长文本按 max-content 排一行后被裁）"
+        );
+        assert!(
+            b.size.height >= MONO_ROW_H,
+            "{n} 字符：条目高不得低于单行 {MONO_ROW_H:?}，实得 {:?}",
+            b.size.height
+        );
+        if b.size.height == MONO_ROW_H {
+            single += 1;
+        } else {
+            wrapped += 1;
+        }
+    }
+    assert!(single >= 3, "短名（1/20/60 字符）必须仍是单行（20px）");
+    assert!(
+        wrapped >= 1,
+        "长名（216 字符）必须折行（条目高 > 20px）——否则又退回「一行截断」"
+    );
+    drop(host);
+}

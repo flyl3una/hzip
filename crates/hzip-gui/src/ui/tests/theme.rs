@@ -135,6 +135,42 @@ fn theme_radius_follows_config(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// **「大框」圆角 = 设置圆角 × 2**（用户口径 2026-10-16）。
+///
+/// 进度窗输出框这类大容器的圆角取值点就是 [`big_radius`]——本用例钉住这条规则
+/// 本身（含 0 = 直角同倍率成立、上限 20 → 40），免得日后被「顺手改成和
+/// `theme.radius` 同值」而悄悄回退。
+#[gpui_kit::test]
+fn big_radius_is_double_the_configured_radius(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::ActiveTheme as _;
+    cx.update(|cx: &mut gpui_kit::App| {
+        gpui_kit::component::init(cx);
+        let probe = |cfg_radius: u32, cx: &mut gpui_kit::App| {
+            let mut cfg = hzip_config::Config::defaults();
+            cfg.ui.corner_radius = cfg_radius;
+            apply_theme_cfg(ThemeModeChoice::Light, &cfg, cx);
+            (cx.theme().radius, big_radius(cx))
+        };
+        // 直角模式：基础档与大框都是 0（大框不得凭空长出圆角）
+        assert_eq!(
+            (gpui_kit::px(0.), gpui_kit::px(0.)),
+            probe(0, cx),
+            "0 圆角下大框也必须直角"
+        );
+        // 圆角模式：6 → 12；20（上限）→ 40
+        assert_eq!(
+            (gpui_kit::px(6.), gpui_kit::px(12.)),
+            probe(6, cx),
+            "大框 = 设置 × 2"
+        );
+        assert_eq!(
+            (gpui_kit::px(20.), gpui_kit::px(40.)),
+            probe(20, cx),
+            "上限档同样按 2 倍"
+        );
+    });
+}
+
 /// T-GUI T01 防再犯门禁：主题 JSON 的 colors key 必须是 gpui-kit
 /// `ThemeConfigColors` 已知字段（serde 不拒绝未知 key，拼错即静默失效
 /// ——历史事故：`"primary"`/`"surface"` 写错后主按钮/卡片长期落默认色）。

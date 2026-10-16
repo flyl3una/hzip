@@ -216,8 +216,13 @@ pub const JOB_PROGRESS_W: Pixels = px(110.);
 
 /// 进度窗输出框的最小高（吃满剩余空间时的「防塌陷」保底）。
 pub const OUTPUT_BOX_MIN_H: Pixels = px(120.);
-/// 等宽文本行高：进度窗输出行、预览文本/HEX 行共用（`uniform_list` 契约要固定行高）。
+/// 等宽文本行高：进度窗输出行、预览文本/HEX 行共用（预览仍走固定行高虚拟列表）。
 pub const MONO_ROW_H: Pixels = px(20.);
+/// 进度窗输出列表的**上下过绘高度**（`ListState` 的 overdraw 参数）。
+///
+/// 输出行高可变（长路径/长原因折行 ⇒ 20px 的整数倍），过绘留出十余行，
+/// 滚动时不会因「下一行比预估高」而闪烁或跳位。
+pub const OUTPUT_LIST_OVERDRAW: Pixels = px(240.);
 /// 独立窗内容列的最大宽（软约束、居中；窗口再宽内容也不再拉长）。
 pub const CONTENT_MAX_W: Pixels = px(720.);
 /// 进度窗内容列的最大高。

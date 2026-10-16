@@ -97,15 +97,18 @@ fn save_during_inflight_is_replayed_after_the_job_ends() {
     let mut d = app();
     d.arm_external_edit("a.txt", &temp, WriteBack::Enabled { archive, entry: 0 });
     // 第一次保存：出动作 + 回填在飞（用一个人为 id——任务行不存在 ⇒ reconcile 视为已结束）
-    std::fs::write(&temp, b"v2").unwrap();
+    //
+    // **每次写入都刻意换长度**：去重口径是 `(mtime_ns, len)`，而 Windows 的文件时间戳
+    // 取自系统时钟（约 15.6 ms 一跳）——同长度、同 tick 的两次写入在盘上**无法区分**
+    // （模块文档已记该边界）。真机并行跑测试时这条真的红过：`b"v1"`→`b"v2"` 都是 2 字节，
+    // 撞上同一 tick 就被当「没变」⇒ 本用例靠长度区分，不靠时钟。
+    std::fs::write(&temp, b"v2-first").unwrap();
     let s2 = stat_of(&temp).unwrap();
     assert!(d.on_external_save(&temp, s2).is_some());
     d.note_external_edit_submitted(&temp, s2, 777);
 
-    // 在飞期间又保存：不出动作（记 pending）
-    // 内容长度刻意变化——去重口径是 (mtime, len)，同长同 tick 的写入在粗粒度
-    // 文件系统上无法区分（见模块文档的边界说明）
-    std::fs::write(&temp, b"v3-longer").unwrap();
+    // 在飞期间又保存：不出动作（记 pending）——长度同样要变（同上理由）
+    std::fs::write(&temp, b"v3-longer-inflight").unwrap();
     let s3 = stat_of(&temp).unwrap();
     assert!(
         d.on_external_save(&temp, s3).is_none(),
@@ -389,4 +392,140 @@ fn save_back_inside_a_volume_writes_in_place() {
     )
     .unwrap();
     assert_eq!(keep, b"keep", "未改动条目原样");
+}
+
+/// **多分区镜像**的外部编辑器写回：变更落到**条目所在的分区**，隔壁分区一个字节不动。
+///
+/// 用户 2026-10-16 实报（原文）：「使用外部编辑器编辑后保存失败，直接在文件浏览界面
+/// 重命名/删除这些也不行」——弹窗原文是「该镜像含多个卷（分区），暂不支持在其内部编辑」。
+/// 根因在多分区镜像（EFI + root 是常态）此前一律拒写；`hzip-vol` 的写侧已改为按分区归集
+/// （见 `hzip-vol/tests/editor.rs`），本用例把 **GUI 这一端**也走完一遍：判定可写回 →
+/// 提交 `EditBatch + Replace{entry}` → 条目内容真的变了、另一分区原样。
+#[test]
+fn save_back_inside_a_two_partition_image_hits_the_right_partition() {
+    use hzip_format_testkit::vol::{FixtureFs, mbr_only, write_fs_into};
+
+    // 两分区 MBR 盘：各 1 MiB 对齐的 8 MiB ext4
+    let fs0 = FixtureFs::Ext4.image(&[("/p1.txt", b"one" as &[u8])]);
+    let fs1 = FixtureFs::Ext4.image(&[("/p2.txt", b"two" as &[u8])]);
+    const SECTOR: u64 = 512;
+    let start0 = 1u64 << 20;
+    let start1 = start0 + (fs0.len() as u64).next_multiple_of(1 << 20);
+    let mut disk = mbr_only(
+        &[
+            (
+                0x83,
+                (start0 / SECTOR) as u32,
+                (fs0.len() as u64 / SECTOR) as u32,
+            ),
+            (
+                0x83,
+                (start1 / SECTOR) as u32,
+                (fs1.len() as u64 / SECTOR) as u32,
+            ),
+        ],
+        start1 + fs1.len() as u64,
+    );
+    write_fs_into(&mut disk, start0, FixtureFs::Ext4, &[("/p1.txt", b"one")]);
+    write_fs_into(&mut disk, start1, FixtureFs::Ext4, &[("/p2.txt", b"two")]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("two-disks.img");
+    std::fs::write(&image, &disk).unwrap();
+
+    let mut d = app();
+    d.main.open(&d.engine, &image).expect("打开两分区镜像");
+    d.archive = Some(image.clone());
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    d.signal_tx = Some(std::sync::Arc::new(tx));
+
+    // 目标条目属于**分区 2**（读侧投影名带分区行前缀）
+    let row = d
+        .main
+        .entries()
+        .iter()
+        .find(|r| r.name == "Partition 2/p2.txt")
+        .map(|r| (r.id, r.name.clone()))
+        .expect("应能列出分区 2 的条目行");
+    let (entry, name) = row;
+    match crate::ui::shell::external_edits::write_back_target(&d, &image, entry) {
+        WriteBack::Enabled { archive, entry: e } => {
+            assert_eq!(archive, image);
+            assert_eq!(e, entry, "写回目标 = 界面点的那一条");
+        }
+        other => panic!("两分区镜像的顶层会话应可写回：{other:?}"),
+    }
+
+    let temp = dir.path().join("materialized-p2.txt");
+    // 物化时的内容（= 镜像里那条）——后面写入刻意换长度：去重口径是 `(mtime_ns, len)`，
+    // 而 Windows 文件时间戳约 15.6 ms 一跳，等长写入可能撞同一 tick 被判「没变」
+    std::fs::write(&temp, b"two").unwrap();
+    d.arm_external_edit(
+        &name,
+        &temp,
+        WriteBack::Enabled {
+            archive: image.clone(),
+            entry,
+        },
+    );
+
+    let data = std::sync::Arc::new(std::sync::Mutex::new(d));
+    std::fs::write(&temp, b"TWO-changed").unwrap(); // 换长度：去重靠 (mtime,len)，不等时钟
+    let stat = stat_of(&temp).unwrap();
+    let action = data
+        .lock()
+        .unwrap()
+        .on_external_save(&temp, stat)
+        .expect("应出提交动作");
+    let notice = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
+    assert!(notice.is_none(), "提交应成功：{notice:?}");
+    let job = {
+        let d = data.lock().unwrap();
+        d.external_edit_job(&temp).expect("已在飞")
+    };
+    wait_job(&data, job);
+
+    // 复核：目标分区的条目变了；另一分区原样
+    let browser = data
+        .lock()
+        .unwrap()
+        .engine
+        .browse(
+            hzip_format::Source::File(image.clone()),
+            &Default::default(),
+        )
+        .expect("重开镜像");
+    let entries: Vec<(usize, String)> = browser
+        .entries()
+        .iter()
+        .map(|e| (e.id, e.name.as_str().to_string()))
+        .collect();
+    let pick = |want: &str| {
+        entries
+            .iter()
+            .find(|(_, n)| n == want)
+            .map(|(id, _)| *id)
+            .unwrap_or_else(|| panic!("重开后应有 {want}：{entries:?}"))
+    };
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(
+        &mut browser
+            .read_entry(pick("Partition 2/p2.txt"), hzip_format::PasswordRef::none())
+            .expect("读分区 2 的条目"),
+        &mut buf,
+    )
+    .unwrap();
+    assert_eq!(buf, b"TWO-changed", "分区 2 的条目内容应为改后版本");
+    let mut keep = Vec::new();
+    std::io::Read::read_to_end(
+        &mut browser
+            .read_entry(pick("Partition 1/p1.txt"), hzip_format::PasswordRef::none())
+            .expect("读分区 1 的条目"),
+        &mut keep,
+    )
+    .unwrap();
+    assert_eq!(keep, b"one", "分区 1 的条目必须原样（不得被误写）");
 }

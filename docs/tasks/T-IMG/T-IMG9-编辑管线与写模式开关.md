@@ -183,7 +183,11 @@ git commit -m "feat(vol): 编辑管线接入卷容器 + 写模式三态设置（
 ### 仍未落地（按优先级）
 
 1. **设置页写模式三态开关**（覆盖写 / 就地写 / 只读）：`hzip-config` 的 `Ui` 尚无字段，core 侧也无「配置 → `CreateOptions.volume_write`」的接线。当前默认覆盖写是**安全且正确**的，故未阻塞可用性。
-2. **多分区镜像的变更按分区归集**：现在 `mount_writable()` 遇到「卷数 > 1」直接按键拒绝（`vol.unsupported.change-route`）。做它需要：core 侧把每条变更连带**分区归属**一起传下来（或编辑器重建与读侧同款的投影），再把名/id 路由到对应分区。
+2. ~~**多分区镜像的变更按分区归集**~~ **已落地（2026-10-16）**：用户实报「该镜像含多个卷（分区），暂不支持在其内部编辑」（EFI + root 这类两分区镜像是常态）⇒ `mount_writable()`（看到「卷数 > 1」整体拒绝）改为 `mount_routable()`：
+   - **每个分区都挂载、都列一遍条目**（不可写分区照样列——它们同样占投影 id，漏掉就会把变更写到隔壁分区），同时建出 `Mounted { root, fs, entry_base, count }` 路由表；表的**顺序 / 额度（`EntryLimit::default()`）/ 命名（`volume_root_names`）与读侧同源**，因此不会漂移；
+   - `route_change()`（单卷 `id - 1` 口径）改为 `route_to()`：**id 型**变更按 `[entry_base, entry_base + count)` 选分区并减成本分区卷内 id；**名字型**变更按 `"{根名}/"` 前缀选分区并剥前缀；`Rename.to` 仍是两种形态（完整路径必须与 `from` 同分区，否则拒绝；裸叶名原样下传）；
+   - `apply`/`flush`/`audit` **逐分区**做，任一自检不过即整体放弃（原档不变）；完全定不到目标的变更（顶层行、越界 id、无前缀名、跨分区改名、多分区下的未知新变体）**照旧拒绝**。
+   - 现实验证：`hzip-vol/tests/editor.rs` 4 条（`multi_partition_id_changes_land_in_the_right_partition` / `multi_partition_name_changes_land_in_the_right_partition` / `unroutable_changes_are_refused_without_touching_any_partition` / `editor_id_space_matches_the_read_projection`——最后一条把「写侧 id 算术 = 读侧投影」逐位钉死）；`hzip-core/tests/volume.rs::edit_batch_inside_a_two_partition_image_hits_the_right_partition`（**真两分区 MBR + 两个真 ext4**，`browse` 取 id → `EditBatch + Replace` → 就地写：目标分区内容变了、另一分区逐字节原样）。
 3. ~~**「外部编辑器保存回卷内条目」**~~ **已落地（2026-10-16，GUI 侧）**：链路改为「物化临时文件 → 挂 `FileWatch`（去抖 500 ms）→ 保存事件 → 提交 `EditBatch + Change::Replace{entry, src=temp}`」——**不需要** `JobSpec` 新增字段，也不走 `save_direct`（那条路固定「条目 0 = 整档单文件」，对卷必然指错目标，保持现状）。实现：`app/external_edit.rs`（纯数据面：登记/`(mtime,len)` 判重/在飞串行/决定） +`ui/shell/external_edits.rs`（UI 半场：watch 句柄、drain、提交、通知） +`runtime.rs` 每 wake 对账（补「在飞期间又保存」）。边界：嵌套会话与不支持编辑的格式**不提交**、保存时出一条通知如实告知（文案 `edit.writeback.*`）。
 4. **只读徽标 + 理由 tooltip**（`vol.readonly.*` 文案已备）。
 5. **组合源写回**（`.qcow2.gz` 的编辑）：T-IMG0 范围。
