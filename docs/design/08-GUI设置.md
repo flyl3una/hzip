@@ -936,9 +936,13 @@ toolbar/argv 解压意图 → submit_extract_locked
   把「全部恢复默认」`keymap.reset_all` 推到最右；用户口径 2026-10-16：「？ 应该在快捷键词条右侧，而不是
   全部恢复默认按钮的左侧」）
   + 每行**一行**（`h_flex`：名称 `flex_1` 靠左 → 尾部三件套成组靠右，组内 `gap(px(1.))`：键位芯片 →
-  ↻ 还原 `krestore-<config_key>` → ✕ 删除绑定 `kremove-<config_key>`）。**两枚图标钮用 gpui-kit `Button`
-  的默认变体 + `with_size(component_size())`**（与设置页其它按钮同档同 hover；不加 `.ghost()`——ghost 的
-  hover 是主题色，而其它按钮是浅灰；icon-only 由 `.icon()` 承担）——用户口径 2026-10-16。+ 行下冲突红字（仅被拒那一行）。
+  ↻ 还原 `krestore-<config_key>` → ✕ 删除绑定 `kremove-<config_key>`）。**两枚图标钮用 gpui-kit `Button`**：钮盒边长 = kit 方钮基准（`size_8()`/紧凑档 `size_6()`）**+ 4px**
+  （两侧内边距各 +2px，用户口径 2026-10-16）；配色走 `Custom` 变体 + 常态色留空 ⇒ **无边框**，
+  hover/active 显式取 `tokens.button_hover`/`button_active`（默认变体那两个 token，浅灰，与其它
+  按钮一致——不用 `.ghost()`：它的 hover 是 accent 主题色）。**图标本体不随钮盒缩放**（用户口径
+  2026-10-16「图标太大了」）：kit 的 icon-only 分支把图标绑在钮边长上（`v * 0.75` ⇒ 2rem+4px 的盒
+  会给出 25.5px 的图标），故改用 `.child(Icon::new(..).with_size(Size::Medium))`（= 1rem，与其它按钮
+  的图标同档）+ `.size(边长)` 自钉外框——内边距于是成为「图标到框」的留白。+ 行下冲突红字（仅被拒那一行）。
   **块宽封顶 + 两侧留白（2026-10-16 用户口径）**：块外层 `.max_w(rems(37.5))`（标准档 ≈600px，随界面
   字号缩放）+ `.ml_auto().mr_auto()`（块在内容列里**居中**）+ `.px(sp(3.))`（标准档 12px）。两个关键点：① 该块**不再包在 `form_field()` 里**——
   `Form::horizontal` 的标签列即使 `has_label` 为假也占一列宽，实测把整块右推 ≈170px（表现为「整块偏右、

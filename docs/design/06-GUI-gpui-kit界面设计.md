@@ -424,9 +424,11 @@ flowchart TD
 - **行内布局**：`h_flex` → 名称（`flex_1` + `truncate`，左）→ 键位芯片（点它即进入录制）→
   ↻ 还原钮（`krestore-<config_key>`，tooltip `keymap.reset_one`，**写空串** = 回落内置默认；
   2026-10-16 用户口径「✕ 旁边增加一个还原的图标按钮」）→ ✕ 删除绑定（最右）。两者都是
-  **kit `Button` 默认变体 + `with_size(component_size())` + `.icon(...)`**（icon-only，与设置页其它
-  按钮同档同 hover——用户口径 2026-10-16：ghost 的 hover 是主题色、其它按钮是浅灰），尾部三件套
-  组内 `gap(px(1.))`（同口径「margin 调到 1px」）。**行内没有「禁用」「恢复本项默认」「录制」文本按钮**。
+  **kit `Button`**：钮盒边长 = kit 方钮基准 + **4px**（两侧内边距各 +2px），图标本体 = `.child()`
+  显式 `Size::Medium`（**1rem**，与其它按钮的图标同档——kit 的 icon-only 分支会把图标绑到钮边长
+  `v*0.75`，那会让图标涨到 25.5px）+ `.size(边长)` 自钉外框；配色 = `Custom` 变体（常态色留空 ⇒
+  **无边框**）+ `tokens.button_hover`/`button_active` 作 hover/active（默认变体那两个 token，浅灰），
+  尾部三件套组内 `gap(px(1.))`（同口径「margin 调到 1px」）。**行内没有「禁用」「恢复本项默认」「录制」文本按钮**。
 - **块宽、居中与留白（2026-10-16 用户口径）**：块外层 `.max_w(rems(37.5))`（标准档 ≈600px，随界面
   字号缩放）+ `.ml_auto().mr_auto()`（块宽小于内容列时**居中**）+ `.px(sp(3.))`；并且**不再包在 `form_field()` 里**——`Form::horizontal` 的标签列即使
   `has_label` 为假也占一列宽，实测把整块右推 ≈170px（症状：整块偏右、名称与右侧键位之间留一大片
