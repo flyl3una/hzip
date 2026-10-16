@@ -18,13 +18,13 @@ use crate::ui::constant::LABEL_COL_W_BASE;
 use crate::ui::spacing::{component_size, sp};
 use std::rc::Rc;
 
-use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::form::{Field, Form, field as form_field};
 use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants as _};
 use gpui_kit::component::searchable_list::SearchableVec;
 use gpui_kit::component::select::{Select, SelectState};
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{ActiveTheme as _, Icon};
 use gpui_kit::component::{Disableable, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Entity, IntoElement, SharedString, StyleRefinement, Styled, div};
@@ -308,6 +308,72 @@ pub fn page(
         return group(body.into_any_element());
     }
     group(form.into_any_element())
+}
+
+/// 行尾图标钮（↻ 还原 / ✕ 删除）的边长：kit 方钮基准（标准/宽松档 `size_8()` = 2rem；
+/// 紧凑档 `size_6()` = 1.5rem，随界面字号缩放）**再 +4px** = 两侧内边距各 +2px
+/// （用户口径 2026-10-16：「图标按钮将 padding 再加 2px」——`Size::Size` 是显式边长，
+/// padding 落在定宽盒上不改变外观，故只能从边长加）。
+///
+/// 抽成函数供**渲染与版式用例共用**：这两枚钮比 `row_band` 高 4px ⇒ 行高上限必须按
+/// `max(行带, 钮边长)` 算，用例才守得住「仍是一行」（而不是旧的两行式版式）。
+pub(crate) fn icon_button_side(cx: &App) -> gpui_kit::Pixels {
+    let base_rem = if matches!(component_size(), gpui_kit::component::Size::Small) {
+        1.5
+    } else {
+        2.0
+    };
+    gpui_kit::rems(base_rem).to_pixels(cx.theme().font_size) + gpui_kit::px(4.)
+}
+
+/// 行尾图标钮（↻ 还原 / ✕ 删除）：与设置页其它按钮同款配色，但**无边框**（用户口径
+/// 2026-10-16）。
+///
+/// # 图标尺寸为什么要显式给（用户口径 2026-10-16：「图标太大了，帮我调小一点」）
+///
+/// kit 的 icon-only 分支把图标尺寸**绑定在钮边长**上——`icon_size = Size::Size(v) =>
+/// v * 0.75`（`gpui-component/src/button/button.rs`），于是「+2px 内边距」把边长从
+/// 2rem 抬到 34px 时，图标也被一起放大到 **25.5px**（其它按钮的图标只有 1rem = 16px）。
+/// 因此这里**不再用 `.icon()`**（它只能吃 `ButtonIcon` 且尺寸被 kit 覆写），改用
+/// `.child(Icon::new(..).with_size(Size::Medium))`：
+/// - 有 child ⇒ kit 走「普通钮」分支（只加 `px(v*0.2)` 内边距、**不设**宽高），
+///   故再用 `.size(side)` 自钉外框 ⇒ **钮盒仍是 2rem+4px、图标回到 1rem**；
+/// - 内边距随之成为「图标到框」的留白，正是用户说的「可以增加 padding 来控制」。
+fn icon_btn(
+    cx: &App,
+    id: String,
+    ck: &'static str,
+    icon: AppIcon,
+    tip: String,
+) -> gpui_kit::component::button::Button {
+    let side = icon_button_side(cx);
+    let glyph = Icon::new(icon).with_size(gpui_kit::component::Size::Medium);
+    let glyph: AnyElement = if cfg!(test) {
+        // 图标本体不是 `Styled` 元素（没有 `debug_selector`）⇒ 包一层测试锚点量尺寸
+        // （用例据此守「图标回到 1rem，不再随钮边长放大」）
+        let key = format!("kglyph-{ck}");
+        div()
+            .debug_selector(move || key.clone())
+            .child(glyph)
+            .into_any_element()
+    } else {
+        glyph.into_any_element()
+    };
+    Button::new(id)
+        .with_size(gpui_kit::component::Size::Size(side))
+        // 普通钮分支不设宽高（只加内边距）⇒ 外框自钉，方钮边长仍是 `side`
+        .size(side)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .foreground(cx.theme().button_foreground)
+                // `ThemeToken` Deref 到 `Hsla`；显式取 `.color`（与默认变体用的
+                // `tokens.button_hover`/`button_active` 同一来源 ⇒ 浅灰 hover 与
+                // 设置页其它按钮完全一致；`.ghost()` 的 hover 是 accent 主题色）
+                .hover(cx.theme().tokens.button_hover.color)
+                .active(cx.theme().tokens.button_active.color),
+        )
+        .child(glyph)
+        .tooltip(tip)
 }
 
 /// 标签单元：文本 + 可选 ？ 帮助钮（走查 #8：帮助不常驻行内，悬浮查看——
@@ -1189,6 +1255,16 @@ pub fn keys_section(keys: &hzip_config::Keys, ctx: &PageCtx, cx: &App) -> AnyEle
     let on = ctx.on.clone();
     let refresh = ctx.refresh.clone();
 
+    // ── 行尾两枚图标钮（↻ 还原 / ✕ 删除）的共用外观（用户口径 2026-10-16）──
+    //
+    // ① **不要边框**：用 `Custom` 变体 + 常态色留空（`ButtonCustomVariant::new` 的
+    //    `color` 默认透明，而其 border 取常态色 ⇒ 隐形），hover/active 显式取**默认
+    //    变体那两个 token**（`button_hover`/`button_active` = 浅灰，与设置页其它按钮
+    //    完全一致）。不用 `.ghost()`：它的 hover 是 accent 主题色，正是用户要避开的。
+    // ② **内边距 +2px/侧**：基准方钮边长照 kit 的 `size_8()`/紧凑档 `size_6()`
+    //    （2rem / 1.5rem，随界面字号缩放）再 **+4px**——`Size::Size` 是显式边长，而
+    //    padding 落在定宽盒上不改变外观，故只能从边长加。
+
     // 页头：「全部恢复默认」= 整份 `Keys::default()`（全空串 = 回内置默认键位）。
     // 语义与整页 `SettingsReset` 相同；「禁用项也一起复位」由「整份替换」天然
     // 满足——本页没有逐项状态要清。
@@ -1303,30 +1379,30 @@ pub fn keys_section(keys: &hzip_config::Keys, ctx: &PageCtx, cx: &App) -> AnyEle
             },
         );
 
-        // ✕ = 删除该动作的绑定（写 `"none"` 哨兵）。
-        //
-        // 尺寸/样式与**设置页其它按钮同款**（用户口径 2026-10-16）：
-        // `with_size(component_size())` + **默认变体**（不再 `.ghost().xsmall()`——
-        // 那套的 hover 是主题色，而设置页其它按钮是浅灰；icon-only 由 `.icon()` 承担）。
-        let mut remove = Button::new(format!("kremove-{}", def.config_key))
-            .with_size(component_size())
-            .icon(AppIcon::X)
-            .tooltip(crate::tr("keymap.remove_binding"))
-            .on_click({
-                let current = keys.clone();
-                let on = on.clone();
-                let refresh = refresh.clone();
-                move |_, _, cx: &mut App| {
-                    // 钮在行内：吞掉事件，别让「删绑定」顺带触发所在行的其它命中
-                    cx.stop_propagation();
-                    on(keys_event(with_field(
-                        &current,
-                        def.config_key,
-                        KEYS_DISABLED,
-                    )));
-                    refresh(cx);
-                }
-            });
+        // ✕ = 删除该动作的绑定（写 `"none"` 哨兵）。外观见 `icon_btn`（无边框 +
+        // 内边距 +2px/侧 + 默认变体的 hover 色）。
+        let mut remove = icon_btn(
+            cx,
+            format!("kremove-{}", def.config_key),
+            def.config_key,
+            AppIcon::X,
+            crate::tr("keymap.remove_binding"),
+        )
+        .on_click({
+            let current = keys.clone();
+            let on = on.clone();
+            let refresh = refresh.clone();
+            move |_, _, cx: &mut App| {
+                // 钮在行内：吞掉事件，别让「删绑定」顺带触发所在行的其它命中
+                cx.stop_propagation();
+                on(keys_event(with_field(
+                    &current,
+                    def.config_key,
+                    KEYS_DISABLED,
+                )));
+                refresh(cx);
+            }
+        });
         if cfg!(test) {
             let sel = format!("kremove-{}", def.config_key);
             remove = remove.debug_selector(move || sel.clone());
@@ -1336,26 +1412,24 @@ pub fn keys_section(keys: &hzip_config::Keys, ctx: &PageCtx, cx: &App) -> AnyEle
         // 默认」同一写入口径、只是范围不同）。用户口径 2026-10-16：✕ 旁边要一个
         // 还原钮——删了绑定或改乱了之后，逐项复原不必去动整份配置。
         // 图标用 `AppIcon::Refresh`（图标集里没有 undo/rotate 语义位，圆箭头 +
-        // tooltip「恢复默认」已足够消歧）。
-        //
-        // 尺寸/样式与**设置页其它按钮同款**（用户口径 2026-10-16：「应该使用 gpui-kit
-        // 的 Button（icon-only），hover 才和其他按钮统一」）：`with_size(component_size())`
-        // + **默认变体**（不加 `.ghost()`——ghost 的 hover 是主题色，而设置页其它按钮
-        // 是浅灰）。
-        let mut restore = Button::new(format!("krestore-{}", def.config_key))
-            .with_size(component_size())
-            .icon(AppIcon::Refresh)
-            .tooltip(crate::tr("keymap.reset_one"))
-            .on_click({
-                let current = keys.clone();
-                let on = on.clone();
-                let refresh = refresh.clone();
-                move |_, _, cx: &mut App| {
-                    cx.stop_propagation();
-                    on(keys_event(with_field(&current, def.config_key, "")));
-                    refresh(cx);
-                }
-            });
+        // tooltip「恢复默认」已足够消歧）；外观见 `icon_btn`。
+        let mut restore = icon_btn(
+            cx,
+            format!("krestore-{}", def.config_key),
+            def.config_key,
+            AppIcon::Refresh,
+            crate::tr("keymap.reset_one"),
+        )
+        .on_click({
+            let current = keys.clone();
+            let on = on.clone();
+            let refresh = refresh.clone();
+            move |_, _, cx: &mut App| {
+                cx.stop_propagation();
+                on(keys_event(with_field(&current, def.config_key, "")));
+                refresh(cx);
+            }
+        });
         if cfg!(test) {
             let sel = format!("krestore-{}", def.config_key);
             restore = restore.debug_selector(move || sel.clone());
@@ -1752,6 +1826,8 @@ pub(crate) fn test_anchor(name: impl AsRef<str>) -> &'static str {
                 "kremove",
                 // 行尾 ↻ 还原钮（逐项恢复默认，用户口径 2026-10-16）
                 "krestore",
+                // 图标本体（量尺寸：不许随钮边长放大，用户口径 2026-10-16）
+                "kglyph",
                 "kconflict",
                 // 已下线的旧锚点前缀（`kreset-` 行内复原 / `kdisable-` 禁用钮）：
                 // 用例要能断言它们**不在**渲染结果里——「查不到」也是断言的一部分。

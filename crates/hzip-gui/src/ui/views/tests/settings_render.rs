@@ -448,11 +448,14 @@ fn keys_block_is_single_line_per_action(cx: &mut gpui_kit::TestAppContext) {
             "页头「全部恢复默认」应在动作行之上（{}）",
             def.config_key
         );
-        // 单行：行高只有一带（两行式版式 ≥ 2×带）
+        // 单行：行高 = max(行带, 行尾图标钮边长) + 行距（两行式版式 ≥ 2×带）。
+        // 图标钮比行带高 4px（2026-10-16 用户口径「内边距 +2px/侧」）⇒ 上限按两者取大。
         let row_h = f32::from(row.size.height);
+        let icon_side = vtcx.update(|_window, cx| f32::from(super::icon_button_side(cx)));
+        let limit = band.max(icon_side) + 2. * row_gap + 1.;
         assert!(
-            row_h <= band + 2. * row_gap + 1.,
-            "{}: 行高 {row_h:.2} 超过一带（{band:.2} + 2×{row_gap:.2}）——行应为单行版式",
+            row_h <= limit,
+            "{}: 行高 {row_h:.2} 超过单行上限 {limit:.2}（行带 {band:.2} / 图标钮 {icon_side:.2}）——行应为单行版式",
             def.config_key
         );
         // 名称 / 芯片 / ✕ 同一行：芯片与 ✕ 中心线重合，✕ 在芯片右侧

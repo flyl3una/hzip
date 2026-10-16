@@ -1780,13 +1780,16 @@ fn keys_page_lists_every_action(cx: &mut gpui_kit::TestAppContext) {
             "{}: 行内顺序应为 名称 → 芯片 → ↻ 还原 → ✕",
             def.config_key
         );
+        // 行高上限 = max(行带, 行尾图标钮边长) + 2×行距（图标钮 2026-10-16 起比行带
+        // 高 4px——用户口径「内边距 +2px/侧」）；旧的两行式版式会到两带。
+        let icon_side = vtcx.update(|_window, cx| f32::from(settings_render::icon_button_side(cx)));
+        let band_h = f32::from(settings_render::row_band());
+        let limit = band_h.max(icon_side) + 2. * f32::from(crate::ui::spacing::row_gap()) + 1.;
         assert!(
+            f32::from(row.size.height) <= limit,
+            "{}: 行高 {:.1} 超过单行上限 {limit:.1}（行带 {band_h:.1} / 图标钮 {icon_side:.1}）",
+            def.config_key,
             f32::from(row.size.height)
-                <= f32::from(crate::ui::views::settings_render::row_band())
-                    + 2. * f32::from(crate::ui::spacing::row_gap())
-                    + 1.,
-            "{}: 行高超过一带——行应为单行版式（旧的两行式版式会到两带）",
-            def.config_key
         );
     }
     // 左右留白（用户口径 2026-10-16：「两侧都要 padding，右侧键位与按钮贴着边框
@@ -1904,9 +1907,38 @@ fn keys_page_lists_every_action(cx: &mut gpui_kit::TestAppContext) {
             "{what} 不是 icon-only（{w:.1}×{h:.1}）"
         );
         assert!(
-            (h - f32::from(reset.size.height)).abs() <= 1.0,
-            "{what} 与设置页其它按钮档位不一致（高 {h:.1} vs {:.1}）",
+            (h - (f32::from(reset.size.height) + 4.0)).abs() <= 1.0,
+            "{what} 应为「与设置页其它按钮同档 + 内边距 +2px/侧」（高 {h:.1}，页头钮 {:.1}）",
             f32::from(reset.size.height)
+        );
+    }
+    // ③ **图标本体**必须回到 kit 的 1rem 档（用户口径 2026-10-16：「图标太大了」）：
+    //    kit 的 icon-only 分支把图标绑在钮边长上（`v * 0.75`）——边长抬到 2rem+4px 时
+    //    图标会跟着涨到 25.5px；这里改为显式 `Size::Medium` 的 child ⇒ 恒 = 1rem。
+    for (ck, bx) in [
+        (keymap::ACTIONS[0].config_key, restore0),
+        (
+            keymap::ACTIONS[keymap::ACTIONS.len() - 1].config_key,
+            vtcx.debug_bounds(keys_sel(format!(
+                "kremove-{}",
+                keymap::ACTIONS[keymap::ACTIONS.len() - 1].config_key
+            )))
+            .expect("缺末行 ✕ 锚点"),
+        ),
+    ] {
+        let glyph = vtcx
+            .debug_bounds(keys_sel(format!("kglyph-{ck}")))
+            .unwrap_or_else(|| panic!("缺图标锚点：kglyph-{ck}"));
+        let g = f32::from(glyph.size.width);
+        assert!(
+            (g - f32::from(rem)).abs() <= 1.5,
+            "{ck}: 图标 {g:.1}px 不是 kit 的 1rem 档（rem={rem:?}）——又被钮边长带大了"
+        );
+        let box_side = f32::from(bx.size.height);
+        assert!(
+            box_side - g >= 8.0,
+            "{ck}: 图标与钮盒差仅 {:.1}px（图标 {g:.1} / 盒 {box_side:.1}）——图标应明显小于盒",
+            box_side - g
         );
     }
     // 交互说明从页底常驻行改为标题旁 ？ 悬浮（用户口径 2026-10-16）
