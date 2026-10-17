@@ -65,6 +65,22 @@ impl SpoolFile {
     }
 }
 
+/// **把 spool 目录建出来**（幂等；`SpoolPolicy::dir` 的每处消费点都要先过这里）。
+///
+/// `hzip-platform::dirs::temp_root()` 按契约「只创建路径不强制 mkdir」，而把它真的
+/// 建出来此前只有 GUI/CLI 的会话区（`TempArea::new_session`）在做 ⇒ 任何**没建会话**
+/// 的宿主（集成测试、嵌入式调用、会话建立前的提前 spool）一 spool 就吃 `NotFound`：
+/// 2026-10-17 CI 实测（三个平台 8 个 test target 全红）——
+/// `PathError { path: "/run/user/<uid>/hzip/hzip-spool-…", err: NotFound }`，因为
+/// Linux runner 上 `XDG_RUNTIME_DIR` 在、其下 `hzip` 不在；开发机因历史运行早已建好
+/// 该目录，本地恒绿，所以这个坑一直没露头。
+pub(crate) fn ensure_spool_dir(dir: &Path) -> VolResult<()> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        tracing::warn!(dir = %dir.display(), "spool 目录不可用：{e}");
+        VolError::Io(e)
+    })
+}
+
 /// 把 `src` 全部读进临时文件；`cancel` 命中即返回 [`VolError::Cancelled`]（临时文件随
 /// `SpoolFile` 的丢弃而删除）。
 pub fn spool_from_stream(
@@ -72,6 +88,7 @@ pub fn spool_from_stream(
     policy: &SpoolPolicy,
     cancel: Option<&CancellationToken>,
 ) -> VolResult<SpoolFile> {
+    ensure_spool_dir(&policy.dir)?;
     let mut file = tempfile::Builder::new()
         .prefix(policy.prefix)
         .tempfile_in(&policy.dir)

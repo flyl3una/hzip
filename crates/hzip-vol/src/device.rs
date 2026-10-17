@@ -201,6 +201,7 @@ impl Chain {
     /// 覆盖写链：base 只读打开 + 溢出临时文件（同前缀，孤儿回收可见）。
     fn build_overlay(path: &std::path::Path, opts: &crate::VolOptions) -> VolResult<OverlayPair> {
         let base = Arc::new(fs_core::FileDevice::open(path)?);
+        crate::materialize::ensure_spool_dir(&opts.spool.dir)?;
         let spill = tempfile::Builder::new()
             .prefix(crate::materialize::SPOOL_PREFIX)
             .tempfile_in(&opts.spool.dir)

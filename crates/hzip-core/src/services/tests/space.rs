@@ -63,3 +63,45 @@ fn sweep_removes_only_stale_spools() {
     // 幂等：再扫一遍无事发生
     assert_eq!(sweep_stale_spools_in(dir.path(), SPOOL_STALE_AFTER), 0);
 }
+
+/// 孤儿回收**扫两处**：`temp_dir()`（zip/cpio/tar 缓冲）与 `temp_root()`
+/// （卷容器缓冲 = `temp_dir()/hzip`，Linux 上 `XDG_RUNTIME_DIR/hzip`）。
+///
+/// 2026-10-17 核对发现：卷容器的 spool 落在 `temp_root()`，而回收只扫 `temp_dir()`
+/// ⇒ 卷容器的孤儿从未被回收（40 GB 镜像的缓冲崩一次就永久占盘）。本用例把两处
+/// 各放一个超龄孤儿，断言 `sweep_stale_spools`（非注入版）两处都收到。
+#[test]
+fn sweep_covers_both_spool_roots() {
+    let root = hzip_platform::dirs::temp_root();
+    let created = !root.exists();
+    std::fs::create_dir_all(&root).unwrap();
+    let stale_vol = root.join(format!("{SPOOL_PREFIX}vol-stale-{}", std::process::id()));
+    let stale_tmp =
+        std::env::temp_dir().join(format!("{SPOOL_PREFIX}tmp-stale-{}", std::process::id()));
+    for p in [&stale_vol, &stale_tmp] {
+        std::fs::write(p, b"x").unwrap();
+    }
+    let old = std::time::SystemTime::now() - Duration::from_secs(48 * 3600);
+    for p in [&stale_vol, &stale_tmp] {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let removed = sweep_stale_spools(SPOOL_STALE_AFTER);
+    assert!(
+        !stale_vol.exists(),
+        "卷容器缓冲（{root:?} 下）必须被回收：removed={removed}"
+    );
+    assert!(
+        !stale_tmp.exists(),
+        "zip/cpio/tar 缓冲（temp_dir 下）必须被回收"
+    );
+    // 自清理：不把开发机上的 `{temp}/hzip` 留在那里——那正是本仓 8 个测试 target
+    // 在 CI 上红、本地恒绿的成因（本地目录早被历史运行建好）。
+    if created {
+        let _ = std::fs::remove_dir(&root);
+    }
+}

@@ -12,11 +12,20 @@
 //! **注**：macOS 上 `config_dir` 与 `data_dir` 同址（`~/Library/Application Support/hzip`）
 //! ——App Support 同时承担两者角色，属平台约定；不要据此判定「目录解析出错」。
 //!
+//! # 这些目录**谁来建**（2026-10-17 补记）
+//!
+//! 下面的函数都**只算路径**（「创建时机由调用方决定」），但**消费方必须真的建**：
+//! 历史上只有 GUI/CLI 的会话区（`temp_area::TempArea::new_session`）建过 `temp_root()`，
+//! 于是任何没建会话的宿主（集成测试、嵌入式调用）一 spool 就 `NotFound` ——
+//! Linux runner 上 `XDG_RUNTIME_DIR=/run/user/<uid>` 存在、其下 `hzip` 不存在，
+//! 2026-10-17 三个平台共 8 个 test target 全红，而开发机因历史运行早已建好该目录、
+//! 本地恒绿。故**往这些目录里写东西的代码，写之前一律 `create_dir_all`**
+//! （卷层的两处 spool 见 `hzip_vol::materialize::ensure_spool_dir`）。
+//!
 //! 实现可用 `dirs` crate 取基准目录再拼 `hzip`（减少 FFI 面），但
 //! `XDG_STATE_HOME` 等 XDG 细节自实现（`dirs` crate 不覆盖 STATE，02 §5.3.10）。
 //! 唯 `desktop_dir` 例外：桌面是用户自有目录，**不拼 `hzip` 子目录**。
-//! 全部函数**只创建路径不强制 mkdir**（创建时机由调用方决定）；`HZIP_CONFIG`
-//! 覆盖逻辑归 hzip-config（不在本 crate）。
+//! `HZIP_CONFIG` 覆盖逻辑归 hzip-config（不在本 crate）。
 
 use std::path::PathBuf;
 

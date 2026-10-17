@@ -159,8 +159,19 @@ pub(crate) fn precheck_open_temp_space(
 /// 并发删除竞态）都静默跳过——清理绝不能把启动拖挂或变成失败路径。
 ///
 /// 只删常规文件（不递归、不跟随符号链接），且要求 `mtime` 早于 `max_age`。
+///
+/// # 扫两处（2026-10-17 核对补齐）
+///
+/// spool 缓冲有两处落点，**同名前缀**（[`SPOOL_PREFIX`]）：
+/// - `zip`/`cpio`/`tar` 的 `Spool` → [`std::env::temp_dir`]（`/tmp`）；
+/// - 卷容器（`hzip-vol::SpoolPolicy::default().dir` = `hzip-platform::dirs::temp_root()`）
+///   → `temp_dir()/hzip`（Linux 上 `XDG_RUNTIME_DIR/hzip`）。
+///
+/// 此前只扫第一处 ⇒ 卷容器的孤儿**从未被回收**（40 GB 镜像的 spool 崩一次就永久
+/// 占着临时盘）。第二处目录不存在时 `read_dir` 直接失败返回 0，无副作用。
 pub fn sweep_stale_spools(max_age: Duration) -> usize {
     sweep_stale_spools_in(&std::env::temp_dir(), max_age)
+        + sweep_stale_spools_in(&hzip_platform::dirs::temp_root(), max_age)
 }
 
 /// [`sweep_stale_spools`] 的可注入目录版本（测试用同一套判定逻辑）。
