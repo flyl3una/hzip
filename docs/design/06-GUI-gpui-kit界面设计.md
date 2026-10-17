@@ -25,7 +25,7 @@
 
 ```toml
 # crates/hzip-gui/Cargo.toml（替换 slint / slint-build / i-slint-backend-testing）
-gpui-kit = "=0.7.1"        # 锁 0.x 漂移；0.7.1 自带 gpui-pre 0.3.8（吸收 Zed gpui 破坏性变更）
+gpui-kit = "=0.7.3"        # 锁 0.x 漂移；0.7.3 自带 gpui-pre 0.3.9（吸收 Zed gpui 破坏性变更）。`gpui-fast` feature 暂未启用（保留式布局与 hzip 的线程局部布局状态不兼容，见根 Cargo.toml 末段）
 # features：关闭 tree-sitter-* / decimal / inspector（本应用用不到，控编译时间）
 ```
 

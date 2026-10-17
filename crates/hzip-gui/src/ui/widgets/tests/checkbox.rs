@@ -60,7 +60,7 @@ fn measure(cx: &mut TestAppContext, ours: bool) -> (f32, f32, f32, f32) {
 /// 期望值由**实时字体度量**算出（`ascent`/`descent`/`x_height` 取自 `TextSystem`）：
 /// 行框 `L = 字号 × CHECKBOX_LINE_HEIGHT`；字身框 `F = ascent + |descent|`；
 /// 基线 `= (L − F)/2 + ascent`；字面中心 `= 基线 − x_height/2`。
-/// 不引用实现里的 `CHECKBOX_OPTICAL_SHIFT` —— 把该常量改错/把内边距删掉，本用例都会失败。
+/// 不引用实现里的 `SQUARE_OPTICAL_SHIFT` —— 把该常量改错/把内边距删掉，本用例都会失败。
 ///
 /// 方框边界不可直接测（kit 组件内部无锚点），但「方框在行内垂直居中」由
 /// [`indicator_centers_with_label`] 独立证明，故这里用**行中心**代表方框中心。

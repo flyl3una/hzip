@@ -16,9 +16,11 @@
 //! # feature 并集现实（如实登记）
 //!
 //! zip crate 的 bzip2/zstd 由根 `[workspace.dependencies]` feature 并集对所有成员
-//! 常开（T24 注释同），lzma 由本 crate zip 依赖行显式开启——**三方法解码能力在
-//! workspace 内不可按成员裁剪**。本模块的 feature `zipx` 门控作用于**路由判定与
-//! 语义映射**（feature 关闭时 12/14/93 归 `UnknownMethod 2003` 显式拒绝而非静默
+//! 常开（T24 注释同）；**lzma(14) 不启用**——zip 4.6 的 lzma → liblzma → liblzma-sys
+//! 与本仓 `xz2`（lzma-sys，`links=lzma`）冲突，cargo 拒绝同一 native lib 双 crate
+//! （见本 crate `Cargo.toml` 的同名注释）。故 12(bzip2)/93(zstd) 解码可用，14(LZMA)
+//! 读取时明确 `Unsupported 5001`。本模块的 feature `zipx` 门控作用于**路由判定与
+//! 语义映射**（feature 关闭时 12/93 归 `UnknownMethod 2003` 显式拒绝而非静默
 //! 解码）；`route()` 纯函数两侧皆可单测（`cfg` 双分支）。
 //!
 //! 98(PPMd) 等：zip crate 未启用 ppmd feature → 条目读取时

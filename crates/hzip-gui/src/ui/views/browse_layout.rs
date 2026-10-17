@@ -326,12 +326,12 @@ fn tree_row_icon(
     }
 }
 
-/// 回退小图标元素（左栏树专用；与 T-ICON 之前的树行图标逐像素一致）。
+/// 左栏树的回退图标（**没有可探测的名字**时用：喂树元数据滞后一帧 / 档案名未知）。
+///
+/// 改走 widget 的同槽位回退（`file_icon::fallback`）——尺寸与光学下沉和系统位图
+/// 分支完全一致（此前本地写死 `Size::Small`，与位图分支的 `Slot` 尺寸各算各的）。
 fn fallback_small_icon(icon: AppIcon, cx: &App) -> AnyElement {
-    Icon::new(icon)
-        .with_size(Size::Small)
-        .text_color(cx.theme().muted_foreground)
-        .into_any_element()
+    crate::ui::widgets::file_icon::fallback(icon, crate::ui::widgets::file_icon::Slot::Inline, cx)
 }
 
 /// 树行渲染（TreeState render_item 回调）。
@@ -377,7 +377,7 @@ fn render_tree_item<T: BrowseHandlerSource + 'static>(
                 file_icon::icon(
                     archive_name,
                     file_icon::kind_of(false, true, false),
-                    file_icon::Slot::Small,
+                    file_icon::Slot::Inline,
                     fallback,
                     cx,
                 )
@@ -388,7 +388,7 @@ fn render_tree_item<T: BrowseHandlerSource + 'static>(
             file_icon::icon(
                 name,
                 file_icon::kind_of(m.is_dir, m.is_container, false),
-                file_icon::Slot::Small,
+                file_icon::Slot::Inline,
                 fallback,
                 cx,
             )
@@ -904,9 +904,10 @@ fn compact_list<T: BrowseHandlerSource + 'static>(
         let (icon, label, size_text, _entry_id): (AnyElement, String, String, Option<u64>) =
             match (is_parent, row) {
                 (true, _) => (
-                    // `..` 行用自有箭头图标（无系统图标语义）
+                    // `..` 行用自有箭头图标（无系统图标语义）——尺寸与同排文件图标
+                    // 同槽位（否则箭头与下面的行图标一大一小）
                     Icon::new(AppIcon::ArrowUp)
-                        .with_size(Size::Small)
+                        .with_size(Size::Size(file_icon::slot_px(file_icon::Slot::Inline, cx)))
                         .text_color(muted)
                         .into_any_element(),
                     "..".to_string(),
@@ -916,7 +917,7 @@ fn compact_list<T: BrowseHandlerSource + 'static>(
                 (false, Some(r)) => (
                     crate::ui::views::browse::row_file_icon(
                         r,
-                        crate::ui::widgets::file_icon::Slot::Small,
+                        crate::ui::widgets::file_icon::Slot::Inline,
                         cx,
                     ),
                     r.name.clone(),
@@ -1025,7 +1026,7 @@ fn compact_list<T: BrowseHandlerSource + 'static>(
                 .bg(crate::ui::theme::selection_row_bg(cx))
                 .child(
                     Icon::new(AppIcon::Folder)
-                        .with_size(Size::Small)
+                        .with_size(Size::Size(file_icon::slot_px(file_icon::Slot::Inline, cx)))
                         .text_color(muted),
                 )
                 .child(div().flex_1().min_w_0().child(name_input_element(input)))

@@ -2403,3 +2403,108 @@ fn type_cell_text_prefers_system_name() {
     // 空回退（极端行）不得 panic / 变形
     assert_eq!(type_cell_text(None, ""), gpui_kit::SharedString::from(""));
 }
+
+/// **行内图标与文字光学同轴**（用户实报 2026-10-17，4K/Win11 明细列表）。
+///
+/// 报告原文：「图标和字体存在高度差，图标比较小，并且比字体高」。两条都是几何问题：
+/// ① 图标框写死 16px（基准字号 1.0em），而文字行框 ≈1.74em ⇒ 图标看着小一圈；
+/// ② 图标按**行框**居中，而眼睛看的是**字面**中心（比行框中心低
+///    [`crate::ui::constant::SQUARE_OPTICAL_SHIFT`]）⇒ 图标显得偏高。
+///
+/// 本用例量真实行渲染（`icon` 锚点 vs 单元格内容盒锚点，内容盒 == 文字行框），
+/// 期望值由**实时字体度量**算出（同 `checkbox::tests::box_centers_on_text_ink`），
+/// 不引用实现里的常量：改坏位移/尺寸，这里必红。
+#[gpui_kit::test]
+fn file_list_icon_is_optically_centered_on_text(cx: &mut gpui_kit::TestAppContext) {
+    use crate::ui::shell::AppShell;
+    use crate::ui::widgets::file_icon::{Slot, slot_px};
+
+    let engine = std::sync::Arc::new(crate::viewmodel::testutil::engine());
+    let data: crate::ui::shell::AppDataHandle = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::app::state::AppData::new(engine),
+    ));
+    let slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        // **不装图标缓存** ⇒ 走回退分支（`file-icon-fallback` 锚点），系统位图是
+        // 异步的、单测里拿不到；两分支共用 `slot_px` + 同一套位移（见 widget 文档）。
+        let shell = AppShell::with_data(
+            cx,
+            crate::ui::contracts::ShellHandlers::default(),
+            Some(data.clone()),
+            None,
+        );
+        let shell = cx.new(|_| shell);
+        *slot2.borrow_mut() = Some(shell.clone());
+        let view: gpui_kit::AnyView = shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = slot.borrow().clone().expect("shell 实体");
+    let snap = AppStateUiSnapshot {
+        archive_name: "demo.zip".into(),
+        dir_rows: std::sync::Arc::new(vec![row("报告-alpha.txt", false, 1)]),
+        ..Default::default()
+    };
+    vtcx.update(|window, cx| {
+        shell.update(cx, |s, cx| s.update_from_state(cx, &snap));
+        let _ = window.draw(cx);
+    });
+    vtcx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+
+    let cell = vtcx.debug_bounds("td-cell-0-0").expect("名称列内容盒锚点");
+    let icon = vtcx
+        .debug_bounds("file-icon-fallback")
+        .expect("回退图标锚点（测试里系统图标不可用）");
+
+    // 期望：图标中心落在**字面中心**（拉丁小写 = x-height 带中心）
+    let (ascent, descent, x_height, font, line_box) = vtcx.update(|window, cx| {
+        let ts = cx.text_system();
+        let id = ts.resolve_font(&window.text_style().font());
+        let font = window.rem_size();
+        (
+            f32::from(ts.ascent(id, font)),
+            f32::from(ts.descent(id, font).abs()),
+            f32::from(ts.x_height(id, font)),
+            f32::from(font),
+            f32::from(crate::ui::views::browse::list_text_line_height(window)),
+        )
+    });
+    let baseline = (line_box - (ascent + descent)) / 2. + ascent;
+    let ink_center = baseline - x_height / 2.;
+    let want_drop = ink_center - line_box / 2.;
+
+    let cell_center = f32::from(cell.origin.y) + f32::from(cell.size.height) / 2.;
+    let icon_center = f32::from(icon.origin.y) + f32::from(icon.size.height) / 2.;
+    assert!(
+        (want_drop - 1.5).abs() < 1.2,
+        "前置：本机字体的字面中心应比行框中心低 ~1.5px，实得 {want_drop:.2}（字体/字号变了就重算常量）"
+    );
+    assert!(
+        (icon_center - cell_center - want_drop).abs() <= 0.75,
+        "图标中心相对文字行框中心应下沉 {want_drop:.2}px（= 字面中心），\
+         实得 {:.2}px（图标 {icon_center:.1} / 内容盒 {cell_center:.1}）",
+        icon_center - cell_center
+    );
+    // 尺寸：图标框 = 字形盒（1.35em），且不得小于字形墨迹（用户口径「图标比较小」）
+    let want_px = vtcx.update(|_window, cx| slot_px(Slot::Inline, cx));
+    assert_eq!(
+        f32::from(icon.size.width),
+        f32::from(want_px),
+        "图标框宽 = 槽位值（1.35em × {font}px）"
+    );
+    assert_eq!(
+        f32::from(icon.size.height),
+        f32::from(want_px),
+        "图标框高同理（不得被行盒挤压）"
+    );
+    assert!(
+        f32::from(want_px) >= ascent + descent,
+        "图标框（{want_px:?}）不得小于字身框（{}px）",
+        ascent + descent
+    );
+}

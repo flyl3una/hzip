@@ -7,7 +7,7 @@
 | 上游文档 | [02-程序详细设计.md](02-程序详细设计.md) §6.3/§7.2/§9.5、[06-GUI-gpui-kit界面设计.md](06-GUI-gpui-kit界面设计.md) §4.4（现行压缩对话框原型）、[07-GUI代码组织与分层约定.md](07-GUI代码组织与分层约定.md) |
 | 参照产品 | Bandizip「压缩」对话框、7-Zip「添加到压缩包」对话框 |
 | 视觉稿 | [`assets/09-compress-dialog-mockup.png`](assets/09-compress-dialog-mockup.png)（源文件 [`assets/09-compress-dialog-mockup.html`](assets/09-compress-dialog-mockup.html)） |
-| 技术底座 | gpui-kit `=0.7.1`（内部 gpui-component 0.7.1 / gpui-base 0.7.1 / gpui-pre 0.3.8） |
+| 技术底座 | gpui-kit `=0.7.3`（内部 gpui-component 0.7.3 / gpui-base 0.7.3 / gpui-pre 0.3.9） |
 | 审阅范围 | §2 弹窗结构、§3 字段规格、§5 压缩方式矩阵、§6 比例/速度、§10 数据面缺口、§13 待决策项 |
 
 ---

@@ -38,6 +38,7 @@
 //! | 入口 | 语义 |
 //! |---|---|
 //! | [`icon`] | 图标元素（系统位图或回退） |
+//! | [`fallback`] | 只画回退图标（没有可探测的名字时用；尺寸/光学下沉与 [`icon`] 同槽位） |
 //! | [`type_name`] | 系统本地化类型名（缓存命中且语言一致 ⇒ `Some`），供「类型」列 |
 //! | [`slot_px`] | 槽位目标边长（px） |
 //! | [`kind_of`] / [`icon_key`] | 纯函数：种类判定 / 缓存键归一化 |
@@ -64,11 +65,9 @@ use crate::viewmodel::VmSignal;
 /// **两分支强制同尺寸**（都走 [`slot_px`]）：否则位图替换回退时会有 1–2px 跳动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
-    /// 明细表名称列
+    /// 与文字**同行**的图标：明细表名称列、左栏树、紧凑列表（三处行盒同源 ⇒ 同一档）。
     Inline,
-    /// 左栏树 / 紧凑列表
-    Small,
-    /// 图标网格
+    /// 图标网格（图标在 96px 单元格里独立成块、名称在下——与文字无同行关系）。
     Grid,
 }
 
@@ -81,18 +80,41 @@ pub(crate) type IconSource = Arc<dyn Fn(&IconRequest<'_>) -> Option<SystemIcon> 
 /// 缓存容量上限（条）。依据见模块文档「缓存容量」。
 const CACHE_CAP: usize = 512;
 
+/// 「可见墨迹居中」的位移上限（占位图高的比例，±13%）。
+///
+/// 三重约束下的取值：
+/// 1. 图标设计千差万别（图片/书本类内容本就偏下、徽标类偏上），无上限会把它们推歪；
+/// 2. 要覆盖**文档类图标**最常见的「纸面顶部留白」——实测 4K/150% 上这类图标可见内容比
+///    行内文字高 4~6 物理 px（≈2.7~4 逻辑 px），13% × 22px ≈ 2.9px 正好够；
+/// 3. 位移后位图连同上下留白仍装得进行的内容盒（行框 28 − 槽位 22 ⇒ 单侧余量 3px，
+///    ±2.9 不越界），否则会被单元格的 `overflow_hidden` 裁掉一条边。
+const INK_DY_MAX: f32 = 0.13;
+
 /// 槽位目标边长（px）。
 ///
-/// 基准来源（实测 kit `gpui-component` 源码，2026-10-10）：
-/// - `Inline` = 16 = kit `Icon` 默认（继承字号默认值）；
-/// - `Small` = 14 = kit `Size::Small` → `size_3p5()` = 3.5 × 4px（**固定 14px，不随字号缩放**）；
-/// - `Grid` = `ICON_CELL_ICON`（`ui/constant.rs` 单一来源）。
+/// # `Inline` = 文字的**字形盒**（`GLYPH_BOX_EM` × 基准字号）
+///
+/// 用户实报（2026-10-17，4K/Win11 明细列表）：「图标比较小，并且比字体高」——
+/// 根因是这一档**写死 16px**：基准字号默认就是 16px，而行的文字行框是
+/// `max(line_height×字号, 墨迹盒)` ≈ 1.74em ⇒ 图标只占行框 ~57%、更比字形墨迹
+/// 小一圈；再叠加「按行框居中」（字面中心比行框中心低 [`SQUARE_OPTICAL_SHIFT`]）
+/// 就成了「小且高」。资源管理器的比例可作对照：16px 图标配 ~12px 字
+/// ⇒ **1.33em**；本档取 [`crate::ui::constant::GLYPH_BOX_EM`] = 1.35em（同一条
+/// 「图标 = 字身框」的规则，且随 `[ui].font_size` 一起缩放——字号变大图标跟着大）。
+///
+/// # `Grid` = 单元格常量
+///
+/// [`ICON_CELL_ICON`]（`ui/constant.rs` 单一来源）：网格图标不随字号走（它与
+/// 名称分两行、由单元格尺寸决定）。
 ///
 /// 两分支（回退/位图）共用本函数 ⇒ 替换时无尺寸跳动。
-pub(crate) fn slot_px(slot: Slot) -> Pixels {
+pub(crate) fn slot_px(slot: Slot, cx: &App) -> Pixels {
     match slot {
-        Slot::Inline => px(16.),
-        Slot::Small => px(14.),
+        // `theme().font_size` = `[ui].font_size`（与 `window.rem_size()` 同源，
+        // 见 `ui::theme` 的 font 槽覆写与 `theme_font_size_drives_window_rem`）
+        Slot::Inline => {
+            px((f32::from(cx.theme().font_size) * crate::ui::constant::GLYPH_BOX_EM).round())
+        }
         Slot::Grid => ICON_CELL_ICON,
     }
 }
@@ -159,7 +181,10 @@ pub(crate) fn icon(
         let mut st = lock(&cache.inner.state);
         match st.entries.get(&key) {
             // 命中：只做一次 `Arc` 克隆（32px 源按 slot 缩放由渲染侧做）。
-            Some(Entry::Ready { image, .. }) => Outcome::Ready(Arc::clone(image)),
+            Some(Entry::Ready { image, ink_dy, .. }) => Outcome::Ready {
+                image: Arc::clone(image),
+                ink_dy: *ink_dy,
+            },
             // 在飞（`Wanted`）/ 负缓存（`Missing`）：回退且**不**重复入队。
             Some(_) => Outcome::Fallback,
             None => {
@@ -174,7 +199,7 @@ pub(crate) fn icon(
         cache.inner.cv.notify_one();
     }
     match outcome {
-        Outcome::Ready(image) => system_icon_element(image, slot),
+        Outcome::Ready { image, ink_dy } => system_icon_element(image, slot, ink_dy, cx),
         Outcome::Fallback => fallback_icon(fallback, slot, cx),
     }
 }
@@ -243,20 +268,54 @@ pub(crate) mod test_hooks;
 /// 回退图标元素（各槽位与 T-ICON 之前逐像素一致）。
 ///
 /// 显式给尺寸（不依赖继承字号）：与位图分支共用 [`slot_px`] ⇒ 两分支同尺寸。
-/// `Small` 的 14px 正是 kit `Size::Small` 的取值（见 [`slot_px`]）⇒ 观感不变。
 fn fallback_icon(fallback: AppIcon, slot: Slot, cx: &App) -> AnyElement {
     let icon = Icon::new(fallback).text_color(cx.theme().muted_foreground);
-    let element = icon.with_size(Size::Size(slot_px(slot))).into_any_element();
+    let element = icon
+        .with_size(Size::Size(slot_px(slot, cx)))
+        .into_any_element();
     // 调试锚点（`cfg!(test)`；release 侧 `if` 常量折叠掉）：headless 烟测要分别
     // 定位「回退」与「位图」两个分支，才能断言「先回退后替换」的用户可见行为。
     if cfg!(test) {
-        return div()
-            .flex_shrink_0()
-            .debug_selector(|| "file-icon-fallback".into())
-            .child(element)
-            .into_any_element();
+        return nudge_optically(
+            div()
+                .flex_shrink_0()
+                .debug_selector(|| "file-icon-fallback".into())
+                .child(element)
+                .into_any_element(),
+            slot,
+        );
     }
-    element
+    nudge_optically(element, slot)
+}
+
+/// 只画回退图标（**不查系统图标**）：调用方没有可探测的名字时用（左栏树喂元数据
+/// 滞后一帧 / 档案名未知）。尺寸与光学下沉与 [`icon`] 的同槽位完全一致。
+pub(crate) fn fallback(fallback: AppIcon, slot: Slot, cx: &App) -> AnyElement {
+    fallback_icon(fallback, slot, cx)
+}
+
+/// **行内图标的光学下沉**：图标框相对文字**字面**中心（而字形盒中心）下移
+/// [`SQUARE_OPTICAL_SHIFT`]。
+///
+/// 手法与复选框同源但作用对象相反（复选框动文字、这里动图标）：给图标**加
+/// `2 × 位移` 的上外边距**——外边距盒随行居中 ⇒ 图标本体恰好下移本值；图标两
+/// 侧都是文字，动图标不动文字（文字行框/基线一律不碰）。
+///
+/// 外边距盒 = `slot + 2×位移`，必须仍装进行的内容盒（`Inline` 槽 = 字形盒
+/// `1.35em` + 3px ≤ 行框 `max(line_height×字号, 墨迹盒)`；出厂配置下
+/// 21.6+3=24.6 ≤ 27.8）⇒ 不会把图标挤出内容盒（`overflow_hidden` 裁边）。
+/// `Grid` 槽不加（图标与名称分两行，无同行光学关系）。
+fn nudge_optically(el: AnyElement, slot: Slot) -> AnyElement {
+    if slot == Slot::Grid {
+        return el;
+    }
+    div()
+        // `flex_shrink_0`：包装层与图标同宽，不得参与收缩（否则它缩了、图标照原尺寸
+        // 画出来 ⇒ 与右侧文字重叠；列宽不足时要收的是名称文本）
+        .flex_shrink_0()
+        .mt(px(crate::ui::constant::SQUARE_OPTICAL_SHIFT * 2.))
+        .child(el)
+        .into_any_element()
 }
 
 /// 系统位图元素：按槽位边长定尺寸（32px 源按 slot 缩放，T-ICON 决策 #2）。
@@ -267,15 +326,29 @@ fn fallback_icon(fallback: AppIcon, slot: Slot, cx: &App) -> AnyElement {
 /// 恒保尺寸，被挤掉/裁掉的必须是右侧的名称文本。kit 的 `Icon`（回退分支）自带
 /// `flex_shrink_0`，位图分支必须显式声明——否则同一行里回退图标不缩、位图被挤，
 /// 表现为「有图标时反而先消失」。
-fn system_icon_element(image: Arc<RenderImage>, slot: Slot) -> AnyElement {
-    let size = slot_px(slot);
-    let element = img(image).w(size).h(size).flex_shrink_0();
-    if cfg!(test) {
-        return element
+fn system_icon_element(image: Arc<RenderImage>, slot: Slot, ink_dy: f32, cx: &App) -> AnyElement {
+    let size = slot_px(slot, cx);
+    let image_box = img(image).w(size).h(size).flex_shrink_0();
+    // 可见墨迹居中：给位图**加 2×位移的上/下内边距**——内边距盒随行居中 ⇒ 位图本体
+    // 恰好下移/上移「位移」值（与 [`nudge_optically`] 同一手法，这里作用在位图自身）。
+    // 用**布局**而非绘制偏移：① 测试能直接量到（`file-icon-system` 锚点跟着动）；
+    // ② 位移被夹在槽位余量内（见 [`INK_DY_MAX`]），不会被单元格 `overflow_hidden` 裁边。
+    let dy = size * ink_dy.clamp(-INK_DY_MAX, INK_DY_MAX);
+    let inner: AnyElement = if cfg!(test) {
+        image_box
             .debug_selector(|| "file-icon-system".into())
-            .into_any_element();
-    }
-    element.into_any_element()
+            .into_any_element()
+    } else {
+        image_box.into_any_element()
+    };
+    let element: AnyElement = if dy >= px(0.25) {
+        div().pt(dy * 2.).child(inner).into_any_element()
+    } else if dy <= px(-0.25) {
+        div().pb(dy * -2.).child(inner).into_any_element()
+    } else {
+        inner
+    };
+    nudge_optically(element, slot)
 }
 
 /// UI locale 是否与系统语言一致（T-ICON 决策 #3）。
@@ -383,6 +456,53 @@ fn probe_one(inner: &CacheInner, key: &IconKey) -> bool {
     true
 }
 
+/// **可见墨迹**的纵向偏移比例（正 = 墨迹偏上、位图需下移；已夹到 ±[`INK_DY_MAX`]）。
+///
+/// # 为什么需要（用户实报 2026-10-17，4K/Win11 明细列表）
+///
+/// 「图标没有垂直居中（有点靠上了）」。Windows 的文档类图标是**一张近白纸面 + 彩色/
+/// 深色内容**：纸面在浅色行背景上几乎不可见，眼睛只看见内容 ⇒ 图标看着又小又靠上
+/// （实测这类图标可见内容比行内文字高 4~6 物理 px，而文件夹/压缩包等满幅图标是对齐的）。
+/// 这里按**看得见的部分**算墨迹中心，渲染侧据此把位图整体下移，使可见内容落在行内
+/// 文字的光学中心上。
+///
+/// 判定：`alpha > 8` 且 **不是**「亮度 ≥ 225 且饱和度 ≤ 16」（近白且低饱和 = 纸面，
+/// 在浅色行背景上看不见）。深色主题下纸面本身是深色（亮度低）⇒ 全幅计入 ⇒ 偏移 ≈ 0
+/// （不会把深色图标推歪）——即该修正自带主题自适应。
+fn visible_ink_dy_ratio(icon: &SystemIcon) -> f32 {
+    let (w, h) = (icon.width, icon.height);
+    if w == 0 || h == 0 {
+        return 0.;
+    }
+    let (mut top, mut bottom) = (u32::MAX, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let Some(p) = icon.premultiplied_bgra.get(i..i + 4) else {
+                return 0.;
+            };
+            let (b, g, r, a) = (p[0], p[1], p[2], p[3]);
+            if a <= 8 {
+                continue;
+            }
+            let max = r.max(g).max(b) as u32;
+            let min = r.min(g).min(b) as u32;
+            let lum = (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000;
+            if lum >= 225 && max - min <= 16 {
+                continue; // 纸面：浅色行背景上看不见
+            }
+            top = top.min(y);
+            bottom = bottom.max(y);
+        }
+    }
+    if top == u32::MAX {
+        return 0.;
+    }
+    let ink_center = (top + bottom) as f32 / 2.;
+    let ratio = (h as f32 / 2. - ink_center) / h as f32;
+    ratio.clamp(-INK_DY_MAX, INK_DY_MAX)
+}
+
 /// `SystemIcon` → 缓存条目；位图自相矛盾（尺寸/长度不符）⇒ `None`（当缺失）。
 ///
 /// 调用方（本模块的探测路径）**先校验后转换**：`bgra_pa_to_render_image` 对长度
@@ -400,9 +520,11 @@ fn system_icon_entry(icon: SystemIcon) -> Option<Entry> {
         );
         return None;
     }
+    let ink_dy = visible_ink_dy_ratio(&icon);
     Some(Entry::Ready {
         image: crate::ui::views::preview::bgra_pa_to_render_image(w, h, icon.premultiplied_bgra),
         type_name: icon.type_name,
+        ink_dy,
     })
 }
 
@@ -451,10 +573,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 enum Entry {
     /// 已登记、等待后台探测（`Wanted` 态只入队一次）。
     Wanted,
-    /// 探测成功：位图 + 系统本地化类型名。
+    /// 探测成功：位图 + 系统本地化类型名 + 可见墨迹的纵向偏移比例。
     Ready {
         image: Arc<RenderImage>,
         type_name: Option<String>,
+        /// 可见墨迹中心相对位图中心的偏移**比例**（正 = 墨迹偏上 ⇒ 位图整体下移）。
+        /// 见 [`visible_ink_dy_ratio`]。
+        ink_dy: f32,
     },
     /// 负缓存：平台拿不到（失败/本机该类型只有通用图标）——不再重复探测。
     Missing,
@@ -492,8 +617,11 @@ impl gpui_kit::Global for FileIconCache {}
 
 /// 渲染帧的查表结果（锁外构造元素）。
 enum Outcome {
-    /// 命中：位图已就绪。
-    Ready(Arc<RenderImage>),
+    /// 命中：位图已就绪（附可见墨迹偏移比例，见 [`visible_ink_dy_ratio`]）。
+    Ready {
+        image: Arc<RenderImage>,
+        ink_dy: f32,
+    },
     /// 回退（在飞 / 负缓存 / 新登记）。
     Fallback,
 }

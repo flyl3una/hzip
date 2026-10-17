@@ -106,14 +106,30 @@ fn kind_of_prefers_symlink_then_container_then_dir() {
     );
 }
 
-/// 槽位边长取自 `ui/constant.rs` 基准。
-#[test]
-fn slot_px_matches_constant_baselines() {
-    // 基准 = kit 同款：Inline 16（Icon 默认）/ Small 14（kit `Size::Small` = size_3p5 = 14px）/
-    // Grid = `ICON_CELL_ICON`（constant.rs 单一来源）。
-    assert_eq!(slot_px(Slot::Inline), px(16.));
-    assert_eq!(slot_px(Slot::Small), px(14.));
-    assert_eq!(slot_px(Slot::Grid), ICON_CELL_ICON);
+/// 槽位边长：`Inline` = 文字**字形盒**（`GLYPH_BOX_EM` × 基准字号，随 `[ui].font_size`
+/// 缩放）；`Grid` = `ICON_CELL_ICON`（constant.rs 单一来源）。
+///
+/// 用户实报 2026-10-17（4K/Win11）：「图标比较小，并且比字体高」——此前 Inline 写死
+/// 16px（= 基准字号 1.0em，而行框 ≈1.74em）。本用例钉住「1.35em 且随字号走」。
+#[gpui_kit::test]
+fn slot_px_follows_the_font_size(cx: &mut TestAppContext) {
+    cx.update(|cx: &mut App| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let font = f32::from(cx.theme().font_size);
+        assert_eq!(
+            slot_px(Slot::Inline, cx),
+            px((font * crate::ui::constant::GLYPH_BOX_EM).round()),
+            "Inline = 字形盒（1.35em）"
+        );
+        assert_eq!(
+            slot_px(Slot::Grid, cx),
+            ICON_CELL_ICON,
+            "Grid 与字号无关（单元格常量）"
+        );
+        // 出厂字号 16 ⇒ 22px（16 定档时代是 16px）：比字形墨迹略大、仍装得进行框
+        assert_eq!(slot_px(Slot::Inline, cx), px(22.), "出厂字号下应为 22px");
+    });
 }
 
 /// 状态机：`absent` → 渲染登记 `wanted` → 排空 → `ready`；
@@ -412,14 +428,193 @@ fn narrow_cell_does_not_squeeze_system_icon(cx: &mut TestAppContext) {
     let bounds = vtcx
         .debug_bounds("file-icon-system")
         .expect("缓存填充后应是系统位图");
+    // 期望值按**当前字号下的槽位值**取（1.35em）：断言的是「不被挤压」，不是某个写死的 px
+    let want = vtcx.update(|_window, cx| slot_px(Slot::Inline, cx));
     assert_eq!(
         f32::from(bounds.size.width),
-        f32::from(px(16.)),
-        "列宽不足时图标宽度不得被挤压（应恒为 slot_px：Inline = 16）"
+        f32::from(want),
+        "列宽不足时图标宽度不得被挤压（应恒为 slot_px）"
     );
-    assert_eq!(
-        f32::from(bounds.size.height),
-        f32::from(px(16.)),
-        "高度同理"
+    assert_eq!(f32::from(bounds.size.height), f32::from(want), "高度同理");
+}
+
+// ── 可见墨迹居中（用户口径 2026-10-17：「图标没有垂直居中（有点靠上了）」）──
+
+/// 造一张 `size×size` 的背景色位图（背景之外可再写像素）。
+fn canvas(size: u32, bg: [u8; 4]) -> SystemIcon {
+    let mut px = Vec::with_capacity((size * size * 4) as usize);
+    for _ in 0..size * size {
+        px.extend_from_slice(&bg);
+    }
+    SystemIcon {
+        width: size,
+        height: size,
+        premultiplied_bgra: px,
+        type_name: None,
+    }
+}
+
+/// 在 `canvas` 上画一个矩形（预乘 BGRA：不透明色按原值写）。
+fn fill(icon: &mut SystemIcon, x0: u32, y0: u32, x1: u32, y1: u32, color: [u8; 4]) {
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let i = ((y * icon.width + x) * 4) as usize;
+            icon.premultiplied_bgra[i..i + 4].copy_from_slice(&color);
+        }
+    }
+}
+
+/// **浅色主题的文档图标**：近白「纸面」不可见，只看得见上部的彩色内容 ⇒ 必须下移
+/// （用户报障的正是这一类：纸面在白色行背景上看不见，眼睛只看到靠上的内容）。
+#[test]
+fn invisible_paper_with_high_ink_needs_downward_shift() {
+    let mut icon = canvas(32, [255, 255, 255, 255]); // 白纸（不可见）
+    fill(&mut icon, 4, 2, 27, 9, [60, 120, 220, 255]); // 靠上的蓝色内容
+    let dy = visible_ink_dy_ratio(&icon);
+    assert!(dy > 0.05, "可见墨迹在纸面上部 ⇒ 应下移（正值），实得 {dy}");
+    assert!(dy <= INK_DY_MAX + 1e-6, "位移必须被夹住：{dy}");
+}
+
+/// **深色主题的同类图标**：纸面本身是深色（可见）⇒ 全幅计入 ⇒ 不应再额外位移。
+#[test]
+fn dark_paper_counts_as_ink() {
+    let mut icon = canvas(32, [0, 0, 0, 0]); // 透明画布
+    fill(&mut icon, 3, 3, 28, 28, [30, 30, 34, 255]); // 深色纸面（整幅）
+    let dy = visible_ink_dy_ratio(&icon);
+    assert!(dy.abs() < 0.02, "整幅可见 ⇒ 偏移应≈0，实得 {dy}");
+}
+
+/// 内容居中（常见文件夹/压缩包图标）⇒ 不位移。
+#[test]
+fn centered_ink_keeps_the_slot_center() {
+    let mut icon = canvas(32, [0, 0, 0, 0]);
+    fill(&mut icon, 2, 6, 29, 25, [240, 200, 60, 255]); // 居中块
+    let dy = visible_ink_dy_ratio(&icon);
+    assert!(dy.abs() < 0.02, "居中内容不应位移，实得 {dy}");
+}
+
+/// 极端形态（墨迹全在顶/底）⇒ 夹到 ±[`INK_DY_MAX`]，绝不把图标推出槽位。
+#[test]
+fn ink_shift_is_clamped_at_both_ends() {
+    let mut top = canvas(32, [0, 0, 0, 0]);
+    fill(&mut top, 0, 0, 31, 1, [200, 0, 0, 255]);
+    assert!((visible_ink_dy_ratio(&top) - INK_DY_MAX).abs() < 1e-6);
+    let mut bottom = canvas(32, [0, 0, 0, 0]);
+    fill(&mut bottom, 0, 30, 31, 31, [200, 0, 0, 255]);
+    assert!((visible_ink_dy_ratio(&bottom) + INK_DY_MAX).abs() < 1e-6);
+}
+
+/// 全透明位图（平台脏数据）⇒ 0，不 panic（渲染侧据此不做位移）。
+#[test]
+fn fully_transparent_bitmap_has_no_shift() {
+    let icon = canvas(8, [0, 0, 0, 0]);
+    assert_eq!(visible_ink_dy_ratio(&icon), 0.);
+}
+
+/// **位图分支的可见墨迹居中确实落到了布局上**（用户口径 2026-10-17：「图标没有
+/// 垂直居中（有点靠上了）」）。
+///
+/// 两个独立窗口、同一个探测源（按扩展名给图）：
+/// - `flat.bin` ⇒ 满幅深色位图（可见墨迹 = 整幅 ⇒ 不位移）；
+/// - `paper.png` ⇒ 「近白纸面 + 靠上内容」（浅色背景上只看得见上部内容 ⇒ 需下移）。
+/// 断言：白纸图标的锚点**相对所在行中心**比满幅图标低 ≈ `INK_DY_MAX × 槽位`——即修正
+/// 作用到了渲染几何上，而不是只算了个数。
+#[gpui_kit::test]
+fn visible_ink_shift_moves_the_bitmap_anchor(cx: &mut TestAppContext) {
+    fn paper_icon() -> SystemIcon {
+        let mut px = vec![255u8; 32 * 32 * 4]; // 白纸（浅色背景上看不见）
+        for y in 2..=9u32 {
+            for x in 4..=27u32 {
+                let i = ((y * 32 + x) * 4) as usize;
+                px[i..i + 4].copy_from_slice(&[40, 90, 210, 255]); // 靠上的内容
+            }
+        }
+        SystemIcon {
+            width: 32,
+            height: 32,
+            premultiplied_bgra: px,
+            type_name: None,
+        }
+    }
+    fn full_bleed_icon() -> SystemIcon {
+        SystemIcon {
+            width: 32,
+            height: 32,
+            premultiplied_bgra: [45u8, 45, 45, 255].repeat(32 * 32),
+            type_name: None,
+        }
+    }
+    struct Probe {
+        name: &'static str,
+    }
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, cx: &mut gpui_kit::Context<Self>) -> impl IntoElement {
+            div()
+                .debug_selector(|| "icon-row".into())
+                .h(px(60.))
+                .w(px(120.))
+                .flex()
+                .items_center()
+                .child(icon(
+                    self.name,
+                    IconKind::File,
+                    Slot::Inline,
+                    AppIcon::FileText,
+                    cx,
+                ))
+        }
+    }
+    let source: IconSource = Arc::new(|req: &IconRequest<'_>| match req.ext {
+        Some("bin") => Some(full_bleed_icon()),
+        Some("png") => Some(paper_icon()),
+        _ => None,
+    });
+    let (rows, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        init_with_source(cx, None, source);
+        let view: gpui_kit::AnyView = cx.new(|_| Probe { name: "flat.bin" }).into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    for _ in 0..2 {
+        vtcx.update(|window, cx| {
+            let _ = drain_pending_for_test(cx);
+            let _ = window.draw(cx);
+        });
+    }
+    let flat_row = vtcx.debug_bounds("icon-row").expect("满幅行");
+    let flat_icon = vtcx.debug_bounds("file-icon-system").expect("满幅图标");
+    let flat_rel = mid(flat_icon) - mid(flat_row);
+    drop(rows);
+
+    let (_rows2, vtcx2) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let view: gpui_kit::AnyView = cx.new(|_| Probe { name: "paper.png" }).into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    for _ in 0..2 {
+        vtcx2.update(|window, cx| {
+            let _ = drain_pending_for_test(cx);
+            let _ = window.draw(cx);
+        });
+    }
+    let paper_row = vtcx2.debug_bounds("icon-row").expect("白纸行");
+    let paper_icon = vtcx2.debug_bounds("file-icon-system").expect("白纸图标");
+    let paper_rel = mid(paper_icon) - mid(paper_row);
+
+    let slot = vtcx2.update(|_w, cx| slot_px(Slot::Inline, cx));
+    let want = f32::from(slot) * INK_DY_MAX;
+    assert!(
+        (flat_rel - 1.5).abs() <= 0.8,
+        "满幅图标应只带光学下沉（+1.5），实得 {flat_rel:+.2}"
     );
+    assert!(
+        paper_rel - flat_rel >= want - 0.8,
+        "白纸图标应再下移约 {want:.2}px（满幅 {flat_rel:+.2} / 白纸 {paper_rel:+.2}）"
+    );
+
+    fn mid(b: gpui_kit::Bounds<gpui_kit::Pixels>) -> f32 {
+        f32::from(b.origin.y) + f32::from(b.size.height) / 2.
+    }
 }

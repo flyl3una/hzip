@@ -35,7 +35,7 @@
 //! `ui/widgets` 下**所有**复选框都必须走 [`checkbox`]，不要直接 `Checkbox::new`——
 //! 否则该处又会退回 1.0 行高 + 顶边对齐（`crates/hzip-gui/tests/` 无 grep 类守卫，靠评审）。
 
-use crate::ui::constant::CHECKBOX_OPTICAL_SHIFT;
+use crate::ui::constant::SQUARE_OPTICAL_SHIFT;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::prelude::*;
@@ -59,11 +59,11 @@ pub fn checkbox_line_height() -> f32 {
 /// # 纵向光学对齐
 ///
 /// 方框对齐**字身框中心**（`items_center`），眼睛看的却是**字面**中心 —— 本机字体的
-/// 字面中心比字身框中心低 [`CHECKBOX_OPTICAL_SHIFT`]（推导见该常量的文档），于是「文字看起来
+/// 字面中心比字身框中心低 [`SQUARE_OPTICAL_SHIFT`]（推导见该常量的文档），于是「文字看起来
 /// 偏下、方框偏高」（用户实测：文件关联页拉丁扩展名、上下文菜单页中文勾选项都如此）。
 ///
-/// 对策：标签块加**下内边距 `2 × CHECKBOX_OPTICAL_SHIFT`** —— 行高由标签块决定、方框随行
-/// 垂直居中 ⇒ 方框恰好相对文字下移 `CHECKBOX_OPTICAL_SHIFT`；标签行框本身高度不变。
+/// 对策：标签块加**下内边距 `2 × SQUARE_OPTICAL_SHIFT`** —— 行高由标签块决定、方框随行
+/// 垂直居中 ⇒ 方框恰好相对文字下移 `SQUARE_OPTICAL_SHIFT`；标签行框本身高度不变。
 ///
 /// 该 nudge 对同页所有复选框是**同一个常量**（不按标签逐个算）——同排复选框的方框
 /// 必须落在同一条水平线上，逐个对齐会把一排方框做成锯齿。
@@ -95,7 +95,7 @@ pub fn checkbox(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Che
         .line_height(relative(checkbox_line_height()))
         .when(cfg!(test), |t| t.debug_selector(move || anchor.clone()))
         .child(label);
-    let text = div().pb(px(CHECKBOX_OPTICAL_SHIFT * 2.)).child(inner);
+    let text = div().pb(px(SQUARE_OPTICAL_SHIFT * 2.)).child(inner);
     // 固有尺寸随布局密度（紧凑 → `Size::Small`：方框与内边距一起收）——
     // 与全 UI 其它控件同一口径（组件库按 `Size` 算的那层，`sp()` 管不到）
     Checkbox::new(id)
