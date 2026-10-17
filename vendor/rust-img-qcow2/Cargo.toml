@@ -1,0 +1,29 @@
+# vendor/rust-img-qcow2/Cargo.toml
+#
+# 就地 vendor，**唯一理由**见同目录 VENDOR.md（RUSTSEC-2026-0344）。
+# 与 crates.io 0.6.1 的差异只有一行：`ruzstd = "0.8"` → `"0.9"`。
+# 版本号保持 0.6.1（`[patch.crates-io]` 顶替同版本）——有非必要差异就无法
+# 与上游逐行核对，这正是 vendor 目录最该避免的状态。
+#
+# 相对上游被删掉的东西（都不参与 `img_qcow2` 库目标）：`cli`/`clap` 的 bin 目标、
+# `[[bin]]`/`[[test]]`/`[[example]]` 目标块、`staticlib` crate-type、`[profile.*]`
+# （依赖包的 profile 本来就不生效）、`qemu-validation` feature（只被上游测试用）。
+[package]
+name = "rust-img-qcow2"
+version = "0.6.1"
+edition = "2021"
+license = "MIT"
+description = "Pure-Rust QCOW2 reader/writer (vendored: ruzstd >= 0.9.1 for RUSTSEC-2026-0344)"
+repository = "https://github.com/antimatter-studios/rust-img-qcow2"
+
+[lib]
+name = "img_qcow2"
+path = "src/lib.rs"
+
+[dependencies]
+flate2 = "1"
+rust-fs-core = "0.3.8"
+# 上游锁在 ^0.8；0.9.1 才修掉 RUSTSEC-2026-0344（单块解压无上界 ⇒ 小输入 OOM）。
+# 静默解压 `.zst` 的调用点见 src/reader.rs 的 `StreamingDecoder`（已自带
+# `take(cluster_size + 1)` 上界，但那拦不住**解压器内部**的放大）。
+ruzstd = "0.9"

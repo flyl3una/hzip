@@ -52,7 +52,9 @@ hzip-log      = { path = "crates/hzip-log",      version = "0.2.0" }  # 日志�
 hzip-format-testkit = { path = "crates/hzip-format-testkit", version = "0.2.0" }
 
 # —— 外部依赖：04 §3.1 清单（版本唯一来源）——
-zip         = { version = "4", default-features = false, features = ["aes-crypto", "deflate", "bzip2", "zstd"] }
+# `=9.0.4`：写侧用 `zip::unstable::write::FileOptionsExt`（ZipCrypto），该命名空间的 rustdoc
+# 明写「MUST use an exact version specifier」。4.x → 9.x 的迁移差异见 docs/todos/功能项目.md。
+zip         = { version = "=9.0.4", default-features = false, features = ["aes-crypto", "deflate", "bzip2", "zstd"] }
 sevenz-rust = { version = "0.6", features = ["compress", "aes256"] }
 unrar       = { version = "0.5" }
 tar         = "0.4"
@@ -169,6 +171,10 @@ print_stdout = "deny"
 #    HZIP_MACOS_A11Y=off 逃生路径。
 [patch.crates-io]
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+# rust-img-qcow2：**唯一**改动 = `ruzstd 0.8 → 0.9`（RUSTSEC-2026-0344 解压炸弹：
+# <128 KB 的 .zst 可让解码器一次分配数 GB ⇒ OOM）。上游 0.6.1 是最新版且锁着
+# `^0.8`，只能就地顶替；差异清单与摘除步骤见 vendor/rust-img-qcow2/VENDOR.md。
+rust-img-qcow2 = { path = "vendor/rust-img-qcow2" }
 # gpui-fast-macos = { path = "vendor/gpui-fast-macos" }   # ← 启用下方「gpui-fast」时一并放开
 
 # —— gpui-fast（用户口径 2026-10-17「启用 gpui-fast」；**当前未启用**，实测清单如下）——

@@ -291,12 +291,13 @@ impl ZipWriterImpl {
         let mut o = SimpleFileOptions::default()
             .compression_method(method)
             .compression_level(level)
-            .large_file(true); // zip64：≥4 GiB 条目必需（T24 §4.4）
+            .large_file(true) // zip64：≥4 GiB 条目必需（T24 §4.4）
+            .system(crate::MADE_BY);
         if let Some(mode) = meta.mode {
             o = o.unix_permissions(mode);
         }
         if let Some(mt) = meta.mtime
-            && let Ok(dt) = zip::DateTime::try_from(mt)
+            && let Some(dt) = crate::dos_time::to_dos(mt)
         {
             o = o.last_modified_time(dt);
         }
@@ -378,7 +379,10 @@ impl ArchiveWriter for ZipWriterImpl {
             if let (Some(req), Some(p)) = (&self.enc, enc_pw) {
                 use zip::unstable::write::FileOptionsExt;
                 opts = match req {
-                    EncryptionRequest::ZipCrypto => opts.with_deprecated_encryption(p.as_bytes()),
+                    EncryptionRequest::ZipCrypto => {
+                        opts.with_deprecated_encryption(p.as_bytes())
+                            .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?
+                    }
                     EncryptionRequest::Aes(AesKey::Bits128) => {
                         opts.with_aes_encryption(zip::AesMode::Aes128, p)
                     }

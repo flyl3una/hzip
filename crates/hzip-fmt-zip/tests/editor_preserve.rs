@@ -142,7 +142,8 @@ fn raw_bytes(path: &std::path::Path, name: &str) -> Vec<u8> {
     let file = std::fs::File::open(path).unwrap();
     let mut archive = zip::ZipArchive::new(file).unwrap();
     let f = archive.by_name(name).unwrap();
-    let start = f.data_start();
+    // zip 9：`data_start()` 返回 `Option<u64>`（本地头已解析 ⇒ 恒 `Some`）
+    let start = f.data_start().expect("本地头已解析，数据区偏移必有值");
     let len = f.compressed_size();
     drop(f);
     drop(archive);

@@ -195,8 +195,8 @@ impl ZipReader {
         let format = FormatId::from(handler::FORMAT_ID);
         let n = archive.len();
         // 单遍法（02 §8.1 批量检测）：条目元数据与原始名样本在**同一趟**
-        // `by_index_raw` 里取齐——该调用每次都 seek 读一次本地头（zip crate
-        // `find_content`），旧两遍法把这份 IO 翻了一倍。样本到齐后批量检测一次，
+        // `by_index_raw` 里取齐——该调用每次都 seek 解析一次本地头（zip crate 的
+        // `by_index_raw` 内部即做本地头解析），旧两遍法把这份 IO 翻了一倍。样本到齐后批量检测一次，
         // 再对「UTF-8 flag 未置位」的条目回填名字与编码判定（E/F 分支）。
         let mut infos = Vec::with_capacity(n);
         let mut metas = Vec::with_capacity(n);
@@ -207,10 +207,17 @@ impl ZipReader {
                 .map_err(|e| crate::map_zip_err(e, &format))?;
             let raw = f.name_raw().to_vec();
             let is_utf8 = std::str::from_utf8(&raw).is_ok();
-            raws.push(if is_utf8 { None } else { Some(raw) });
-            // UTF-8（flag 置位）直用 zip crate 解码名；未置位条目的名字/编码由
-            // 下方批量检测（E/F 分支）回填——此处占位必被覆盖、不外泄。
-            let name = name_of(f.name());
+            // 名字解码：zip 9 起返回 `ZipResult`（声明编码与字节不符即失败）——
+            // 失败视同「非 UTF-8 原始名」，一并交下方批量检测（E/F 分支）回填；
+            // 此时占位为空名，必被覆盖、不外泄。
+            let decoded = f.name().ok();
+            let detect = !is_utf8 || decoded.is_none();
+            raws.push(detect.then(|| raw.clone()));
+            // UTF-8（flag 置位）直用 zip crate 解码名。
+            let name = match decoded {
+                Some(n) => name_of(&n),
+                None => name_of(&String::from_utf8_lossy(&raw)),
+            };
             let name_encoding = NameEncoding::Utf8;
             let m = ReadMeta {
                 name: name.clone(),
@@ -220,7 +227,9 @@ impl ZipReader {
                 crc32: f.crc32(),
                 encrypted: f.encrypted(),
                 method: f.compression(),
-                data_offset: f.data_start(),
+                // zip 9 起 `data_start()` 返回 `Option`（本地头已解析即 `Some`；
+                // 旧版未设时同样回落 0——此处紧跟 `by_index_raw`，恒为 `Some`）。
+                data_offset: f.data_start().unwrap_or(0),
                 size_packed: f.compressed_size(),
             };
             let codec = codec_of(&f);
@@ -232,10 +241,12 @@ impl ZipReader {
             let encryption: Option<&'static str> = if !m.encrypted {
                 None
             } else {
-                match metadata.aes_mode {
-                    Some((zip::AesMode::Aes128, _, _)) => Some("AES-128"),
-                    Some((zip::AesMode::Aes192, _, _)) => Some("AES-192"),
-                    Some((zip::AesMode::Aes256, _, _)) => Some("AES-256"),
+                // zip 9：AES 参数改由 AeX 扩展字段读出（`aes_settings()`，元组 =
+                // (算法, 厂商版本)）；旧版是 `ZipFileData::aes_mode` 三元的字段。
+                match metadata.aes_settings() {
+                    Some((zip::AesMode::Aes128, _)) => Some("AES-128"),
+                    Some((zip::AesMode::Aes192, _)) => Some("AES-192"),
+                    Some((zip::AesMode::Aes256, _)) => Some("AES-256"),
                     // aes_mode 缺失但加密位已置（畸形头）→ 按传统算法保守标注
                     None => Some("ZipCrypto"),
                 }
@@ -264,9 +275,7 @@ impl ZipReader {
                 },
                 size_raw: m.size_raw,
                 size_packed: f.compressed_size(),
-                mtime: f
-                    .last_modified()
-                    .and_then(|d| time::OffsetDateTime::try_from(d).ok()),
+                mtime: f.last_modified().and_then(crate::dos_time::from_dos),
                 mode: f.unix_mode(),
                 attributes: EntryAttrs {
                     executable: f.unix_mode().map(|m| m & 0o111 != 0),
@@ -523,7 +532,7 @@ pub(crate) fn codec_of(f: &zip::read::ZipFile<'_, ZipSrc>) -> Option<hzip_codec:
             {
                 let _ = f
                     .extra_data()
-                    .and_then(|ef| crate::aes::parse_extra_field(ef).ok());
+                    .and_then(|ef| crate::aes::parse_extra_field(&ef).ok());
             }
             #[cfg(not(feature = "aes"))]
             {

@@ -120,9 +120,12 @@ impl ZipEditor {
         if !ops.renames.is_empty() {
             let names: Vec<String> = (0..archive.len())
                 .map(|i| {
-                    archive
+                    let f = archive
                         .by_index_raw(i)
-                        .map(|f| f.name().to_string())
+                        .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?;
+                    // zip 9 起名字解码返回 `ZipResult`（声明编码与字节不符即失败）
+                    f.name()
+                        .map(std::borrow::Cow::into_owned)
                         .map_err(|e| crate::map_zip_err(e, &handler::fmt()))
                 })
                 .collect::<Result<_, _>>()?;
@@ -151,7 +154,8 @@ impl ZipEditor {
                 .by_index_raw(i)
                 .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?
                 .name()
-                .to_string();
+                .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?
+                .into_owned();
             let target = map_rename(&raw_name, &ops.renames).unwrap_or_else(|| raw_name.clone());
             if let Some(new_content) = ops.replaced.get(&i) {
                 // 替换：新内容按原条目方法/权限/时间 + 档案加密算法重写
@@ -194,7 +198,8 @@ impl ZipEditor {
         for name in &ops.mkdirs {
             let opts = zip::write::SimpleFileOptions::default()
                 .unix_permissions(0o755)
-                .last_modified_time(now_datetime());
+                .system(crate::MADE_BY)
+                .last_modified_time(crate::dos_time::now());
             zw.add_directory(name.as_str().trim_end_matches('/'), opts)
                 .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?;
             written += 1;
@@ -353,7 +358,7 @@ impl ZipEditor {
         meta: &EntryInfo,
         ctx: &WriteCtx<'_>,
         enc: Option<EncryptionRequest>,
-    ) -> Result<zip::write::FileOptions<'a, ()>, HzipError> {
+    ) -> Result<zip::write::FileOptions<'a, 'static, ()>, HzipError> {
         let m = EntryMeta {
             name: meta.name.clone(),
             is_dir: meta.is_dir,
@@ -374,11 +379,12 @@ impl ZipEditor {
         codec: Option<&str>,
         ctx: &WriteCtx<'_>,
         enc: Option<EncryptionRequest>,
-    ) -> Result<zip::write::FileOptions<'a, ()>, HzipError> {
+    ) -> Result<zip::write::FileOptions<'a, 'static, ()>, HzipError> {
         let method = method_of(codec, ctx.opts.method);
         let mut o = zip::write::FileOptions::default()
             .compression_method(method)
-            .large_file(true);
+            .large_file(true)
+            .system(crate::MADE_BY);
         // 级别：zip 头不存原始级别（`EntryInfo::compression_level` 恒 None）——
         // 与压缩路径同语义，按 `ctx.opts` 级别写（Stored 无级别）
         if method != zip::CompressionMethod::Stored
@@ -390,7 +396,7 @@ impl ZipEditor {
             o = o.unix_permissions(mode);
         }
         if let Some(mt) = meta.mtime
-            && let Ok(dt) = zip::DateTime::try_from(mt)
+            && let Some(dt) = crate::dos_time::to_dos(mt)
         {
             o = o.last_modified_time(dt);
         }
@@ -408,7 +414,9 @@ impl ZipEditor {
             };
             use zip::unstable::write::FileOptionsExt;
             o = match req {
-                EncryptionRequest::ZipCrypto => o.with_deprecated_encryption(pw.as_bytes()),
+                EncryptionRequest::ZipCrypto => o
+                    .with_deprecated_encryption(pw.as_bytes())
+                    .map_err(|e| crate::map_zip_err(e, &handler::fmt()))?,
                 EncryptionRequest::Aes(hzip_format::AesKey::Bits128) => {
                     o.with_aes_encryption(zip::AesMode::Aes128, pw.as_str())
                 }
@@ -470,12 +478,6 @@ fn level_of(level: hzip_codec::level::Level) -> Option<i64> {
         hzip_codec::level::Level::Normal => Some(6),
         hzip_codec::level::Level::Maximum | hzip_codec::level::Level::Ultra => Some(9),
     }
-}
-
-/// 当前时刻（DOS 时间；越界回落 `DateTime` 默认值）。
-fn now_datetime() -> zip::DateTime {
-    zip::DateTime::try_from(time::OffsetDateTime::now_utc())
-        .unwrap_or_else(|_| zip::DateTime::default())
 }
 
 /// 变更集分类（两条路径共用；id 越界与既有语义一致：忽略）。

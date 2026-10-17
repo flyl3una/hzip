@@ -72,11 +72,26 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #![forbid(unsafe_code)]
 
+mod dos_time;
 pub mod editor;
 pub mod handler;
 mod panic_boundary;
 pub mod reader;
 mod salvage;
+
+/// 条目「made by」系统字节：**恒定** [`zip::System::Unix`]（不要改成按宿主推导）。
+///
+/// zip 9 起这个字段默认按**构建宿主**取（`cfg!(windows) ⇒ System::Dos`），而 4.x 恒定
+/// `System::Unix`。这粒字节牵动两处，都不允许随构建机漂移：
+/// 1. **读侧 `unix_mode()`**：`System::Dos` 会让 zip 9 走合成分支（`get_unix_mode`）——
+///    丢弃 external_attributes 高位里我们刚写进去的 unix 模式、改报 `0o664`，于是
+///    「写进去 → 读回来」的权限位自相矛盾（真机实测：写 0o640 读回 0o664）；
+/// 2. **别的工具看这份档案**：Linux `unzip`/`bsdtar` 按 DOS 口径落地（0o664），
+///    而不是档案里记着的模式。
+///
+/// 另：同一份档案在 Windows 与 Linux 构建机上必须逐字节相同（04 §10 可复现构建口径）。
+pub(crate) const MADE_BY: zip::System = zip::System::Unix;
+
 mod split;
 pub mod writer;
 

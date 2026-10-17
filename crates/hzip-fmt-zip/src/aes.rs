@@ -23,13 +23,14 @@
 //! 截断（尾 10 字节不足）→ UnexpectedEof → `Format 2002`（Truncated）。
 //! 错误密码必被两关卡之一拦截 → 零乱码流交付。
 //!
-//! # 写路径路线决策（§4.5 路线 A；登记依据 zip 4.6.1）
+//! # 写路径路线决策（§4.5 路线 A；登记依据 zip 4.6.1，9.0.4 复核同）
 //!
 //! 写方向采用 zip crate `aes-crypto` 的 `SimpleFileOptions::with_aes_encryption`
 //! （加密链在 `start_file` 时建 `AesWriter`，salt 随机、PBKDF2 派生、HMAC 尾自动）。
 //! 三档 key 长度经 `zip::AesMode::{Aes128,Aes192,Aes256}` 可控（TC-X-004 KV 兼容）。
-//! **AE-x 选择偏差（如实登记）**：zip 4.6.1 `write.rs finish_file` 按
-//! `stats.bytes_written < 20` 自动 AE-2 / AE-1 切换（WinZip 官方建议：小文件 AE-2
+//! **AE-x 选择偏差（如实登记）**：zip `write.rs finish_file` 按
+//! `stats.bytes_written < 20` 自动 AE-2 / AE-1 切换（9.0.4 = `update_aes_extra_field`
+//! 的 `write.rs:2197`，规则与 4.6.1 逐字相同）（WinZip 官方建议：小文件 AE-2
 //! 防 CRC 泄露，大文件 AE-1 增 CRC 校验）——**无法强制全量 AE-2**。本模块 rustdoc
 //! 结论：AE-2 写默认在小文件（<20 B）成立（中央目录 CRC=0，单测断言）；大文件为
 //! AE-1（CRC 保留真实值，7-Zip/zip 读侧均兼容）。任务卡「写默认 AE-2」全量语义

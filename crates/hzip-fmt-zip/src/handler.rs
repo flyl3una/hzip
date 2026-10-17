@@ -46,7 +46,7 @@ pub(crate) fn caps() -> FormatCaps {
         comment: false,
         // zip 唯一写侧编码器 = Deflate（store 是「级别」轴语义，见 CodecMethod rustdoc）
         methods: &[hzip_codec::traits::CodecMethod::Deflate],
-        // 写侧加密：ZipCrypto（unstable API，锁 zip 4.6.1）+ WinZip AES 三档
+        // 写侧加密：ZipCrypto（unstable API，锁 zip =9.0.4）+ WinZip AES 三档
         write_encryption: &[
             EncryptionRequest::ZipCrypto,
             EncryptionRequest::Aes(AesKey::Bits128),
