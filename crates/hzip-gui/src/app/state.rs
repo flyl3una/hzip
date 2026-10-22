@@ -31,6 +31,7 @@ use crate::viewmodel::main_vm::MainViewModel;
 use crate::viewmodel::router::DialogRouter;
 use crate::viewmodel::rows::TreeRow;
 use hzip_core::engine::Engine;
+use hzip_core::services::{WriteBackChain, WriteBackLayer};
 
 /// 会话切换**原子闸**（一次只放行一个；用户口径 2026-09-24）。
 /// 「会话切换」= 打开档案 / 进入容器 / 展开延迟层 / 弹出层——都是**有状态**的动作：
@@ -220,6 +221,8 @@ pub struct SettingsPrefs {
     pub columns: ColumnsConfig,
     /// 显示 `..` 跳上级（ui.show_dotdot）
     pub show_dotdot: bool,
+    /// 改动后立即写回（ui.write_back_immediate；关 = 手动保存）
+    pub write_back_immediate: bool,
     /// 自动更新（ui.auto_update；检查逻辑挂账 T43）
     pub auto_update: bool,
     /// 文件关联勾选集合（ui.assoc_formats）
@@ -281,6 +284,7 @@ impl Default for SettingsPrefs {
             level_ix: 3,
             columns: ColumnsConfig::default(),
             show_dotdot: true,
+            write_back_immediate: true,
             auto_update: false,
             assoc: Vec::new(),
             ctx_extract: Vec::new(),
@@ -493,6 +497,43 @@ fn join_entry_path(dir: &str, name: &str) -> String {
     }
 }
 
+/// 手动写回模式（`ui.write_back_immediate = false`）下的挂起批次。
+///
+/// 一批 = 一次「保存」要提交的全部改动，连同**写回目标**（档案 + 写回链 + 两个
+/// 密码）一起存着：组合链/大档案每次写回都要全量重压，攒一批只压一次
+/// （2026-10-19 用户口径）。
+#[derive(Debug)]
+pub struct PendingBatch {
+    /// 提交目标（会话源档案：顶层实体档案 / 嵌套物化档）。
+    pub archive: PathBuf,
+    /// 写回链（嵌套会话；`None` = 顶层单档）。
+    pub chain: Option<WriteBackChain>,
+    /// 外层容器密码（写回链读/写其它条目用）。
+    pub outer_password: Option<zeroize::Zeroizing<String>>,
+    /// 内层密码（源档案加密时）。
+    pub password: Option<zeroize::Zeroizing<String>>,
+    /// 变更（提交顺序）。
+    pub changes: Vec<hzip_format::Change>,
+    /// 条目 → 挂起后的内容档：预览/打开时优先用它（看到的是**修改后**的内容）。
+    pub previews: std::collections::HashMap<hzip_format::EntryId, PathBuf>,
+}
+
+/// 嵌套会话的写回链状态（T-IMG0 §5.3）。
+///
+/// 进入嵌套会话时按**外层嗅探**装配一次；`editable == false` 时写操作整组置灰
+/// 并以 [`Self::reason`] 说明原因（不静默失败、不是「点了没反应」）。
+#[derive(Debug, Clone)]
+pub struct SessionWriteBack {
+    /// 写回链（外→内），直接进 `JobSpec.write_back`。
+    pub chain: hzip_core::services::WriteBackChain,
+    /// 内层条目名（诊断/通知用）。
+    pub entry_name: String,
+    /// 本链是否可写（内层可编辑 ∧ 外层可重建）。
+    pub editable: bool,
+    /// 不可写理由（i18n key；`editable == false` 时有值）。
+    pub reason: Option<&'static str>,
+}
+
 /// UI 数据面（无窗口句柄——gpui 侧经 contracts ShellHandlers/SignalTx 通信）。
 pub struct AppData {
     /// Engine 句柄
@@ -564,6 +605,14 @@ pub struct AppData {
     pub open_stack: Vec<OpenFrame>,
     /// 当前会话的**源档案**是不是临时文件（嵌套层 = 是；弹栈时删除）。
     pub current_temp: Option<PathBuf>,
+    /// 当前嵌套会话的写回链（T-IMG0；`None` = 顶层会话）。
+    ///
+    /// 装配点 = [`Self::begin_nested_session`]（按外层容器的嗅探结果）；消费点 =
+    /// [`Self::caps_edit`]（写操作可用性）、[`Self::commit_edit_batch`]（挂到
+    /// `JobSpec.write_back` 交给 core 逐层冒泡）。
+    pub session_chain: Option<SessionWriteBack>,
+    /// 手动写回模式下挂起的改动批次（`None` = 没有挂起）。
+    pub pending: Option<PendingBatch>,
     /// 会话临时目录（嵌套打开把内层档案解到这儿；进程级一份，退出时清理）。
     pub temp_area: Option<std::sync::Arc<hzip_platform::temp_area::TempArea>>,
     /// 文件关联系统侧**最后一次失败**的原因（None = 无失败）。
@@ -660,6 +709,8 @@ impl AppData {
             ctx_menu_status: None,
             open_stack: Vec::new(),
             current_temp: None,
+            session_chain: None,
+            pending: None,
             temp_area: None,
             assoc_error: None,
             signal_tx: None, // run_ui 建通道后注入（T-G30 装配）
@@ -769,6 +820,11 @@ impl AppData {
     ///
     /// = registry caps.edit 且非组合格式（tar/single/rar/组合 → false）。
     pub fn caps_edit(&self) -> bool {
+        // 嵌套会话：口径 = **写回链可写性**（T-IMG0 §5.3）——「嵌套一律禁写」的
+        // 旧口径已被取代：`v.zip` 里的 `disk.qcow2`、`disk.qcow2.gz` 都能改。
+        if let Some(sc) = &self.session_chain {
+            return sc.editable;
+        }
         let Some(archive) = &self.archive else {
             return false;
         };
@@ -784,6 +840,103 @@ impl AppData {
             *cache = Some((archive.clone(), value));
         }
         value
+    }
+
+    /// 当前会话不可写的理由键（嵌套会话装配链时记的；顶层/可写 → `None`）。
+    pub fn nested_readonly_reason(&self) -> Option<&'static str> {
+        self.session_chain.as_ref().and_then(|sc| sc.reason)
+    }
+
+    /// 本会话的编辑落点 = **会话源档案**（顶层 = 实体档案；嵌套 = 物化内层档）。
+    ///
+    /// 嵌套会话里编辑/删除/粘贴的条目 id 属于**内层**条目空间 ⇒ 落点必须是内层
+    /// 物化档（`spec.source`），外层由 `JobSpec.write_back` 的链冒泡回来（T-IMG0）。
+    pub fn edit_target(&self) -> Option<PathBuf> {
+        self.main.source_path().map(std::path::Path::to_path_buf)
+    }
+
+    /// 按**外层容器**装配嵌套写回链（进入嵌套会话时调一次；T-IMG0 §5.3）。
+    ///
+    /// 规则与 core 的 [`WriteBackChain`] 语义一一对应：
+    /// - 前导编码层（`Sniffed::Composite.layers`）必须都能写（gz/bz2/xz/zst）；
+    /// - 尾语义：`Container(id)` 且 `caps.edit` ⇒ `EntryReplace`（zip/7z）；
+    ///   `caps.write` 而无条目编辑器 ⇒ `TarRebuild`（tar 整档重建）；
+    ///   `Raw` ⇒ 纯编码链（`disk.img.gz`：内层就是映像本体）；
+    /// - 其余（rar/cpio 外层、深度 > 1、延迟层无条目 id）⇒ `editable = false`
+    ///   并给出理由键（写操作整组置灰 + 提示，不静默失败）。
+    fn build_session_chain(
+        &self,
+        container: &std::path::Path,
+        entry: Option<hzip_format::EntryId>,
+        entry_name: &str,
+        depth: usize,
+    ) -> SessionWriteBack {
+        let reg = self.engine.registry();
+        let mk = |layers: Vec<WriteBackLayer>, editable: bool, reason: Option<&'static str>| {
+            SessionWriteBack {
+                chain: WriteBackChain {
+                    outer: container.to_path_buf(),
+                    layers,
+                },
+                entry_name: entry_name.to_string(),
+                editable,
+                reason,
+            }
+        };
+        let not_editable =
+            |layers: Vec<WriteBackLayer>, reason: &'static str| mk(layers, false, Some(reason));
+        // 深度 > 1：容器套容器——core 侧如实拒绝（`vol.reject.nested-depth`）
+        if depth > 1 {
+            return not_editable(Vec::new(), "vol.reject.nested-depth");
+        }
+        // 延迟层（未物化 ⇒ 没有外层条目 id）：构造不出 `Replace` 变更，只读
+        let Some(entry) = entry else {
+            return not_editable(Vec::new(), "vol.readonly.outer-not-editable");
+        };
+        let (layer_ids, tail) = match reg.sniff(&hzip_format::Source::File(container.to_path_buf()))
+        {
+            Ok(hzip_format::Sniffed::Single(id, _)) => {
+                (Vec::new(), hzip_format::CompositeTail::Container(id))
+            }
+            Ok(hzip_format::Sniffed::Composite { layers, tail, .. }) => (layers, tail),
+            // `Sniffed` 非穷尽：未知形状按「外层不可重建」处置（不猜）
+            Ok(_) => return not_editable(Vec::new(), "vol.readonly.outer-not-editable"),
+            Err(_) => return not_editable(Vec::new(), "vol.readonly.outer-not-editable"),
+        };
+        // 编码层：逐层要求可写（gz/bz2/xz/zst），顺序保持外→内
+        let mut layers: Vec<WriteBackLayer> = Vec::new();
+        for id in &layer_ids {
+            let writable = reg
+                .handler(id.as_str())
+                .map(|h| h.caps().write)
+                .unwrap_or(false);
+            if !writable {
+                return not_editable(layers, "vol.readonly.outer-not-editable");
+            }
+            layers.push(WriteBackLayer::Codec {
+                codec: id.to_string(),
+            });
+        }
+        match tail {
+            // 纯编码链：内层就是映像本体（无容器层）
+            hzip_format::CompositeTail::Raw => mk(layers, true, None),
+            hzip_format::CompositeTail::Container(id) => {
+                let name = id.to_string();
+                let caps = reg.handler(name.as_str()).map(|h| h.caps());
+                match caps {
+                    Some(c) if c.edit => layers.push(WriteBackLayer::EntryReplace {
+                        entry,
+                        entry_name: entry_name.to_string(),
+                    }),
+                    Some(c) if c.write => layers.push(WriteBackLayer::TarRebuild {
+                        entry_name: entry_name.to_string(),
+                    }),
+                    _ => return not_editable(layers, "vol.readonly.outer-not-editable"),
+                }
+                mk(layers, true, None)
+            }
+            _ => not_editable(layers, "vol.readonly.outer-not-editable"),
+        }
     }
 
     /// 真实嗅探（[`Self::caps_edit`] 的未缓存内核；只在路径变化时调用）。
@@ -838,6 +991,7 @@ impl AppData {
             level_ix: level,
             columns: settings_registry::columns_from_pod(&ui.columns),
             show_dotdot: ui.show_dotdot,
+            write_back_immediate: ui.write_back_immediate,
             auto_update: ui.auto_update,
             assoc: ui.assoc_formats.clone(),
             ctx_extract: ui.ctx_extract.clone(),
@@ -907,12 +1061,168 @@ impl AppData {
     }
 
     /// 暂存待确认的编辑变更集（T-MENU6/7 确认对话框挂起期；确认后提交）。
+    ///
+    /// `Err` = **拒绝暂存**，载荷不留（调用方弹通知说清原因）：
+    ///
+    /// - 嵌套会话（进了内层容器）：内层内容不在顶层档案里，按同名路径落到顶层
+    ///   只会改错东西；真去写内层则是退出即丢的临时层。用户实测 2026-10-16
+    ///   （`.qcow2.tgz` 里删除文件：跑很久后「拒绝访问」）——当场拒绝好过跑一趟。
     pub fn stage_edit_batch(
         &mut self,
         archive: std::path::PathBuf,
         changes: hzip_format::ChangeSet,
-    ) {
+    ) -> Result<(), String> {
+        if !self.caps_edit() {
+            return Err(self.readonly_write_message());
+        }
         self.pending_edit = Some((archive, changes));
+        Ok(())
+    }
+
+    /// 写操作被拒时的用户可见文案：嵌套会话用装配链时记下的理由，顶层用格式口径。
+    pub fn readonly_write_message(&self) -> String {
+        self.nested_readonly_reason()
+            .map(crate::tr)
+            .unwrap_or_else(|| "该格式不支持编辑".into())
+    }
+
+    /// 是否**手动写回**模式（设置-通用：改动后立即写回 = 关）。
+    pub fn manual_write_back(&self) -> bool {
+        !self.settings.write_back_immediate
+    }
+
+    /// 挂起一次改动（手动写回模式；**不提交任务**）。返回挂起总数。
+    ///
+    /// 目标档案变了（用户换到别的会话/档案再改）⇒ 先把上一批**写回**再挂新的，
+    /// 绝不静默丢弃已经改好的东西。
+    ///
+    /// 同批次内**同条目**的 `Replace`/`Delete` 后到者覆盖先到者（反复保存同一个
+    /// 文件不该在批次里堆重复变更）。
+    pub fn stage_pending_edit(
+        &mut self,
+        archive: PathBuf,
+        changes: hzip_format::ChangeSet,
+    ) -> Result<usize, String> {
+        let chain = self.session_chain.as_ref().map(|sc| sc.chain.clone());
+        let outer_password = chain.as_ref().and_then(|c| self.cached_password(&c.outer));
+        let password = self.cached_password(&archive);
+        self.stage_pending_edit_with(archive, changes, chain, outer_password, password)
+    }
+
+    /// 从**已装配的编辑规格**挂起（外部编辑器保存路径）：目标/写回链/两个密码都以
+    /// 规格为准——`JobSpec` 是登记时定死的，不受之后导航影响。
+    pub fn stage_pending_from_spec(
+        &mut self,
+        spec: &hzip_core::jobs::JobSpec,
+    ) -> Result<usize, String> {
+        let changes = spec.changes.clone().unwrap_or_default();
+        self.stage_pending_edit_with(
+            spec.source.clone(),
+            changes,
+            spec.write_back.clone(),
+            spec.outer_password.clone(),
+            spec.password.clone(),
+        )
+    }
+
+    /// 挂起内核（显式上下文版）：见 [`Self::stage_pending_edit`] 的语义。
+    fn stage_pending_edit_with(
+        &mut self,
+        archive: PathBuf,
+        changes: hzip_format::ChangeSet,
+        chain: Option<WriteBackChain>,
+        outer_password: Option<zeroize::Zeroizing<String>>,
+        password: Option<zeroize::Zeroizing<String>>,
+    ) -> Result<usize, String> {
+        if let Some(cur) = &self.pending
+            && cur.archive != archive
+        {
+            self.flush_pending()?;
+        }
+        let batch = self.pending.get_or_insert_with(|| PendingBatch {
+            archive: archive.clone(),
+            chain,
+            outer_password,
+            password,
+            changes: Vec::new(),
+            previews: std::collections::HashMap::new(),
+        });
+        for change in changes.changes {
+            match &change {
+                hzip_format::Change::Replace { entry, src } => {
+                    batch.changes.retain(|c| {
+                        !matches!(c, hzip_format::Change::Replace { entry: e, .. } | hzip_format::Change::Delete(e) if *e == *entry)
+                    });
+                    batch.previews.insert(*entry, src.clone());
+                }
+                hzip_format::Change::Delete(entry) => {
+                    batch.changes.retain(|c| {
+                        !matches!(c, hzip_format::Change::Replace { entry: e, .. } | hzip_format::Change::Delete(e) if e == entry)
+                    });
+                    batch.previews.remove(entry);
+                }
+                _ => {}
+            }
+            batch.changes.push(change);
+        }
+        // 立刻回投一次刷新：浏览页「保存 (n)」按钮按快照的 `pending_count` 显隐，
+        // 不刷新的话要等下一次无关信号才出现（用户实测 2026-10-19：提示说去点保存、
+        // 界面上却没有按钮）。两条入口（外部编辑器 / 菜单编辑）都经这里。
+        if let Some(tx) = self.signal_tx.as_ref() {
+            let _ = tx.try_send(crate::viewmodel::VmSignal::JobsChanged);
+        }
+        Ok(self.pending_count())
+    }
+
+    /// 挂起总数（0 = 没有挂起；浏览页据此显隐「保存」按钮）。
+    pub fn pending_count(&self) -> usize {
+        self.pending.as_ref().map(|b| b.changes.len()).unwrap_or(0)
+    }
+
+    /// 该条目在挂起批次里的**新内容档**（预览/打开时优先用它）。
+    pub fn pending_preview(&self, entry: hzip_format::EntryId) -> Option<&std::path::Path> {
+        self.pending
+            .as_ref()
+            .and_then(|b| b.previews.get(&entry))
+            .map(|p| p.as_path())
+    }
+
+    /// 丢弃挂起批次（用户放弃改动）。
+    pub fn discard_pending(&mut self) {
+        self.pending = None;
+    }
+
+    /// 合并提交挂起批次（**一个任务、一次全量重压**）。返回 job id（无挂起 → `Ok(None)`）。
+    pub fn flush_pending(&mut self) -> Result<Option<u64>, String> {
+        let Some(batch) = self.pending.take() else {
+            return Ok(None);
+        };
+        if batch.changes.is_empty() {
+            return Ok(None);
+        }
+        // 密码回填会话缓存：flush 可能发生在换会话之后（写回仍要能读外层/内层）
+        if let Some(pw) = batch.password.clone() {
+            self.remember_password(&batch.archive, pw);
+        }
+        if let (Some(chain), Some(pw)) = (&batch.chain, batch.outer_password.clone()) {
+            self.remember_password(&chain.outer, pw);
+        }
+        // 释放句柄：嵌套会话要收回顶层（外层才能原子替换），顶层走既有释放路径
+        if batch.chain.is_some() {
+            self.detach_nested_for_write_back(&batch.archive);
+        } else {
+            self.release_session_for_edit(&batch.archive);
+        }
+        let changes = hzip_format::ChangeSet {
+            changes: batch.changes,
+        };
+        crate::ui::shell::dispatch::submit_edit_batch_locked(
+            self,
+            &batch.archive,
+            changes,
+            batch.chain,
+        )
+        .map(Some)
     }
 
     /// 丢弃待确认变更集（对话框取消/关闭）。
@@ -925,13 +1235,61 @@ impl AppData {
     /// 走 [`crate::ui::shell::dispatch::submit_edit_batch`]（唯一编辑提交点）：
     /// `EditBatch` 后台任务 + 任务泵（进度/取消/密码链复用 EditSave 链路）；
     /// 完成后回投 `JobsChanged`（任务行 + 进度窗）。返回 job_id。
-    pub fn commit_edit_batch(&mut self) -> Result<u64, String> {
+    pub fn commit_edit_batch(&mut self) -> Result<Option<u64>, String> {
         let Some((archive, changes)) = self.pending_edit.take() else {
             return Err("没有待提交的变更".into());
         };
+        if !self.caps_edit() {
+            return Err(self.readonly_write_message());
+        }
+        // 手动写回模式（设置-通用「改动后立即写回」= 关）：先挂起——写回链与密码
+        // 都要在**此刻的会话**上取，所以必须排在「取链 / 收回会话」之前。
+        if self.manual_write_back() {
+            self.stage_pending_edit(archive, changes)?;
+            return Ok(None);
+        }
+        // 嵌套会话（T-IMG0）：先把会话**收回顶层**——外层帧的浏览器句柄必须释放，
+        // 否则最外层的原子替换在 Windows 上必失败（err 5）；内层物化档连同写回链
+        // 交给任务，任务完成后泵按 `browse_reopen_armed` 重开外层（刷新为改后状态）。
+        if let Some(sc) = self.session_chain.take() {
+            // 内层物化档要活到任务结束：`detach` 会把它从 temp 位摘出再收会话
+            self.detach_nested_for_write_back(&archive);
+            return crate::ui::shell::dispatch::submit_edit_batch_locked(
+                self,
+                &archive,
+                changes,
+                Some(sc.chain),
+            )
+            .map(Some);
+        }
         // 关键：先释放浏览会话（见 `release_session_for_edit` 的说明）。
         self.release_session_for_edit(&archive);
-        crate::ui::shell::dispatch::submit_edit_batch_locked(self, &archive, changes)
+        crate::ui::shell::dispatch::submit_edit_batch_locked(self, &archive, changes, None)
+            .map(Some)
+    }
+
+    /// 嵌套写回前把会话**收到顶层**并释放所有浏览器句柄（T-IMG0）。
+    ///
+    /// 为什么必须：外层档案的原子替换要求**没有任何句柄**持有它（Windows 上目标
+    /// 被打开时 `MoveFileExW` 报 err 5），而嵌套会话恰恰把外层浏览器留在
+    /// `open_stack` 里；同时泵的重开钩子按 `self.archive`（顶层）刷新，会话不收
+    /// 回顶层就会把**外层**档案开进内层会话（界面与数据错位）。
+    ///
+    /// `keep` = 任务还要读的物化档（本会话源档案）：先被摘下，避免被弹栈的一次性
+    /// 清理删掉。
+    pub(crate) fn detach_nested_for_write_back(&mut self, keep: &std::path::Path) {
+        if self.current_temp.as_deref() == Some(keep) {
+            let _ = self.current_temp.take();
+        }
+        for frame in &mut self.open_stack {
+            if frame.temp.as_deref() == Some(keep) {
+                let _ = frame.temp.take();
+            }
+        }
+        while self.pop_open_frame() {}
+        self.reopen_view_state = Some(self.main.view_state());
+        self.main.release_browser();
+        self.browse_reopen_armed.set(true);
     }
 
     /// 编辑提交前的浏览会话释放（**唯一实现**，两个入口共用）。
@@ -1028,8 +1386,10 @@ impl AppData {
             .clone()
             .ok_or_else(|| crate::tr("browse.rename.canceled"))?;
         self.name_edit = None;
-        self.stage_edit_batch(archive, hzip_format::ChangeSet { changes });
-        self.commit_edit_batch().map(Some)
+        // 本方法开头已拦嵌套会话；这里收 stage 的 Err（暂存与提交之间又下钻的
+        // 窗口），别静默把改名丢掉。
+        self.stage_edit_batch(archive, hzip_format::ChangeSet { changes })?;
+        self.commit_edit_batch()
     }
 
     /// 编辑目标目录下是否已有同名条目。
@@ -1470,7 +1830,21 @@ impl AppData {
     /// 会话装进 `main`。临时文件交接：当前会话若是嵌套层，它的源档案要跟着它
     /// 一起进栈（返回内层时还要用）；新会话的临时文件由调用方经
     /// [`Self::adopt_temp_source`] 登记。
-    pub fn begin_nested_session(&mut self, container_path: &str) {
+    pub fn begin_nested_session(
+        &mut self,
+        entry: Option<hzip_format::EntryId>,
+        container_path: &str,
+    ) {
+        // 写回链（T-IMG0）：父会话在浏览的那份文件 = 本层容器（顶层实体档案 /
+        // 上层物化临时档）；装配失败只置灰 + 理由，不阻断进入。
+        let container = if self.open_stack.is_empty() {
+            self.archive.clone()
+        } else {
+            self.current_temp.clone()
+        };
+        let depth = self.open_stack.len() + 1;
+        self.session_chain =
+            container.map(|c| self.build_session_chain(&c, entry, container_path, depth));
         let mut crumbs = crate::ui::contracts::crumbs_from_current_dir(
             &self.current_archive_name(),
             self.main.current_dir(),
@@ -1517,6 +1891,8 @@ impl AppData {
         let Some(frame) = self.open_stack.pop() else {
             return false;
         };
+        // 退回上一层 = 写回链不再适用（深层嵌套本就只读；这里也不留陈旧链）
+        self.session_chain = None;
         let child_temp = std::mem::replace(&mut self.current_temp, frame.temp);
         self.main = frame.vm;
         self.selected_path = None;
@@ -1682,6 +2058,9 @@ impl AppData {
         };
         // 可编辑投影（记忆化：同一档案只嗅探一次，见 `caps_edit_cache`）
         let caps_edit = self.caps_edit();
+        // 手动写回：挂起条数（浏览页「保存 (n)」按钮的显隐与计数）
+        let pending_count = self.pending_count();
+        let write_back_manual = self.manual_write_back();
         // 最近打开（菜单 MRU；渲染路径直接读快照，不再锁 AppData）
         let mru = self.recent_archives.clone();
         // 内部剪贴板可用性（审计 B14：渲染帧不再自查）
@@ -1832,6 +2211,8 @@ impl AppData {
             columns: self.settings.columns.clone(),
             dialog,
             caps_edit,
+            pending_count,
+            write_back_manual,
             mru,
             has_clipboard,
         }

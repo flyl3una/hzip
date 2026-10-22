@@ -189,6 +189,9 @@ pub enum BrowseCommand {
     Delete,
     /// 添加文件（`begin_add_files` 同路径）
     AddFiles,
+    /// 保存挂起的改动（手动写回模式：过滤框左侧「保存 (n)」按钮 →
+    /// `AppData::flush_pending` 合并成一个任务写回）
+    SavePending,
     /// 全部选择（`main.select_all`）
     SelectAll,
     /// 新建文件夹（T-SEL6 挂账——一期占位禁用）
@@ -237,6 +240,16 @@ pub trait BrowseHandlerSource: 'static {
     fn browse_tree_click(&mut self, id: &str, cx: &mut Context<Self>)
     where
         Self: Sized;
+    /// 自绘 tooltip（组件库没有行悬浮 API，见 `ui::widgets::hover_tip`）：
+    /// `text = Some` 显示（沿用上次鼠标位置）、`None` 隐藏；`pos = Some` 更新鼠标
+    /// 位置（提示可见时跟着指针走）。
+    fn browse_set_hover_tip(
+        &mut self,
+        text: Option<SharedString>,
+        pos: Option<(i32, i32)>,
+        cx: &mut Context<Self>,
+    ) where
+        Self: Sized;
 }
 
 impl BrowseHandlerSource for crate::ui::shell::AppShell {
@@ -258,6 +271,37 @@ impl BrowseHandlerSource for crate::ui::shell::AppShell {
 
     fn browse_leave_container(&mut self, cx: &mut Context<Self>) {
         self.leave_container(cx);
+    }
+
+    fn browse_set_hover_tip(
+        &mut self,
+        text: Option<SharedString>,
+        pos: Option<(i32, i32)>,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::ui::widgets::hover_tip::HoverTip;
+        if let Some((x, y)) = pos {
+            self.state.update(cx, |s, cx| {
+                s.hover_pos = (x, y);
+                if let Some(tip) = &mut s.hover_tip {
+                    tip.x = x;
+                    tip.y = y;
+                    cx.notify();
+                }
+            });
+        }
+        if let Some(text) = text {
+            self.state.update(cx, |s, cx| {
+                let (x, y) = s.hover_pos;
+                s.hover_tip = Some(HoverTip { text, x, y });
+                cx.notify();
+            });
+        } else if pos.is_none() {
+            self.state.update(cx, |s, cx| {
+                s.hover_tip = None;
+                cx.notify();
+            });
+        }
     }
 
     fn browse_tree_click(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -313,7 +357,7 @@ pub fn browse_root<T: BrowseHandlerSource + 'static>(
             .name_input
             .as_ref()
             .map(|e| e.entity_id().as_u64() as usize),
-        can_edit: snap.caps_edit && !snap.nested,
+        can_edit: snap.caps_edit,
     };
     // 表格委托输入（行内容 + `..` 显隐 + 列配置 + 名称编辑）任一变化才重灌
     let dir_inputs_changed = hold.read(cx).dir_sig != dir_sig
@@ -463,7 +507,7 @@ pub fn browse_root<T: BrowseHandlerSource + 'static>(
                 &snap.selection,
                 &snap.selection_dirs,
                 &snap.dir_rows,
-                snap.caps_edit && !snap.nested,
+                snap.caps_edit,
                 // 快照同步在每帧渲染前（browse_root 数据重灌段）——渲染帧
                 // 红线：不查剪贴板，沿用上次镜像值（右键预处理会现算刷新）
                 hold.menu_enable.paste_available,
@@ -605,7 +649,7 @@ fn browse_hold<T: BrowseHandlerSource + 'static>(
     }
     // —— 实体创建（需要 Window 的 TableState/InputState 在此构造） ——
     let tree = cx.new(|cx| TreeState::new(cx));
-    let table = cx.new(|cx| TableState::new(BrowseDelegate::default(), window, cx));
+
     let split = cx.new(|_| gpui_kit::base::ResizableState::default());
     let filter_input = cx.new(|cx| {
         gpui_kit::component::input::InputState::new(window, cx)
@@ -616,6 +660,17 @@ fn browse_hold<T: BrowseHandlerSource + 'static>(
     let cmd_shell = shell.clone();
     let command: BrowseCommandFn = std::rc::Rc::new(move |cmd, window, cx| {
         let _ = cmd_shell.update(cx, |s, cx| s.browse_command(cmd, window, cx));
+    });
+    let table = cx.new(|cx| {
+        let mut delegate = BrowseDelegate::default();
+        // 行悬浮 → 自绘 tooltip（组件库表格没有 tooltip API）
+        let tip_shell = shell.clone();
+        delegate.hover = Some(std::rc::Rc::new(
+            move |cx: &mut gpui_kit::App, text: Option<SharedString>, pos: Option<(i32, i32)>| {
+                let _ = tip_shell.update(cx, |s: &mut T, cx| s.browse_set_hover_tip(text, pos, cx));
+            },
+        ));
+        TableState::new(delegate, window, cx)
     });
     let hold = cx.new(|_| BrowseHold {
         filter_input,
@@ -886,7 +941,14 @@ fn browse_hold<T: BrowseHandlerSource + 'static>(
 /// 委托钩子 [`move_column`](Self::move_column) 重排 `visible`，并经订阅回写
 /// `ColumnsConfig`（持久化到 hzip-config `ui.columns`——设置页与表格拖动
 /// 同一事实源）。列显隐仍由设置页（`ui.columns.hidden`）控制。
+/// 悬浮提示回调（自绘 tooltip）：`(cx, text, pos)`；`text = None` + `pos = None`
+/// 表示隐藏（见 `ui::widgets::hover_tip`）。
+pub(crate) type HoverFn =
+    std::rc::Rc<dyn Fn(&mut gpui_kit::App, Option<SharedString>, Option<(i32, i32)>)>;
+
 pub(crate) struct BrowseDelegate {
+    /// 悬浮提示回调（组件库表格没有 tooltip API；`browse_root` 装配时注入）
+    pub hover: Option<HoverFn>,
     /// 当前目录行（不含 `..` 占位行）
     pub rows: Vec<BrowseRow>,
     /// 当前目录路径（`..` 目标段推导源；每帧从快照同步）
@@ -970,6 +1032,7 @@ impl Default for BrowseDelegate {
         let columns = crate::ui::contracts::ColumnsConfig::default();
         let visible = visible_columns_of(&columns);
         Self {
+            hover: None,
             rows: Vec::new(),
             current_dir: String::new(),
             show_dotdot: false,
@@ -1358,9 +1421,13 @@ pub(crate) fn item_disabled(item: BrowseMenuItem, enable: &MenuEnable) -> bool {
     use BrowseMenuItem::*;
     match item {
         ExtractAll | SelectAll => false,
-        ExtractSel | Delete => !enable.has_selection,
+        // 删除/粘贴都会**改写档案**：`can_edit` = 可编辑且非嵌套会话（容器内部
+        // 写不回去），故与新建/重命名同口径——嵌套层里删除不再放行到
+        // 「跑完进度条才报拒绝访问」（用户实测 2026-10-16）。
+        ExtractSel => !enable.has_selection,
+        Delete => !enable.has_selection || !enable.can_edit,
         Copy => !enable.has_selection,
-        Paste => !enable.paste_available,
+        Paste => !enable.paste_available || !enable.can_edit,
         Open | OpenWith | Edit => !enable.single_file,
         AddFiles => !enable.can_edit,
         NewFolder => !enable.can_edit,
@@ -2068,13 +2135,29 @@ impl TableDelegate for BrowseDelegate {
                             cx,
                         ))
                         .child(badges)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(SharedString::from(row.name.clone())),
-                        )
+                        .child({
+                            // 名称列悬浮 → 自绘 tooltip（列宽不足时名称被省略）
+                            let mut label =
+                                div().flex_1().min_w_0().truncate().id(("name-tip", row_ix));
+                            if let Some(hover) = self.hover.clone() {
+                                let text = SharedString::from(row.name.clone());
+                                let move_hover = hover.clone();
+                                label = label
+                                    .on_hover(move |hovered: &bool, _w, cx: &mut gpui_kit::App| {
+                                        hover(cx, hovered.then(|| text.clone()), None);
+                                    })
+                                    .on_mouse_move(
+                                        move |ev: &gpui_kit::MouseMoveEvent,
+                                              _w,
+                                              cx: &mut gpui_kit::App| {
+                                            let x: f32 = ev.position.x.into();
+                                            let y: f32 = ev.position.y.into();
+                                            move_hover(cx, None, Some((x as i32, y as i32)));
+                                        },
+                                    );
+                            }
+                            label.child(SharedString::from(row.name.clone()))
+                        })
                 }
                 BrowseColumnId::Size => shell(div())
                     .text_color(muted)

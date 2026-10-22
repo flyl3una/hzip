@@ -22,6 +22,7 @@
 use crate::ui::constant::{FILTER_INPUT_W, ICON_CELL_ICON, ICON_CELL_W, TREE_W_MAX, TREE_W_MIN};
 use crate::ui::spacing::{component_size, sp};
 use gpui_kit::base::{ResizableState, h_resizable, resizable_panel};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::table::DataTable;
 use gpui_kit::component::tree::{Tree, TreeEntry, TreeState};
@@ -78,6 +79,27 @@ pub(crate) fn browse_layout<T: BrowseHandlerSource + 'static>(
                 .overflow_x_hidden()
                 .child(breadcrumb(cx, &crumbs, &shell)),
         )
+        .children((snap.write_back_manual || snap.pending_count > 0).then(|| {
+            // 手动写回（设置-通用「改动后立即写回」= 关）：有挂起才出现。
+            // 点它把全部挂起改动**一次性**合并写回——组合链/大档案只重压一次。
+            let cmd = hold.read(cx).command.clone();
+            let n = snap.pending_count;
+            Button::new("browse-save-pending")
+                .with_size(component_size())
+                .label(crate::tr_with(
+                    "browse.pending.save",
+                    &[("n", &n.to_string())],
+                ))
+                .on_click(move |_, window, cx| {
+                    if let Some(c) = cmd.as_ref() {
+                        c(
+                            crate::ui::views::browse::BrowseCommand::SavePending,
+                            window,
+                            cx,
+                        );
+                    }
+                })
+        }))
         .child(filter_box);
 
     // 树行点击 → on_tree_click（进入目录）。闭包从 Global 读稳态无需持数据；
@@ -397,6 +419,9 @@ fn render_tree_item<T: BrowseHandlerSource + 'static>(
     };
     let path = item.id.to_string();
     let shell = shell.clone();
+    // 悬浮提示的独立副本（`shell` 随后被 `on_click` 移走）
+    let tip_hover_shell = shell.clone();
+    let tip_move_shell = shell.clone();
     let tree = tree.clone();
     // 选中底色与文件列表**同一来源**（`selection_row_bg`：背景 × 30% 主题色，
     // 比主题色浅、深色模式自适应）。kit 在 `list.active_highlight=false` 下对
@@ -471,14 +496,49 @@ fn render_tree_item<T: BrowseHandlerSource + 'static>(
                 .ml(sp(4. * entry.depth() as f32 + 3.))
                 .debug_selector(move || format!("tree-row-{ix}"))
                 .child(div().flex_shrink_0().child(icon))
-                .child(
+                .child({
+                    let tip_text: SharedString = tree_tooltip_text(
+                        meta.map(|m| m.path.as_str()),
+                        item.label.as_ref(),
+                        archive_name,
+                    )
+                    .into();
+                    let hover_shell = tip_hover_shell;
+                    let move_shell = tip_move_shell;
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .child(SharedString::from(item.label.to_string())),
-                ),
+                        .id(("tree-tip", ix))
+                        .on_hover(move |hovered: &bool, _w, cx: &mut gpui_kit::App| {
+                            let t = hovered.then(|| tip_text.clone());
+                            let _ =
+                                hover_shell.update(cx, |s, cx| s.browse_set_hover_tip(t, None, cx));
+                        })
+                        .on_mouse_move(
+                            move |ev: &gpui_kit::MouseMoveEvent, _w, cx: &mut gpui_kit::App| {
+                                let x: f32 = ev.position.x.into();
+                                let y: f32 = ev.position.y.into();
+                                let pos = (x as i32, y as i32);
+                                let _ = move_shell.update(cx, |s, cx| {
+                                    s.browse_set_hover_tip(None, Some(pos), cx)
+                                });
+                            },
+                        )
+                        .child(SharedString::from(item.label.to_string()))
+                }),
         )
+}
+
+/// 树行悬浮提示文本：档案根（path 空）→ 档案名；其余 → **档案内完整路径**
+/// （`meta.path`，含分区/目录前缀，比单段标签更有用）；元数据缺失（喂树元数据
+/// 滞后一帧）→ 行标签本身。用户口径 2026-10-19：长名被截断时悬浮要看全。
+pub(crate) fn tree_tooltip_text(path: Option<&str>, label: &str, archive_name: &str) -> String {
+    match path {
+        Some("") if !archive_name.is_empty() => archive_name.to_string(),
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => label.to_string(),
+    }
 }
 
 /// 行框高 = 字体的**自然字形盒**（`ascent − descent`；实测 Segoe UI @16px =
@@ -797,14 +857,41 @@ fn icon_grid<T: BrowseHandlerSource + 'static>(
                 .child(
                     // 改名中的格子：名称换成行内输入框（用户口径 2026-09-28）
                     match (is_renaming(snap, &label), name_input.as_ref()) {
-                        (true, Some(input)) => div().w_full().child(name_input_element(input)),
-                        _ => div()
+                        (true, Some(input)) => div()
                             .w_full()
-                            .text_xs()
-                            .text_center()
-                            .text_color(fg)
-                            .truncate()
-                            .child(SharedString::from(label)),
+                            .child(name_input_element(input))
+                            .into_any_element(),
+                        _ => {
+                            let mut d = div()
+                                .w_full()
+                                .text_xs()
+                                .text_center()
+                                .text_color(fg)
+                                .truncate()
+                                .id(("grid-tip", ix));
+                            let hs = shell.clone();
+                            let ms = shell.clone();
+                            let tip_text = label.clone();
+                            d = d
+                                .on_hover(move |hovered: &bool, _w, cx: &mut gpui_kit::App| {
+                                    let t = hovered
+                                        .then(|| gpui_kit::SharedString::from(tip_text.clone()));
+                                    let _ = hs.update(cx, |s, cx| {
+                                        s.browse_set_hover_tip(t, None, cx)
+                                    });
+                                })
+                                .on_mouse_move(
+                                    move |ev: &gpui_kit::MouseMoveEvent, _w, cx: &mut gpui_kit::App| {
+                                        let x: f32 = ev.position.x.into();
+                                        let y: f32 = ev.position.y.into();
+                                        let pos = (x as i32, y as i32);
+                                        let _ = ms.update(cx, |s, cx| {
+                                            s.browse_set_hover_tip(None, Some(pos), cx)
+                                        });
+                                    },
+                                );
+                            d.child(SharedString::from(label)).into_any_element()
+                        }
                     },
                 )
                 .on_click(move |event: &ClickEvent, window, cx| {
@@ -976,15 +1063,41 @@ fn compact_list<T: BrowseHandlerSource + 'static>(
                 .child(
                     // 改名中的行：名称换成行内输入框（用户口径 2026-09-28）
                     match (is_renaming(snap, &label), name_input.as_ref()) {
-                        (true, Some(input)) => {
-                            div().flex_1().min_w_0().child(name_input_element(input))
-                        }
-                        _ => div()
+                        (true, Some(input)) => div()
                             .flex_1()
                             .min_w_0()
-                            .text_sm()
-                            .truncate()
-                            .child(SharedString::from(label)),
+                            .child(name_input_element(input))
+                            .into_any_element(),
+                        _ => {
+                            let mut d = div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .truncate()
+                                .id(("list-tip", ix));
+                            let hs = shell.clone();
+                            let ms = shell.clone();
+                            let tip_text = label.clone();
+                            d = d
+                                .on_hover(move |hovered: &bool, _w, cx: &mut gpui_kit::App| {
+                                    let t = hovered
+                                        .then(|| gpui_kit::SharedString::from(tip_text.clone()));
+                                    let _ = hs.update(cx, |s, cx| {
+                                        s.browse_set_hover_tip(t, None, cx)
+                                    });
+                                })
+                                .on_mouse_move(
+                                    move |ev: &gpui_kit::MouseMoveEvent, _w, cx: &mut gpui_kit::App| {
+                                        let x: f32 = ev.position.x.into();
+                                        let y: f32 = ev.position.y.into();
+                                        let pos = (x as i32, y as i32);
+                                        let _ = ms.update(cx, |s, cx| {
+                                            s.browse_set_hover_tip(None, Some(pos), cx)
+                                        });
+                                    },
+                                );
+                            d.child(SharedString::from(label)).into_any_element()
+                        }
                     },
                 )
                 .child(

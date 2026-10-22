@@ -144,6 +144,8 @@ impl AppStateUiSnapshot {
         ToolbarEnable {
             has_archive,
             can_extract: has_archive,
+            // `caps_edit` = **本会话可写性**（顶层 = 格式可编辑；嵌套 = 写回链能
+            // 重建，T-IMG0 §5.3）——不再硬判 `nested`：被包住的镜像现在真能改。
             can_add: has_archive && self.caps_edit,
             can_delete: has_archive && self.caps_edit && selected,
             // 「恰好单选一个文件」= 右键菜单 `single_file` 的等价投影
@@ -989,6 +991,13 @@ pub struct AppStateUiSnapshot {
     pub archive_path: String,
     /// 当前目录（面包屑派生源）
     pub current_dir: String,
+    /// 手动写回模式下**挂起的改动条数**（0 = 没有；浏览页据此显隐「保存」按钮）。
+    pub pending_count: usize,
+    /// 当前是否是**手动写回**模式（`ui.write_back_immediate = false`）。
+    ///
+    /// 按钮按它**常驻**：只在「有挂起」时出现的话，用户看到通知去找按钮却找不到
+    /// （2026-10-19 实测两次），常驻 + 计数 0/ n 才是可发现的状态。
+    pub write_back_manual: bool,
     /// 是否处于**嵌套会话**（双击容器进入的层级 > 0）。
     ///
     /// 右栏 `` `..` `` 行的语义随之不同：嵌套会话的档案根再往上 = **退出该层**

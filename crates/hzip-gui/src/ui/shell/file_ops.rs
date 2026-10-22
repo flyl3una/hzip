@@ -15,9 +15,15 @@ impl AppShell {
     /// 确认后经 `AppData::commit_edit_batch` 提交后台 `EditBatch` 任务
     /// （唯一编辑提交点；对话框出口见 `confirm_handler`）。
     pub fn begin_add_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 容器内部（嵌套会话）只读：添加 = 改写档案，当场拒绝并说明原因
+        // （与重命名/删除同口径；菜单已置灰，这里兜住键位/绕过的入口）。
+        if self.refuse_readonly_write() {
+            return;
+        }
         let Some(data) = self.data.clone() else {
             return;
         };
+        let tx = self.signal_tx.clone();
         let shell = cx.weak_entity();
         cx.spawn_in(window, async move |_this, cx| {
             use gpui_kit::component::WindowExt as _;
@@ -56,17 +62,25 @@ impl AppShell {
             }
             let count = changes.changes.len();
             // ③ 暂存载荷（AppData 持句柄；确认出口经同一句柄提交）+ 主线程开确认对话框
+            // 落点 = **本会话源档案**（嵌套会话 = 内层物化档：变更 id 属于内层条目空间）
             let archive = {
                 let Ok(d) = data.lock() else {
                     return;
                 };
-                d.archive.clone()
+                d.edit_target()
             };
             let Some(archive) = archive else {
                 return;
             };
             if let Ok(mut d) = data.lock() {
-                d.stage_edit_batch(archive, changes);
+                match d.stage_edit_batch(archive, changes) {
+                    Ok(()) => {}
+                    Err(msg) => {
+                        // 暂存被拒（多选期间下钻进了内层容器）：不弹确认框，直说原因
+                        AppShell::notify_via(&tx, crate::tr("edit.commit.failed"), msg);
+                        return;
+                    }
+                }
             }
             let _ = cx.update(|window, cx| {
                 let _ = shell.update(cx, |shell: &mut AppShell, cx| {
@@ -86,6 +100,11 @@ impl AppShell {
     /// 打开删除确认（T-MENU7）：右栏选中 → `Change::Delete(entry_id)` 批量。
     pub fn begin_delete_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_kit::component::WindowExt as _;
+        // 会话不可写（只读格式 / 写回链建不起来）：删除 = 改写档案，当场拒绝。
+        // 放行的代价是「跑很久的进度条，最后报拒绝访问」（用户实测 2026-10-16）。
+        if self.refuse_readonly_write() {
+            return;
+        }
         let Some(data) = self.data.as_ref() else {
             return;
         };
@@ -102,11 +121,19 @@ impl AppShell {
         if count == 0 {
             return;
         }
-        if let Ok(mut d) = data.lock() {
-            let Some(archive) = d.archive.clone() else {
+        let staged = {
+            let Ok(mut d) = data.lock() else {
                 return;
             };
-            d.stage_edit_batch(archive, changes);
+            let Some(archive) = d.edit_target() else {
+                return;
+            };
+            d.stage_edit_batch(archive, changes)
+        };
+        if let Err(msg) = staged {
+            // 暂存被拒（选择与提交之间下钻进了内层容器）：不弹确认框，直说原因
+            self.notify(crate::tr("edit.commit.failed"), msg);
+            return;
         }
         let on = self.confirm_handler();
         window.open_dialog(cx, move |_, _window, cx| {
@@ -134,7 +161,11 @@ impl AppShell {
                 DialogEvent::EditAddAccept { .. } | DialogEvent::EditDeleteAccept => {
                     if let Ok(mut d) = data.lock() {
                         match d.commit_edit_batch() {
-                            Ok(job_id) => {
+                            // 手动写回模式：改动已挂起（`None`），按钮计数即反馈
+                            Ok(None) => {
+                                tracing::info!("手动写回：改动已挂起 {} 项", d.pending_count());
+                            }
+                            Ok(Some(job_id)) => {
                                 tracing::info!("提交批量编辑任务 {job_id}");
                                 if let Some(tx) = tx.as_ref() {
                                     let _ = tx.try_send(crate::viewmodel::VmSignal::JobsChanged);
@@ -148,6 +179,9 @@ impl AppShell {
                             }
                             Err(e) => {
                                 tracing::error!("批量编辑提交失败: {e}");
+                                // 用户可见：提交被拒（嵌套会话/格式不可编辑/锁中毒）
+                                // 不能只留日志——用户刚点了「确认」，必须有回应。
+                                AppShell::notify_via(&tx, crate::tr("edit.commit.failed"), e);
                             }
                         }
                     }
@@ -164,6 +198,38 @@ impl AppShell {
                 _ => {}
             }
         })
+    }
+
+    /// 保存挂起的改动（手动写回模式；过滤框左侧「保存 (n)」按钮）。
+    ///
+    /// 全部挂起改动合并成**一个** `EditBatch`（含写回链 ⇒ 组合链只重压一次），
+    /// 提交后开进度窗跟踪（与压缩/解压同款），任务完成由泵重开刷新。
+    pub fn save_pending_edits(&mut self, cx: &mut Context<Self>) {
+        let _ = cx;
+        let Some(data) = self.data.as_ref() else {
+            return;
+        };
+        let (count, result) = {
+            let Ok(mut d) = data.lock() else {
+                return;
+            };
+            let count = d.pending_count();
+            (count, d.flush_pending())
+        };
+        match result {
+            Ok(Some(job_id)) => {
+                tracing::info!(pending = count, job = job_id, "手动写回：挂起改动合并提交");
+                if let Some(tx) = self.signal_tx.as_ref() {
+                    let _ = tx.try_send(crate::viewmodel::VmSignal::JobsChanged);
+                    let _ = tx.try_send(crate::viewmodel::VmSignal::OpenProgress(job_id));
+                }
+            }
+            Ok(None) => {}
+            Err(msg) => {
+                tracing::warn!("手动写回：提交失败 {msg}");
+                self.notify(crate::tr("edit.commit.failed"), msg);
+            }
+        }
     }
 
     /// 打开「添加文件…」的第一触点（菜单 Action 入口；对话框在本方法内开）。
@@ -213,6 +279,7 @@ impl AppShell {
             // （copy_selection/paste_files），仅入口不同（右键菜单闭包直调）。
             BrowseCommand::Copy => self.copy_selection(window, cx),
             BrowseCommand::Paste => self.paste_files(window, cx),
+            BrowseCommand::SavePending => self.save_pending_edits(cx),
             BrowseCommand::SelectAll => {
                 // T-SEL2：与 Ctrl+A 快捷键**同一方法**（可见行全选 + 回投信号）
                 // ——旧实现两入口一处发信号一处不发，行为长期不一致。
@@ -352,16 +419,8 @@ impl AppShell {
             match res {
                 Ok(_) => {}
                 Err(msg) => {
-                    if !msg.is_empty()
-                        && let Some(tx) = self.signal_tx.as_ref()
-                    {
-                        let _ = tx.try_send(crate::viewmodel::VmSignal::Notify(
-                            crate::viewmodel::pump::NotifyEvent {
-                                title: crate::tr("browse.rename.failed"),
-                                body: msg,
-                                force_system: false,
-                            },
-                        ));
+                    if !msg.is_empty() {
+                        self.notify(crate::tr("browse.rename.failed"), msg);
                     }
                     // 保持编辑态 + 重新聚焦（失焦提交失败时焦点已丢）
                     if let Some(handle) = self.last_window {
@@ -427,10 +486,22 @@ impl AppShell {
             "密码门放行：泵取出待执行动作，重跑原操作"
         );
         match action {
-            crate::viewmodel::GateAction::OpenArchive => {}
-            crate::viewmodel::GateAction::OpenSelection { id, name, form } => {
-                self.open_one_entry(id, name, form, cx)
+            crate::viewmodel::GateAction::OpenArchive(path) => {
+                // 头加密档案：密码已缓存 ⇒ 与首次打开**同一条流程**（进度窗 + 落账）
+                let Some(data) = self.data.clone() else {
+                    return;
+                };
+                let task = crate::ui::shell::open_archive_task(cx, data, path, true);
+                cx.spawn(async move |_this, _cx| {
+                    let _ = task.await;
+                })
+                .detach();
             }
+            // 门放行后的重跑：用户已表达两次意图（点了行 + 输了密码）⇒ 立刻开窗
+            crate::viewmodel::GateAction::OpenSelection { id, name, form } => {
+                self.open_one_entry_after_gate(id, name, form, cx)
+            }
+            // 门放行后重跑同一入口：进容器一律立刻开窗（见 `open_container_inner`）
             crate::viewmodel::GateAction::OpenContainer(path) => self.open_container(&path, cx),
         }
     }

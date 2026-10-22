@@ -474,11 +474,12 @@ impl Browser {
 ///
 /// 分级（与 `extract::resolve_early_password` 同一判据）：
 /// 1. **头加密档案**：`open_reader` 带密码解头，成败即结论（精确）；
-/// 2. **数据加密（头明文）**：取首个「加密且 `size_packed ≤ PREFLIGHT_MAX_BYTES`」
-///    条目真读一次——`read_entry` 在**流交付前**完成密码验证（zip KV/校验头、
-///    7z 解码、rar 密钥），错密码立即 `Password` 错；
-/// 3. 无有界条目（7z 固实超限 / 无廉价通道）→ `Ok(())` **不验**（降级：放行后
-///    由读操作的 `Password` 错兜底重问）。
+/// 2. **数据加密（头明文）**：取**首个加密条目**读一次（只读头部
+///    [`PREFLIGHT_HEAD_BYTES`]）——密码正确性在首个加密块即判定；错密码立即
+///    `Password` 错。旧实现只验 `size_packed ≤ PREFLIGHT_MAX_BYTES` 的小条目，
+///    几十 GB 的唯一加密条目因此**根本不验**（用户实测 2026-10-19：输入后仍要
+///    等物化到一半才报错，门重问第二次、看着像「打开两次」）；
+/// 3. 没有加密条目 → `Ok(())`（无密码可验）。
 ///
 /// 返回 `Err(HzipError::Password { .. })` = 密码错误（唯一失败语义）；
 /// 其余 IO/格式错误原样上抛（不是「密码错」）。
@@ -493,15 +494,22 @@ pub fn preflight_password(
     };
     let reader = registry.open_reader(Source::File(path.to_path_buf()), &opts)?;
     let entries = reader.entries()?;
-    let bounded = entries
-        .iter()
-        .find(|e| e.encrypted && e.size_packed <= PREFLIGHT_MAX_BYTES);
-    if let Some(info) = bounded {
-        // 流交付 = 密码已验（读侧预验在交付前完成）；立即丢弃。
-        let _ = reader.read_entry(info.id, PasswordRef::new(pw))?;
+    // 任一加密条目：**读头部即可验密码**（ZipCrypto/AES 在首块就校验）。
+    //
+    // 旧实现只验 `size_packed <= 64 MiB` 的小条目 ⇒ 几十 GB 的镜像（唯一加密条目）
+    // 根本没法验 ⇒ **任何输入都被当成正确并缓存**，直到物化到一半才报密码错 ⇒
+    // 密码门重问第二次、界面看着像「打开两次」（用户实测 2026-10-19 的直接成因）。
+    if let Some(info) = entries.iter().find(|e| e.encrypted) {
+        let mut stream = reader.read_entry(info.id, PasswordRef::new(pw))?;
+        let mut head = [0u8; PREFLIGHT_HEAD_BYTES];
+        let _ = std::io::Read::read(&mut stream, &mut head)?;
     }
     Ok(())
 }
+
+/// 密码预检只读头部这么多字节：密码正确性在首个加密块就已判定，读完整条
+/// 几十 GB 的镜像没有意义（旧实现在此直接跳过 ⇒ 大档案的密码根本不验）。
+const PREFLIGHT_HEAD_BYTES: usize = 64 * 1024;
 
 /// 有界预检上限（与 `extract::PREFLIGHT_MAX_BYTES` 同值；超限跳过预检=降级）。
 pub const PREFLIGHT_MAX_BYTES: u64 = 64 * 1024 * 1024;

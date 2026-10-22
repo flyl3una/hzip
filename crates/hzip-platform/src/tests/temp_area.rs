@@ -127,7 +127,8 @@ fn orphan_cleanup() {
     let nofile = root.join("nofile");
     std::fs::create_dir_all(&nofile).unwrap();
 
-    let removed = cleanup_orphans(&root);
+    // 年龄视作 0：覆盖「无 pid 文件 ⇒ 判死」分支（默认年龄见下条用例）
+    let removed = cleanup_orphans_with(&root, std::time::Duration::ZERO);
     assert_eq!(removed, 3, "死会话 2 + 无文件 1 全部清理");
     assert!(!dead1.exists());
     assert!(!dead2.exists());
@@ -140,4 +141,53 @@ fn orphan_cleanup() {
         .filter(|p| p.is_dir())
         .collect();
     assert_eq!(live_dirs.len(), 1, "活会话保留");
+}
+
+/// 「刚 mkdir、还没写 session.json」的目录不得被误删（`new_session` 先建目录后写
+/// pid 文件，另一实例此刻扫盘会撞上）——过了存活时间仍没有才算孤儿。
+#[test]
+fn fresh_dir_without_pid_file_is_kept_until_aged() {
+    let dir = crate::testutil::temp_dir("temp-area-orphan-fresh");
+    let root = dir.path().to_path_buf();
+    let fresh = root.join("session-deadbeef-1-0");
+    std::fs::create_dir_all(&fresh).unwrap();
+    assert_eq!(
+        cleanup_orphans(&root),
+        0,
+        "太新的无 pid 目录不得误删（进行中会话窗口）"
+    );
+    assert!(fresh.exists());
+    assert_eq!(
+        cleanup_orphans_with(&root, std::time::Duration::ZERO),
+        1,
+        "年龄视为 0 ⇒ 按孤儿清理（判死分支）"
+    );
+    assert!(!fresh.exists());
+}
+
+/// 生产场景规模（2026-10-19 用户实测 2115 个死会话 / 47 GB）：成规模的死会话
+/// 必须被整批回收——pid 不存在（`is_alive` 判死）或无 pid 文件的都算。
+#[test]
+fn orphan_sweep_reclaims_dead_sessions_at_scale() {
+    let dir = crate::testutil::temp_dir("temp-area-orphan-scale");
+    let root = dir.path().to_path_buf();
+    for i in 0..300 {
+        // ① 有 pid 文件但**创建时间不符**（本进程 pid + created_ms=1 ⇒ 必判死：
+        //    与用户机上「旧会话的 pid 早已退出/被复用」在判死口径上等价，
+        //    且不依赖各环境对不存在 pid 的权限差异）
+        let dead = root.join(format!("session-{:x}-{i:x}-0", std::process::id()));
+        std::fs::create_dir_all(&dead).unwrap();
+        std::fs::write(
+            dead.join("session.json"),
+            format!("{{\"pid\": {}, \"created_ms\": 1}}", std::process::id()),
+        )
+        .unwrap();
+        // ② 完全没有 pid 文件（强杀在 mkdir 与写文件之间）
+        let bare = root.join(format!("session-{:x}-bare-{i:x}-0", std::process::id()));
+        std::fs::create_dir_all(&bare).unwrap();
+    }
+    let removed = cleanup_orphans_with(&root, std::time::Duration::ZERO);
+    assert_eq!(removed, 600, "成批死会话应全部回收");
+    let left = std::fs::read_dir(&root).unwrap().flatten().count();
+    assert_eq!(left, 0, "扫完不留目录，实留 {left}");
 }

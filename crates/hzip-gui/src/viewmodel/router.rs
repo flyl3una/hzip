@@ -150,7 +150,9 @@ impl OpenForm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateAction {
     /// 头加密档案打开：带密码重开整档（`shell::begin_archive_gate_reopen` 消费）
-    OpenArchive,
+    /// 头加密档案打开：密码提交后由 `retry_pending_gate_action` 走**同一套打开
+    /// 流程**重开（有进度窗 + 任务中心留痕；用户口径 2026-10-19）。
+    OpenArchive(std::path::PathBuf),
     /// 打开当前会话内的加密条目：验证通过后重跑打开（**携带目标 id/名 +
     /// 打开程序**——门弹出期间的选择集变化/门内重跑都不该让后续流程落空或丢失
     /// 用户已选的程序；用户口径 2026-09-28 实测「输入密码后不继续」）
@@ -170,7 +172,7 @@ impl GateAction {
     /// 动作短名（日志/诊断用；不含路径与条目名，避免日志噪音）。
     pub fn kind(&self) -> &'static str {
         match self {
-            GateAction::OpenArchive => "open-archive",
+            GateAction::OpenArchive(_) => "open-archive",
             GateAction::OpenSelection { .. } => "open-selection",
             GateAction::OpenContainer(_) => "open-container",
         }

@@ -100,6 +100,10 @@ pub(crate) fn run_edit_save(ctx: &JobCtx, spec: &JobSpec) -> Outcome {
 /// JobSpec 载体语义：`source` = 被编辑档案；`changes` = 变更集；
 /// `password` = 加密档案密码（缺省经 `ctx.need` 上抛询问）；其余字段忽略。
 pub(crate) fn run_edit_batch(ctx: &JobCtx, spec: &JobSpec) -> Outcome {
+    // 嵌套/组合会话写回：链在，就逐层冒泡（T-IMG0），不再走单档就地/重写。
+    if spec.write_back.is_some() {
+        return crate::services::writeback::run_write_back(ctx, spec);
+    }
     match rewrite_in_place(
         ctx,
         spec.source.as_path(),
@@ -166,7 +170,7 @@ fn save_direct(ctx: &JobCtx, spec: &JobSpec) -> Result<Outcome, HzipError> {
 }
 
 /// 档案头/条目表不可用的统一错误（沿用既有口径）。
-fn bad_header() -> HzipError {
+pub(crate) fn bad_header() -> HzipError {
     HzipError::Format {
         format: hzip_format::FormatId::from("?"),
         kind: hzip_error::FormatErrorKind::BadHeader,
@@ -179,7 +183,7 @@ fn bad_header() -> HzipError {
 /// （[`PwPrompter`]）→ 上抛询问；`rewrite` 返回 `Password` 错（预填密码不对/
 /// 猜错）→ `WrongPassword` 重问后重试整轮。`changes_for` 每轮重建变更集
 /// （重试不复用上一轮产物）。
-fn rewrite_and_replace(
+pub(crate) fn rewrite_and_replace(
     ctx: &JobCtx,
     src_archive: &Path,
     target: &Path,
@@ -282,7 +286,7 @@ fn finish_in_place(
 ///   自行保真；
 /// - 「加密文件名」（7z `-mhe`）：沿用源头部加密标志（`Some(false)` = 显式
 ///   不加密，`None` 会落格式默认——故未加密档案两者都不置）。
-fn write_opts_for(infos: &[EntryInfo]) -> CreateOptions {
+pub(crate) fn write_opts_for(infos: &[EntryInfo]) -> CreateOptions {
     let mut opts = CreateOptions::default();
     let Some(first_encrypted) = infos.iter().find(|i| i.encrypted) else {
         return opts; // 未加密档案：encryption/encrypt_names 保持 None
@@ -520,7 +524,7 @@ impl EditSession {
 }
 
 /// 临时档案路径（同目录同卷；uuid v4）。
-fn tmp_archive_path(archive: &Path) -> PathBuf {
+pub(crate) fn tmp_archive_path(archive: &Path) -> PathBuf {
     let name = archive
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())

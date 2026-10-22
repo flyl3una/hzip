@@ -31,6 +31,8 @@ pub enum SettingId {
     Density,
     /// 显示 `..` 跳上级（[ui].show_dotdot）
     ShowDotdot,
+    /// 改动后立即写回（关 = 手动保存，见 `config.ui.write_back_immediate`）
+    WriteBackImmediate,
     /// 自动更新开关（[ui].auto_update；检查逻辑挂账 T43）
     AutoUpdate,
     /// 文件关联格式勾选集合（[ui].assoc_formats）
@@ -107,6 +109,7 @@ impl SettingId {
             Self::CornerRadius => "set-corner-radius",
             Self::Density => "set-density",
             Self::ShowDotdot => "set-show-dotdot",
+            Self::WriteBackImmediate => "set-write-back-immediate",
             Self::AutoUpdate => "set-auto-update",
             Self::Assoc => "set-assoc",
             Self::CtxExtract => "set-ctx-extract",

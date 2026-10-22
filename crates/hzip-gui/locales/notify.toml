@@ -153,6 +153,22 @@ zh-CN = "改动未写回压缩包"
 en = "{name}: this file lives inside a nested container, so saving it does not write back yet. Extract the inner image first, then edit that"
 zh-CN = "{name}：该文件在容器内部（压缩链/嵌套档案），保存暂不会写回压缩包。可先把内层镜像解出来，再编辑解出来的那份"
 
+[notify.temp_cleanup.title]
+en = "Temporary cleanup"
+zh-CN = "临时目录清理"
+
+[notify.temp_cleanup]
+en = "Removed {n} stale session temp dirs left by crashed or killed runs"
+zh-CN = "已清理 {n} 个崩溃/强杀残留的会话临时目录"
+
+[edit.writeback.staged]
+en = "{name}: change held (n={n}). Click “Save” next to the filter box to write everything back in one go"
+zh-CN = "{name}：改动已挂起（共 {n} 项）。点过滤框左侧的「保存」一次性写回"
+
+[edit.commit.failed]
+en = "Edit not submitted"
+zh-CN = "编辑未提交"
+
 [edit.writeback.unsupported]
 en = "{name}: this format does not support editing; saving it does not write back"
 zh-CN = "{name}：该格式不支持编辑，保存不会写回"

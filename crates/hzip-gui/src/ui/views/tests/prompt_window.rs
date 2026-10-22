@@ -26,6 +26,7 @@ fn prompt_body_follows_kind() {
         },
         apply_all: true,
         password_input: None,
+        password_enter_sub: None,
         on_event: noop_on_event(),
     };
     w.set_prompt(&conflict_prompt());

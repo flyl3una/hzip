@@ -154,6 +154,54 @@ impl AppShell {
         let state = self.state.clone();
         self._observe_state = Some(cx.observe(&state, |_, _, cx| cx.notify()));
     }
+
+    /// 通知投递内核（给没有 `&self` 的地方：异步闭包、确认对话框出口）。
+    pub(super) fn notify_via(
+        tx: &Option<Arc<crate::ui::contracts::SignalTx>>,
+        title: String,
+        body: String,
+    ) {
+        if let Some(tx) = tx.as_ref() {
+            let _ = tx.try_send(crate::viewmodel::VmSignal::Notify(
+                crate::viewmodel::pump::NotifyEvent {
+                    title,
+                    body,
+                    force_system: false,
+                },
+            ));
+        }
+    }
+
+    /// 投一条界面通知（**shell 侧用户提示的唯一出口**）。
+    ///
+    /// 出口 = `VmSignal::Notify` → 主线程泵批处理 → `ui::notify::dispatch_notify`
+    /// （主窗口在场 = 窗口内 toast；direct 模式无窗口 = 系统通知）。各写一份
+    /// `try_send` 的后果是漏掉一半（本次修的就是「拒绝了但没告诉用户」）。
+    pub(super) fn notify(&self, title: String, body: String) {
+        Self::notify_via(&self.signal_tx, title, body);
+    }
+
+    /// 嵌套会话（容器内部）写操作前置闸门：`true` = 已拒绝并弹了通知，调用方
+    /// 直接 `return`。
+    ///
+    /// 为什么还要在动作入口拦（菜单/工具栏已按同口径置灰）：键位（Delete/F2）、
+    /// 拖入、菜单绕过都是真实通道；放行到引擎的代价是「跑完进度条才报拒绝访问」
+    /// （用户实测 2026-10-16，`.qcow2.tgz` 里删文件）。
+    pub(super) fn refuse_readonly_write(&self) -> bool {
+        let readonly = self
+            .data
+            .as_ref()
+            .map(|d| {
+                d.lock()
+                    .map(|d| (!d.caps_edit(), d.readonly_write_message()))
+                    .unwrap_or((false, String::new()))
+            })
+            .unwrap_or((false, String::new()));
+        if readonly.0 {
+            self.notify(crate::tr("edit.commit.failed"), readonly.1);
+        }
+        readonly.0
+    }
     pub fn update_from_state(&mut self, cx: &mut App, snap: &AppStateUiSnapshot) {
         self.state.update(cx, |s, cx| {
             // T-PERF2：未变化不 notify——apply 的变化检测就是重渲门控

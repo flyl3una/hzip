@@ -34,6 +34,14 @@ pub struct ShellState {
     /// `..` 行不退出该层、且「可编辑」判定会误放行——嵌套层的内容不在顶层
     /// 档案里，改名/新建必须禁掉）
     pub nested: bool,
+    /// 挂起的改动条数（手动写回模式；快照投影）
+    pub pending_count: usize,
+    /// 鼠标位置（窗口坐标；悬浮提示锚点）
+    pub hover_pos: (i32, i32),
+    /// 当前悬浮提示（自绘 tooltip；UI 本地态，不进快照）
+    pub hover_tip: Option<crate::ui::widgets::hover_tip::HoverTip>,
+    /// 手动写回模式（快照投影；保存按钮常驻依据）
+    pub write_back_manual: bool,
     /// 档案名（标题栏 + 面包屑根；空 = 未打开）
     pub archive_name: String,
     /// 档案完整路径（标题 tooltip）
@@ -146,6 +154,10 @@ impl ShellState {
             has_clipboard: !hzip_platform::clipboard::internal_is_empty(),
             name_edit: None,
             nested: false,
+            pending_count: 0,
+            hover_pos: (0, 0),
+            hover_tip: None,
+            write_back_manual: false,
             // 初值从配置读（首个泵快照到达前菜单不至于空）；此后以快照为准
             mru: hzip_config::Config::load().ui.recent_archives,
             archive_name: String::new(),
@@ -249,6 +261,8 @@ impl ShellState {
             || self.has_clipboard != snap.has_clipboard
             || self.name_edit != snap.name_edit
             || self.nested != snap.nested
+            || self.pending_count != snap.pending_count
+            || self.write_back_manual != snap.write_back_manual
             || self.archive_name != snap.archive_name
             || self.archive_path != snap.archive_path
             || self.current_dir != snap.current_dir
@@ -281,6 +295,8 @@ impl ShellState {
         self.has_clipboard = snap.has_clipboard;
         self.name_edit.clone_from(&snap.name_edit);
         self.nested = snap.nested;
+        self.pending_count = snap.pending_count;
+        self.write_back_manual = snap.write_back_manual;
         self.archive_name.clone_from(&snap.archive_name);
         self.archive_path.clone_from(&snap.archive_path);
         // 当前目录（T-SET 修复：旧实现无此字段 → 浏览页 `..` 目标恒根）
@@ -380,6 +396,10 @@ impl ShellState {
             // 菜单「重命名/新建文件夹」恒禁用（`caps_edit=false`）。
             nested: self.nested,
             caps_edit: self.caps_edit,
+            // 手动写回的挂起条数：漏投 ⇒ 过滤框左侧「保存 (n)」按钮永远不出现
+            //（2026-10-19 用户实测：通知说「点保存」，界面上却没有按钮）
+            pending_count: self.pending_count,
+            write_back_manual: self.write_back_manual,
             name_edit: self.name_edit.clone(),
             ..Default::default()
         }

@@ -64,8 +64,7 @@ pub(crate) use actions::{OpenRecent, SetToolbarStyle, SetViewStyle};
 pub(crate) use errors::hz_reason;
 pub(crate) use open_flow::{OpenFlow, open_archive_task, run_open_flow};
 pub(crate) use session::{
-    SESSION_SUPERSEDED, begin_browse_gate_reopen, spawn_browse_reopen, spawn_rows_rebuild,
-    start_session_switch,
+    SESSION_SUPERSEDED, spawn_browse_reopen, spawn_rows_rebuild, start_session_switch,
 };
 
 #[cfg(test)]

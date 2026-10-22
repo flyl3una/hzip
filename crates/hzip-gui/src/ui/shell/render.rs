@@ -48,12 +48,14 @@ impl Render for AppShell {
             busy,
             busy_text,
             archive_title,
+            nested,
             tab,
             entry_count,
             selection_count,
             suspect_count,
             sel_stats,
             job_pill,
+            hover_tip,
             snapshot,
         ) = {
             let s = self.state.read(cx);
@@ -63,12 +65,14 @@ impl Render for AppShell {
                 s.busy,
                 s.busy_text.clone(),
                 s.archive_name.clone(),
+                s.nested,
                 s.tab,
                 s.entry_count,
                 s.selection_count,
                 s.suspect_count,
                 s.sel_stats,
                 s.job_pill.clone(),
+                s.hover_tip.clone(),
                 snapshot,
             )
         };
@@ -93,6 +97,8 @@ impl Render for AppShell {
             // 每帧一次 AppData 锁**。慢盘/网络盘上直接表现为界面卡顿，且与任何
             // 持锁的后台任务（解出条目、预览）互相拖累。现在两者都由泵的快照
             // 投影带入（`caps_edit` 另在 AppData 侧按档案路径记忆化）。
+            // 投影即「本会话能不能改写档案」= `caps_edit`（顶层格式 / 嵌套写回链，
+            // T-IMG0 §5.3）——菜单「编辑」组与工具栏/右键同一口径。
             let caps_edit = s.caps_edit;
             let mru = s.mru.clone();
             crate::ui::bar::menu_bar::MenuContext {
@@ -405,6 +411,20 @@ impl Render for AppShell {
                                     .text_color(cx.theme().muted_foreground)
                                     .child(SharedString::from(format!("— {archive_title}"))),
                             )
+                        })
+                        .children(if nested && !snapshot.caps_edit {
+                            // 嵌套且**写不回去**时的只读徽标：写操作整组置灰，
+                            // 不解释为什么就只剩「点了没反应」（用户实测 2026-10-16）
+                            Some(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(SharedString::from(crate::tr(
+                                        "browse.nested.readonly_badge",
+                                    ))),
+                            )
+                        } else {
+                            None
                         }),
                 ),
             )
@@ -478,7 +498,9 @@ impl Render for AppShell {
                     }
                 }
             }))
-            .child(status_bar);
+            .child(status_bar)
+            // 自绘 tooltip：绝对定位在窗口坐标上、树序最后 ⇒ 最上层且不被裁剪
+            .children(crate::ui::widgets::hover_tip::layer(hover_tip.as_ref(), cx));
         // Dialog/Sheet/Notification 层**不再由内容视图手工挂载**（gpui-kit
         // 0.7.1）。0.6 时代 `Root::render` 不自行挂层，须根内容视图逐层手工补挂
         // （sheet / dialog / notification 三个挂载函数）；0.7.1 改了契约：这些

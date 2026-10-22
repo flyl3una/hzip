@@ -871,6 +871,15 @@ impl gpui_kit::Render for SettingsPanel {
                 div()
                     .flex_1()
                     .min_w_0()
+                    // 内容区按全站容器口径收角：**圆角取全局主题**
+                    // （`[ui].corner_radius` → `theme().radius`，设置-外观可调），
+                    // 外加与对话框内嵌面同款的 1px 边框——此前这里没有任何容器样式，
+                    // 贴成直角、也无法随「圆角」设置变化（用户实测 2026-10-19）。
+                    // `overflow_hidden`：子元素（表格/滚动区）的直角不得盖住圆角。
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .overflow_hidden()
                     // 边界锚点（回归用：分组内边距用「相对内容列左边」的差值量，
                     // 绝对 x 会随页签轨道宽度/弹窗位置一起漂）
                     .when(cfg!(test), |d| {

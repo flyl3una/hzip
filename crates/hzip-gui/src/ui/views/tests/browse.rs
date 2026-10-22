@@ -150,6 +150,7 @@ fn tree_row(path: &str, name: &str, depth: usize, is_dir: bool, expanded: bool) 
 
 fn delegate(rows_n: usize, show_parent: bool) -> BrowseDelegate {
     BrowseDelegate {
+        hover: None,
         rows: (0..rows_n)
             .map(|i| {
                 browse_row_from_tree_row(&tree_row(
@@ -2092,12 +2093,36 @@ fn menu_items_are_scoped_by_right_click_target() {
     };
     assert!(item_disabled(Rename, &multi));
     assert!(!item_disabled(Delete, &multi));
-    // 不可编辑（caps.edit=false / 嵌套会话）：改名灰
+    // 不可编辑（caps.edit=false / 嵌套会话）：改名灰；**删除/粘贴同口径灰**
+    // ——三者都改写档案，容器内部写不回去（用户实测 2026-10-16：`.qcow2.tgz`
+    // 里删除跑很久后报「拒绝访问」）
     let no_edit = MenuEnable {
         can_edit: false,
         ..file
     };
     assert!(item_disabled(Rename, &no_edit));
+    assert!(item_disabled(Delete, &no_edit), "不可写档案里删除必须灰");
+    assert!(
+        item_disabled(
+            Paste,
+            &MenuEnable {
+                can_edit: false,
+                paste_available: true,
+                ..file
+            }
+        ),
+        "不可写档案里粘贴必须灰"
+    );
+    assert!(
+        !item_disabled(
+            Paste,
+            &MenuEnable {
+                paste_available: true,
+                ..file
+            }
+        ),
+        "可写档案里粘贴照旧可用"
+    );
     // 解压全部/全部选择恒可用
     assert!(!item_disabled(ExtractAll, &MenuEnable::default()));
     assert!(!item_disabled(SelectAll, &MenuEnable::default()));
@@ -2373,9 +2398,19 @@ fn menu_enable_paste_field_defaults_and_semantics() {
     assert!(item_disabled(BrowseMenuItem::Paste, &MenuEnable::default()));
     let has_cb = MenuEnable {
         paste_available: true,
+        // 粘贴 = 改写档案：还需「可写」（可编辑 ∧ 非嵌套会话；2026-10-16 收口）
+        can_edit: true,
         ..Default::default()
     };
     assert!(!item_disabled(BrowseMenuItem::Paste, &has_cb));
+    // 剪贴板非空但档案不可写（只读格式 / 容器内部）→ 粘贴仍灰
+    assert!(item_disabled(
+        BrowseMenuItem::Paste,
+        &MenuEnable {
+            can_edit: false,
+            ..has_cb
+        }
+    ));
     let has_sel = MenuEnable {
         has_selection: true,
         ..Default::default()

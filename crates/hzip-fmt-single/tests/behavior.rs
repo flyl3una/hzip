@@ -440,8 +440,15 @@ fn truncated_and_bitflip_no_panic() {
 #[cfg(feature = "gz")]
 #[test]
 fn cancel_mid_extract_cleans_partial() {
-    // 全零高压缩样本：解压量 ~16 MiB，监控达 ~8 MiB 时取消
-    let big = vec![0u8; 16 * 1024 * 1024];
+    // 全零高压缩样本：解压量 64 MiB。
+    //
+    // **为什么用到 64 MiB（2026-10-19 第三次负载下失败后定的）**：进度总线是
+    // `BUS_CHANNEL_CAP = 256` 的**有界**队列，而本用例的订阅端只读第一条事件就取消。
+    // 解压循环每写一块就 `send` 一次 ⇒ 事件数超过 256 后，生产者会**阻塞在 send 上**
+    // ⇒ 它不可能「先跑完」；监控线程只读一次即可放行一次，而它一旦被调度就先取消。
+    // 这样「取消必然落在解压中途」由队列容量保证，而不是碰运气抢调度。
+    // 64 MiB ⇒ 约 1024 个块，远大于容量，余量充足。
+    let big = vec![0u8; 64 * 1024 * 1024];
     let d = tempfile::tempdir().unwrap();
     let p = compress_to(
         d.path(),
@@ -466,8 +473,8 @@ fn cancel_mid_extract_cleans_partial() {
     // --workspace` 同时跑上百个测试二进制）下，监控线程可能整段没被调度，解压已经
     // **完成**才轮到它 → 取消来得太晚，`result` 是 `Ok`，「取消后应 Err」必红。
     // 事件版在阻塞 `recv` 上等第一个字节事件（解压循环每读到一个 chunk 就发一次），
-    // 事件到达即取消：此时循环**刚写完一个 chunk**、还有 ~16 MiB 要干，取消必然落在
-    // 中途——不再依赖「轮询能否抢在结束前被调度」。
+    // 事件到达即取消；再加上上面那条**有界队列**保证：生产者在队列满后会阻塞，
+    // 解压不可能在监控线程拿到事件之前完成。
     let events = bus.subscribe();
     let cancel2 = cancel.clone();
     let sub = std::thread::spawn(move || {

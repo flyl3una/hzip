@@ -238,7 +238,24 @@ fn archive_hash(archive: &Path) -> String {
 ///
 /// 双判定失败/读不到/解析失败 → 整目录删除；**PID 存在且创建时间一致 → 保留**。
 /// 返回删除的会话目录数。异步执行不阻塞启动（02 §9.2 F 步由调用方调度）。
+///
+/// **生产必须在启动时调**（2026-10-19 用户实测：`%TEMP%\hzip` 堆了 2115 个会话
+/// 目录 / 47 GB——退出钩子只清当次会话，崩溃/强杀留下的没人收，而本函数在
+/// 生产代码里从未被调用过）。GUI 启动时在后台线程调一次见
+/// `hzip-gui/src/ui/shell/runtime.rs`。
 pub fn cleanup_orphans(root: &Path) -> usize {
+    cleanup_orphans_with(root, ORPHAN_MISSING_PID_MIN_AGE)
+}
+
+/// 「无 pid 文件」目录的最小存活时间：小于它一律放过。
+///
+/// `new_session` 是**先 mkdir、后写 `session.json`**，中间有微秒级窗口；另一个
+/// 实例恰在此刻扫盘就会把「刚建好还没写 pid 文件」的活会话删掉。存活时间一过
+/// 仍没有 pid 文件，才算孤儿（留待下一轮启动清理）。
+const ORPHAN_MISSING_PID_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// [`cleanup_orphans`] 的可注入年龄版（测试用最小年龄 0 覆盖两条分支）。
+fn cleanup_orphans_with(root: &Path, missing_pid_min_age: std::time::Duration) -> usize {
     let Ok(entries) = std::fs::read_dir(root) else {
         return 0;
     };
@@ -250,7 +267,11 @@ pub fn cleanup_orphans(root: &Path) -> usize {
         }
         let pid_file = path.join("session.json");
         let Some((pid, created_ms)) = read_pid_file(&pid_file) else {
-            // 读不到 / 解析失败 → 整目录删除
+            // 读不到 / 解析失败：可能是**另一个实例刚 mkdir、还没写完 pid 文件**
+            // ⇒ 太新的先放过；过了存活时间仍没有 → 孤儿，整目录删除。
+            if !missing_pid_min_age.is_zero() && dir_is_fresh(&path, missing_pid_min_age) {
+                continue;
+            }
             if remove_session_dir(&path) {
                 removed += 1;
             }
@@ -265,6 +286,15 @@ pub fn cleanup_orphans(root: &Path) -> usize {
         }
     }
     removed
+}
+
+/// 目录是否「还很新」（mtime 距今 < `min_age`）；取不到时间戳按**不新**处理
+/// （宁可删孤儿，不留垃圾——真正在用的会话有 pid 文件，走不到这条分支）。
+fn dir_is_fresh(path: &Path, min_age: std::time::Duration) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|age| age < min_age).unwrap_or(false))
+        .unwrap_or(false)
 }
 
 /// 解析 pid 文件（`{"pid": n, "created_ms": m}` 手工解析，不引入 serde）。

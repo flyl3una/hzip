@@ -5,7 +5,10 @@ use super::DialogRouter;
 fn browse_gate_arm_retry_cap() {
     let mut r = DialogRouter::new();
     assert!(r.gate_attempts().is_none());
-    assert!(r.arm_gate(GateAction::OpenArchive, "/tmp/x.7z".into()));
+    assert!(r.arm_gate(
+        GateAction::OpenArchive("/tmp/x.7z".into()),
+        "/tmp/x.7z".into()
+    ));
     assert!(
         !r.arm_gate(
             GateAction::OpenSelection {
@@ -18,7 +21,10 @@ fn browse_gate_arm_retry_cap() {
         "重复武装拒绝"
     );
     assert_eq!(r.gate_attempts(), Some(0));
-    assert_eq!(r.gate_action(), Some(&GateAction::OpenArchive));
+    assert_eq!(
+        r.gate_action(),
+        Some(&GateAction::OpenArchive("/tmp/x.7z".into()))
+    );
     assert_eq!(r.gate_key().unwrap().display().to_string(), "/tmp/x.7z");
     assert!(r.gate_fail(), "1/3 仍开");
     assert!(r.gate_fail(), "2/3 仍开");

@@ -53,8 +53,16 @@ pub(crate) fn handle_gate_event(
     match event {
         DialogEvent::PasswordSubmit(pw) => match action {
             // 头加密档案：带密码重开整档（含装会话/MRU/密码缓存，见该函数文档）
-            GateAction::OpenArchive => {
-                crate::ui::shell::begin_browse_gate_reopen(data, pw);
+            GateAction::OpenArchive(path) => {
+                // 缓存密码 + 放行门：动作进待执行槽，主线程泵走 `open_archive_task`
+                // 重开（同一套打开流程 ⇒ 有进度窗；旧实现起裸线程、全程无窗口，
+                // 用户实测 2026-10-19「输完密码要等一会儿才见反应」）。
+                if let Ok(mut d) = data.lock() {
+                    d.remember_password(&path, zeroize::Zeroizing::new(pw.clone()));
+                    if let Ok(mut r) = d.router.lock() {
+                        r.gate_resolve();
+                    }
+                }
             }
             // 条目/内层容器：后台预检 → 通过则缓存密码 + 放行（主线程泵重跑原操作）
             GateAction::OpenSelection { .. } | GateAction::OpenContainer(_) => {
@@ -178,7 +186,7 @@ fn gate_record_target(action: &GateAction, key: &std::path::Path) -> String {
     match action {
         GateAction::OpenSelection { name, .. } => format!("{} :: {name}", key.display()),
         GateAction::OpenContainer(path) => format!("{} :: {path}", key.display()),
-        GateAction::OpenArchive => key
+        GateAction::OpenArchive(_) => key
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| key.display().to_string()),

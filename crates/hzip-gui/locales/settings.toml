@@ -96,6 +96,22 @@ zh-CN = "按钮、选中高亮等处的强调色；留空使用主题默认色�
 en = "Show \"..\" parent row"
 zh-CN = "显示 .. 跳上级"
 
+[setting.write_back_immediate.label]
+en = "When to write changes back"
+zh-CN = "改动后的保存方式"
+
+[opt.write_back_mode.auto]
+en = "Automatic (write back on every change)"
+zh-CN = "自动保存（每次改动立即写回）"
+
+[opt.write_back_mode.manual]
+en = "Manual (click “Save (n)” to write a batch)"
+zh-CN = "手动保存（点「保存 (n)」一次性写回）"
+
+[setting.write_back_immediate.help]
+en = "Manual save holds edits back (a “Save (n)” button appears left of the filter box) and writes them back in one go when you click it. Useful when editing several files inside a wrapped image — every write-back of a container chain re-compresses it in full."
+zh-CN = "手动保存会把改动先挂起（过滤框左侧出现「保存 (n)」按钮），点它把挂起的改动一次性合并写回。适合在被包住的镜像里连续改多个文件——组合链每次写回都要全量重压，攒一次更省时。"
+
 [setting.show_dotdot.help]
 en = 'Show a ".." row at the top of the list; double-click it to go back to the parent folder.'
 zh-CN = "列表顶部显示一行「..」，双击可返回上一级目录。"

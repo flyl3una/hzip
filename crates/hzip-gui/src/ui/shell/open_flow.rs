@@ -107,6 +107,30 @@ impl AppShell {
         form: crate::viewmodel::OpenForm,
         cx: &mut App,
     ) {
+        self.open_one_entry_inner(id, name, form, cx, false);
+    }
+
+    /// 密码门放行后的重跑：**立刻开窗**（见 [`OpenFlow::immediate_show`]）。
+    ///
+    /// 用户实测 2026-10-19：提交密码后还要等防闪窗延迟才见进度窗，读作「密码没生效」。
+    pub(crate) fn open_one_entry_after_gate(
+        &mut self,
+        id: hzip_format::EntryId,
+        name: String,
+        form: crate::viewmodel::OpenForm,
+        cx: &mut App,
+    ) {
+        self.open_one_entry_inner(id, name, form, cx, true);
+    }
+
+    fn open_one_entry_inner(
+        &mut self,
+        id: hzip_format::EntryId,
+        name: String,
+        form: crate::viewmodel::OpenForm,
+        cx: &mut App,
+        immediate_show: bool,
+    ) {
         let Some(data) = self.data.clone() else {
             return;
         };
@@ -118,10 +142,15 @@ impl AppShell {
         // ① 锁内摘出浏览器 + 会话密码（微秒级）② 锁外物化解压 ③ 锁内放回；
         // 并在任务中心留痕（成功/失败都记，失败带原因）。
         let form_copy = form;
-        let Some(archive) = data.lock().ok().and_then(|d| d.archive.clone()) else {
+        // **落点 = 本会话源档案**（顶层 = 实体档案；嵌套会话 = 内层物化档）。
+        //
+        // 用户实测 2026-10-19：`qcow2.zip` 里改文件 ⇒ 提示保存成功、重开后内容被还原。
+        // 根因：这里取的是 `AppData.archive`（**最外层**实体档案）+ 内层条目 id ⇒ 写回
+        // 目标/条目空间对不上（写到外层档案的错条目上，或干脆什么都没改）。
+        let Some(archive) = data.lock().ok().and_then(|d| d.edit_target()) else {
             tracing::warn!(
                 entry_id = id,
-                "打开条目：当前会话无档案（AppData.archive 为空）→ 忽略"
+                "打开条目：当前会话无源档案（edit_target 为空）→ 忽略"
             );
             return;
         };
@@ -140,12 +169,19 @@ impl AppShell {
             .unwrap_or(crate::app::external_edit::WriteBack::Disabled {
                 reason: "edit.writeback.unsupported",
             });
+        // 手动写回模式：该条目已有**挂起的新内容** ⇒ 直接打开它，用户看到的才是
+        // 「修改后」的内容（不再从档案读旧副本）。见 `AppData::pending_preview`。
+        let pending_src = data
+            .lock()
+            .ok()
+            .and_then(|d| d.pending_preview(id).map(|p| p.to_path_buf()));
         let edit_tx = self.edit_tx.clone();
         let work = {
             let data = data.clone();
             let archive = archive.clone();
             let name = name.clone();
             let target = target.clone();
+            let pending_src = pending_src.clone();
             let edit_tx = edit_tx.clone();
             move |detail: &crate::ui::views::open_progress::OpenDetail| {
                 detail.set_phase(crate::tr("openprogress.phase_materialize_one"));
@@ -164,12 +200,16 @@ impl AppShell {
                     (browser, pw)
                 };
                 // ② 锁外物化（可能整条解压）→ ③ 锁内放回
-                let res = crate::viewmodel::MainViewModel::materialize_in(
-                    &browser,
-                    &[id],
-                    &archive,
-                    pw.as_ref(),
-                );
+                // 挂起内容命中 ⇒ 直接用那份档（跳过物化：更快，且内容就是改后的）
+                let res = match pending_src.as_ref().filter(|p| p.is_file()) {
+                    Some(p) => Ok((vec![p.clone()], Vec::new())),
+                    None => crate::viewmodel::MainViewModel::materialize_in(
+                        &browser,
+                        &[id],
+                        &archive,
+                        pw.as_ref(),
+                    ),
+                };
                 if let Ok(mut d) = data.lock() {
                     d.main.restore_browser(browser);
                 }
@@ -288,6 +328,7 @@ impl AppShell {
                 // epoch = 0：外部打开**不是换会话**（不动会话，不受顶替）
                 epoch: 0,
                 toast_on_error: true,
+                immediate_show,
             },
             work,
         )
@@ -311,6 +352,16 @@ impl AppShell {
     /// 3. **原子闸**（[`AppData::session_switch`](crate::app::state::AppData::session_switch)）：
     ///    连点/树+列表双路只放行一次——两次并发切换会各自压栈换会话，落账互相覆盖。
     pub fn open_container(&mut self, entry_path: &str, cx: &mut App) {
+        self.open_container_inner(entry_path, cx);
+    }
+
+    /// 进入内层容器/映像（双击容器条目）。
+    ///
+    /// **一律跳过防闪窗门槛**（`OpenFlow::immediate_show`）：进容器必然是
+    /// 「解码链 + 内层建索引」的重活，没有「小档案秒开」可闪——用户在 2026-10-19
+    /// 实测里说得直接：「应该在读取的时候就开始弹窗并算到进度耗时里」（他看到的
+    /// 是输密码后先静默读一会儿镜像、窗口才出现）。密码门重跑走同一条路。
+    fn open_container_inner(&mut self, entry_path: &str, cx: &mut App) {
         let Some(data) = self.data.clone() else {
             return;
         };
@@ -441,7 +492,8 @@ impl AppShell {
                             // 条目**当成那一行解出来（`bh_auto_ops.itr2.x86_64.tgz`
                             // 双击 `….tar` 行直接进 `ops/`）。
                             d.main.restore_browser(browser);
-                            d.begin_nested_session(&entry_path);
+                            // 延迟层（未物化、无外层条目 id）⇒ 写回链建不起来（只读）
+                            d.begin_nested_session(None, &entry_path);
                             d.main = child;
                             Ok(())
                         }
@@ -466,6 +518,7 @@ impl AppShell {
                     labels: crate::ui::views::open_progress::OpLabels::default(),
                     epoch,
                     toast_on_error: true,
+                    immediate_show: true,
                 },
                 work,
             );
@@ -539,6 +592,28 @@ impl AppShell {
                 // ② 锁外：独立 reader 解出内层档案（与 `edit.rs` 的物化同款）。
                 //    流经 `CountingReader` ——明细行报「已处理 x / y」（y = 条目声明
                 //    原始大小，未知则只报已处理量）
+                // 先回收死会话临时目录：大镜像物化动辄几十 GB，用户实测磁盘被
+                // 「崩溃/强杀留下的会话」塞满（自动清理看不见效果）。这里每进一次
+                // 容器扫一遍（后台线程内，几 ms~几 s），有回收就**告诉用户**。
+                let root = hzip_platform::dirs::temp_root();
+                let removed = hzip_platform::temp_area::cleanup_orphans(&root);
+                if removed > 0 {
+                    tracing::info!(removed, root = %root.display(), "进容器前清理死会话临时目录");
+                    if let Ok(d) = data.lock()
+                        && let Some(tx) = d.signal_tx.as_ref()
+                    {
+                        let _ = tx.try_send(crate::viewmodel::VmSignal::Notify(
+                            crate::viewmodel::pump::NotifyEvent {
+                                title: crate::tr("notify.temp_cleanup.title"),
+                                body: crate::tr_with(
+                                    "notify.temp_cleanup",
+                                    &[("n", &removed.to_string())],
+                                ),
+                                force_system: false,
+                            },
+                        ));
+                    }
+                }
                 detail.set_phase(crate::tr("openprogress.phase_extract_inner"));
                 detail.set_total(size_raw);
                 let reader = engine
@@ -590,7 +665,7 @@ impl AppShell {
                 if !d.session_switch_is_current(epoch) {
                     return Err(SESSION_SUPERSEDED.to_string());
                 }
-                d.begin_nested_session(&entry_path);
+                d.begin_nested_session(Some(entry_id), &entry_path);
                 d.main = child;
                 d.adopt_temp_source(temp);
                 Ok(())
@@ -606,6 +681,7 @@ impl AppShell {
                 labels: crate::ui::views::open_progress::OpLabels::default(),
                 epoch,
                 toast_on_error: true,
+                immediate_show: true,
             },
             work,
         );
@@ -815,6 +891,13 @@ pub(crate) struct OpenFlow {
     /// 快速失败（未弹进度窗）时是否再补一条界面 toast。系统「打开方式」询问框
     /// 走 `show_window=false`（询问框本身就是可见 UI），失败仍必须有出口。
     pub toast_on_error: bool,
+    /// **跳过防闪窗延迟**（默认 `false`）。密码门放行后的重跑用 `true`。
+    ///
+    /// 为什么（用户实测 2026-10-19）：双击 `.qcow2.zip` 里的映像触发密码门，提交
+    /// 密码后还要等防闪窗延迟 + 重活启动才见到进度窗，用户读作「密码没生效、界面
+    /// 没响应」。重跑时用户**已明确表达两次意图**（点了这一行、又输了密码），
+    /// 窗口该立刻到。
+    pub immediate_show: bool,
 }
 
 pub(crate) fn run_open_flow(
@@ -832,10 +915,17 @@ pub(crate) fn run_open_flow(
         labels,
         epoch,
         toast_on_error,
+        immediate_show,
     } = flow;
-    let show_delay =
-        std::time::Duration::from_millis(hzip_config::Config::load().jobs.open_show_delay_ms);
+    let show_delay = if immediate_show {
+        std::time::Duration::ZERO
+    } else {
+        std::time::Duration::from_millis(hzip_config::Config::load().jobs.open_show_delay_ms)
+    };
     let detail = crate::ui::views::open_progress::OpenDetail::default();
+    // 窗口可能在工人线程设相位之前就渲染（`immediate_show` 时必然如此）——
+    // 先写一句「准备中」，别给用户一个空白进度窗。
+    detail.set_phase(crate::tr("openprogress.phase_prepare"));
     let (tx, rx) = smol::channel::bounded::<Result<(), String>>(1);
     // `work` 上**独立后台线程**（见上文第 1 点）。线程建不起来时不再退回「UI 线程
     // 跑」——那正是本函数要消灭的东西；直接以失败收场（错误可见、可重试）。
@@ -989,7 +1079,10 @@ pub(crate) fn open_archive_task(
                     // 投影密码弹窗；门内带密码重开并落账（MRU/会话/密码缓存在门内完成）。
                     let _ = data.lock().ok().and_then(|d| {
                         d.router.lock().ok().map(|mut r| {
-                            r.arm_gate(crate::viewmodel::GateAction::OpenArchive, path.clone())
+                            r.arm_gate(
+                                crate::viewmodel::GateAction::OpenArchive(path.clone()),
+                                path.clone(),
+                            )
                         })
                     });
                     return Err("需要输入密码（头加密档案）".to_string());
@@ -1023,6 +1116,8 @@ pub(crate) fn open_archive_task(
             epoch,
             // 打开档案：失败已有进度窗/任务中心可见，无需再补 toast
             toast_on_error: false,
+
+            immediate_show: false,
         },
         work,
     );

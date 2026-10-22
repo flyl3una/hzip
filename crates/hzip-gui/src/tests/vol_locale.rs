@@ -34,6 +34,7 @@ const VOL_KEYS: &[&str] = &[
     "vol.readonly.outer-not-editable",
     // —— 拒绝（来源/形态层面）——
     "vol.reject.commit-spooled",
+    "vol.reject.nested-depth",
     "vol.reject.multi-volume",
     "vol.reject.stdin-source",
     // —— 不支持 ——

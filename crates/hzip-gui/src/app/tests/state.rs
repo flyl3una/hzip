@@ -529,7 +529,7 @@ fn reset_nested_sessions_drops_frames_and_temp_files() {
     std::fs::write(&temp, b"x").unwrap();
     let mut d = app();
     d.adopt_temp_source(temp.clone());
-    d.begin_nested_session("inner.tar");
+    d.begin_nested_session(None, "inner.tar");
     assert!(!d.open_stack.is_empty(), "已压一层");
     assert_eq!(d.open_stack[0].temp.as_deref(), Some(temp.as_path()));
     d.reset_nested_sessions();
@@ -937,7 +937,7 @@ fn nested_session_stack_round_trip_and_crumbs() {
     );
     assert!(data.main.entry_id_of_path("nope").is_none());
     // 用**完整档案内路径**进入（外层在档案根，容器在 sub/ 下）
-    data.begin_nested_session("sub/child.tar");
+    data.begin_nested_session(None, "sub/child.tar");
     let browser = data
         .engine
         .browse(
@@ -1681,6 +1681,67 @@ mod edit_caps_tests {
         d.archive = Some(tar);
         assert!(!d.caps_edit(), "tar：caps.edit=false → 不可编辑");
     }
+
+    /// 不可写会话的写操作闸门：暂存与提交都拒绝、都不留载荷（T-IMG0 后口径 =
+    /// `caps_edit` = 本会话可写性；嵌套会话能否写由写回链决定，见
+    /// `build_session_chain`）。
+    #[test]
+    fn readonly_session_refuses_edit_staging_and_commit() {
+        let mut d = AppData::new(std::sync::Arc::new(crate::viewmodel::testutil::engine()));
+        let archive = std::path::PathBuf::from("outer.zip");
+        let changes = || hzip_format::ChangeSet {
+            changes: vec![hzip_format::Change::Delete(1)],
+        };
+
+        // 顶层但不可编辑（测试里的临时路径既嗅探不出格式、也不是可写镜像）
+        assert!(!d.caps_edit());
+        let err = d
+            .stage_edit_batch(archive.clone(), changes())
+            .expect_err("不可写会话不得放行写操作");
+        assert!(!err.is_empty(), "拒绝必须给用户可见文案");
+        assert!(d.pending_edit.is_none(), "拒绝时不留待提交载荷");
+
+        // 嵌套会话（链建不起来：延迟层无外层条目 id）同样拒绝
+        d.begin_nested_session(None, "inner.tar");
+        assert!(d.stage_edit_batch(archive.clone(), changes()).is_err());
+        assert!(d.pending_edit.is_none(), "拒绝时不留待提交载荷");
+
+        // 提交入口的二次校验（暂存后会话变不可写的窗口）：同样拒绝并丢弃载荷
+        d.pending_edit = Some((archive, changes()));
+        let err = d.commit_edit_batch().expect_err("不可写会话不得提交");
+        assert!(!err.is_empty());
+        assert!(d.pending_edit.is_none(), "拒绝后载荷已丢弃");
+    }
+
+    /// 工具栏写操作可用性跟**本会话可写性**（`caps_edit`）走，不再硬判 `nested`
+    /// ——被包住的镜像（`v.zip` 里的 `disk.qcow2`）只要能重建外层就可写（T-IMG0
+    /// §5.3）；读操作与写权限无关。
+    #[test]
+    fn toolbar_write_actions_follow_session_writability() {
+        use crate::ui::contracts::{AppStateUiSnapshot, SelectionStats};
+        let mk = |nested: bool, caps_edit: bool| AppStateUiSnapshot {
+            archive_path: "x.qcow2".into(),
+            caps_edit,
+            nested,
+            sel_stats: SelectionStats {
+                files: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // 只读会话（含「嵌套但链建不起来」）：加/删置灰，解压/预览不受影响
+        let ro = mk(true, false).toolbar_enable();
+        assert!(!ro.can_add && !ro.can_delete, "不可写会话：加/删置灰");
+        assert!(ro.can_extract && ro.can_preview, "只读不改解压/预览");
+        // 可写会话：顶层与**嵌套**一视同仁（嵌套 = 写回链能重建外层）
+        for nested in [false, true] {
+            let rw = mk(nested, true).toolbar_enable();
+            assert!(
+                rw.can_add && rw.can_delete,
+                "可写会话（nested={nested}）照旧可加/可删"
+            );
+        }
+    }
 }
 
 mod edit_changeset_tests {
@@ -1816,5 +1877,108 @@ mod edit_changeset_tests {
             "docs/src/sub/b.bin",
             "多层 current_dir 与多层 rel 同口径"
         );
+    }
+
+    /// 手动写回：同条目重复改只留最后一条；合并 flush 成一个任务后批次清空；
+    /// 提交入口（菜单/右键路径）在手动模式下只挂起、不提交。
+    #[test]
+    fn manual_write_back_dedupes_and_flushes_one_batch() {
+        use crate::viewmodel::testutil::write_zip;
+        let dir = tempfile::tempdir().unwrap();
+        let zip = dir.path().join("v.zip");
+        write_zip(&zip, &[("a.txt", b"old"), ("b.txt", b"keep")]);
+        let mut d = AppData::new(std::sync::Arc::new(crate::viewmodel::testutil::engine()));
+        d.settings.write_back_immediate = false;
+        d.main.open(&d.engine, &zip).unwrap();
+        d.archive = Some(zip.clone());
+        // 提交出口要信号通道（`submit_spec_locked` 要求）；测试只关心是否提交
+        let (tx, _rx): (
+            crate::ui::contracts::SignalTx,
+            crate::ui::contracts::SignalRx,
+        ) = smol::channel::bounded(8);
+        d.signal_tx = Some(std::sync::Arc::new(tx));
+        let find = |name: &str, d: &AppData| {
+            d.main
+                .entries()
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| e.id)
+                .unwrap_or_else(|| panic!("{name} 行"))
+        };
+        let ea = find("a.txt", &d);
+        let eb = find("b.txt", &d);
+        let s1 = dir.path().join("a1");
+        let s2 = dir.path().join("a2");
+        std::fs::write(&s1, b"v1").unwrap();
+        std::fs::write(&s2, b"v2").unwrap();
+        let cs = |c| hzip_format::ChangeSet { changes: vec![c] };
+
+        let n1 = d
+            .stage_pending_edit(
+                zip.clone(),
+                cs(hzip_format::Change::Replace {
+                    entry: ea,
+                    src: s1.clone(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(n1, 1);
+        let n2 = d
+            .stage_pending_edit(
+                zip.clone(),
+                cs(hzip_format::Change::Replace {
+                    entry: ea,
+                    src: s2.clone(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(n2, 1, "同条目后到覆盖先到，不堆重复变更");
+        assert_eq!(d.pending_preview(ea), Some(s2.as_path()));
+        let n3 = d
+            .stage_pending_edit(zip.clone(), cs(hzip_format::Change::Delete(eb)))
+            .unwrap();
+        assert_eq!(n3, 2);
+        assert_eq!(d.pending_count(), 2);
+
+        // 合并提交：一个任务，提交后批次清空
+        let job = d.flush_pending().unwrap();
+        assert!(job.is_some(), "合并提交应产生一个任务");
+        assert_eq!(d.pending_count(), 0, "提交后批次清空");
+        assert!(d.pending_preview(ea).is_none());
+
+        // 菜单/右键提交入口同样被拦：只挂起
+        d.stage_edit_batch(zip.clone(), cs(hzip_format::Change::Delete(eb)))
+            .unwrap();
+        assert!(
+            matches!(d.commit_edit_batch(), Ok(None)),
+            "手动模式：提交入口应挂起而不是提交"
+        );
+        assert_eq!(d.pending_count(), 1);
+    }
+
+    /// 编辑落点 = **本会话源档案**：嵌套会话下必须是内层物化档，**不是**最外层实体档案。
+    ///
+    /// 用户实测 2026-10-19：`qcow2.zip` 里改文件 ⇒ 提示保存成功、重开后内容被还原。
+    /// 根因就是这里取了外层档案（配内层条目 id ⇒ 写到了错的条目空间）。
+    #[test]
+    fn edit_target_is_the_session_source_not_the_outer_archive() {
+        use crate::viewmodel::testutil::write_zip;
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().join("outer.zip");
+        write_zip(&outer, &[("a.txt", b"a")]);
+        let inner_temp = dir.path().join("inner.zip");
+        write_zip(&inner_temp, &[("b.txt", b"b")]);
+
+        let mut d = AppData::new(std::sync::Arc::new(crate::viewmodel::testutil::engine()));
+        // 顶层档案 = 外层；会话浏览的是内层（嵌套会话的真实形态）
+        d.archive = Some(outer.clone());
+        d.main.open(&d.engine, &inner_temp).unwrap();
+
+        assert_eq!(
+            d.edit_target().as_deref(),
+            Some(inner_temp.as_path()),
+            "编辑落点必须是会话源档案（内层物化档）"
+        );
+        assert_ne!(d.edit_target().as_deref(), Some(outer.as_path()));
     }
 }

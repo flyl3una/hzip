@@ -362,6 +362,18 @@ zh-CN = "新建文件夹"
 en = "Cannot rename inside a nested archive layer"
 zh-CN = "进入内层压缩包后不能重命名/新建（请在顶层压缩包里操作）"
 
+[browse.pending.save]
+en = "Save ({n})"
+zh-CN = "保存 ({n})"
+
+[browse.nested.readonly]
+en = "Edit not submitted: this view is inside a container (nested archive), so changes are not written back. Extract the inner file first, then edit that copy"
+zh-CN = "编辑提交失败：当前是压缩包内部的视图（嵌套档案），改动不会写回外层。请先把内层档案解出来，再编辑解出来的那份"
+
+[browse.nested.readonly_badge]
+en = "（read-only · inside container）"
+zh-CN = "（只读 · 容器内部）"
+
 # —— 磁盘镜像分区行（T-IMG；用户口径 2026-10-16）——
 # 注意：树路径/条目名保持 ASCII 稳定（`Partition 1`/`Volume`），这里只是**展示层**
 # 的语言化——否则切换语言会让路径、选择、剪贴板、日志跟着漂移。

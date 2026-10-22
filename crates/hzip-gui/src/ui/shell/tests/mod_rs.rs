@@ -79,18 +79,31 @@ fn run_open_flow_work_runs_off_ui_thread(cx: &mut gpui_kit::TestAppContext) {
                 labels: crate::ui::views::open_progress::OpLabels::default(),
                 epoch: 0,
                 toast_on_error: false,
+                // 门放行重跑走 true（跳过防闪窗延迟）；本测试只证「重活不在 UI 线程」
+                immediate_show: true,
             },
             move |detail: &crate::ui::views::open_progress::OpenDetail| {
+                // 启动相位：主线程在起线程前就写好了（窗口可能在工人线程首个
+                // 相位之前渲染——`immediate_show` 时必然如此），别让窗口空白
+                let initial = detail.phase();
                 detail.set_phase("测试阶段".into());
-                let _ = tx.send((std::thread::current().id(), detail.phase()));
+                let _ = tx.send((std::thread::current().id(), initial, detail.phase()));
                 Ok(())
             },
         );
     });
-    let (worker, phase) = rx
+    let (worker, initial, phase) = rx
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("work 必须在后台线程跑起来（10 s 内）");
     assert_ne!(worker, ui_thread, "work 不得跑在 UI 线程上（会冻界面）");
+    // 启动相位：主线程在起线程前写好「准备中…」——窗口可能先于工人线程首个相位
+    // 渲染（密码门放行后的重跑窗口立即弹出时必然如此），不能给空白窗
+    let want = crate::tr("openprogress.phase_prepare");
+    assert_eq!(
+        initial.as_deref(),
+        Some(want.as_str()),
+        "打开流程启动即写启动相位"
+    );
     assert_eq!(
         phase.as_deref(),
         Some("测试阶段"),
@@ -476,6 +489,8 @@ fn snapshot_round_trips_through_shell_state() {
         toolbar_style_ix: 1,
         view_style_ix: 2,
         columns: columns.clone(),
+        // 手动写回：挂起条数（过滤框左侧「保存 (n)」按钮的显隐依据）
+        pending_count: 3,
         ..Default::default()
     };
     // 两趟：本快照**同时**携带「档案名从空变为 demo.zip」与 `tab=Jobs`——
@@ -498,6 +513,10 @@ fn snapshot_round_trips_through_shell_state() {
     assert_eq!(out.nav_rows.len(), 1);
     assert_eq!(out.dir_rows.len(), 1);
     assert_eq!(out.job_pill.as_ref().map(|p| p.job_id), Some(7));
+    assert_eq!(
+        out.pending_count, 3,
+        "挂起条数往返（漏投 ⇒ 保存按钮永不出现）"
+    );
     assert_eq!(
         out.selection,
         vec![0, 2],

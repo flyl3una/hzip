@@ -132,6 +132,10 @@ zh-CN = "外层容器不可重建，因此只读"
 en = "Changes came from a temporary buffer; use save-as to rewrite the outer container"
 zh-CN = "改动来自临时缓冲，请用「另存为」重写外层容器"
 
+[vol.reject.nested-depth]
+en = "The image sits in more than one nested container; writing back that deep is not supported yet"
+zh-CN = "镜像嵌在多层容器里，暂不支持写回这么深的外层"
+
 [vol.reject.multi-volume]
 en = "Multi-volume images are not supported"
 zh-CN = "暂不支持分卷镜像"

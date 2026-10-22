@@ -60,6 +60,8 @@ pub struct PromptWindow {
     apply_all: bool,
     /// 密码输入态（密码专用；每窗建一次，输入不丢）
     password_input: Option<Entity<InputState>>,
+    /// 密码框回车订阅（用户实测 2026-10-19：密码框回车没反应，只能点按钮）
+    password_enter_sub: Option<gpui_kit::Subscription>,
     /// 应答回调（shell 侧注入：`answer_prompt` + 信号回投）
     on_event: Rc<dyn Fn(DialogEvent)>,
 }
@@ -165,6 +167,7 @@ pub fn sync(cx: &mut App, prompt: Option<&UiDialogPrompt>, on_event: Rc<dyn Fn(D
         },
         apply_all: false,
         password_input: None,
+        password_enter_sub: None,
         on_event: on_event.clone(),
     });
     entity.update(cx, |w, _| w.set_prompt(prompt));
@@ -261,8 +264,33 @@ impl PromptWindow {
             return t.clone();
         }
         let state = crate::ui::dialogs::input_state("", true, window, cx);
+        // 回车 = 确认（用户实测 2026-10-19：密码框回车没反应，只能点按钮）
+        self.password_enter_sub = Some(cx.subscribe(
+            &state,
+            |this: &mut Self,
+             _input: Entity<InputState>,
+             ev: &gpui_kit::component::input::InputEvent,
+             cx: &mut Context<Self>| {
+                if matches!(
+                    ev,
+                    gpui_kit::component::input::InputEvent::PressEnter { .. }
+                ) {
+                    this.submit_password_from_event(cx);
+                }
+            },
+        ));
         self.password_input = Some(state.clone());
         state
+    }
+
+    /// 订阅回调拿不到 `Window`：只发提交事件（成功时窗口由 `sync` 关闭；
+    /// 失败时输入框内容保留供用户覆盖，与「确定」按钮的清空时机差异可忽略）。
+    fn submit_password_from_event(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = self.password_input.clone() else {
+            return;
+        };
+        let text = input.read(cx).value().to_string();
+        (self.on_event)(DialogEvent::PasswordSubmit(text));
     }
 }
 

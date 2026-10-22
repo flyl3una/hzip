@@ -88,8 +88,15 @@ impl AppShell {
                     .lock()
                     .ok()
                     .and_then(|mut d| d.on_external_save(&temp, stat));
-                if let Some(ev) = apply_save_action(&data, action) {
+                let (notify, job) = apply_save_action(&data, action);
+                if let Some(ev) = notify {
                     self.push_notice(ev);
+                }
+                if let Some(job_id) = job
+                    && let Some(tx) = self.signal_tx.as_ref()
+                {
+                    // 进度窗：写回可能很慢（组合链全量重压 / 大镜像就地写）
+                    let _ = tx.try_send(VmSignal::OpenProgress(job_id));
                 }
             }
         }
@@ -164,16 +171,22 @@ impl AppShell {
 pub(crate) fn apply_save_action(
     data: &std::sync::Arc<std::sync::Mutex<AppData>>,
     action: Option<SaveAction>,
-) -> Option<NotifyEvent> {
-    match action? {
-        SaveAction::Refused { reason, name } => Some(NotifyEvent {
-            title: crate::tr(TITLE_KEY),
-            body: crate::tr_with(reason, &[("name", &name)]),
-            force_system: false,
-        }),
+) -> (Option<NotifyEvent>, Option<u64>) {
+    let Some(action) = action else {
+        return (None, None);
+    };
+    match action {
+        SaveAction::Refused { reason, name } => (
+            Some(NotifyEvent {
+                title: crate::tr(TITLE_KEY),
+                body: crate::tr_with(reason, &[("name", &name)]),
+                force_system: false,
+            }),
+            None,
+        ),
         SaveAction::Submit { spec, stat, temp } => {
             let Ok(mut d) = data.lock() else {
-                return None;
+                return (None, None);
             };
             let name = d
                 .external_edit(&temp)
@@ -181,24 +194,70 @@ pub(crate) fn apply_save_action(
                 .unwrap_or_default();
             // 提交前释放浏览会话句柄：Windows 上目标仍被打开时原子替换必失败
             // （既有编辑入口同一处置，实现收在 `release_session_for_edit`）。
+            // 手动写回模式（设置-通用「改动后立即写回」= 关）：**挂起**，不提交。
+            // 用户改多个文件后点浏览页「保存」一次性合并写回（组合链只压一次）。
+            if d.manual_write_back() {
+                let name = name.clone();
+                match d.stage_pending_from_spec(&spec) {
+                    Ok(n) => {
+                        d.note_external_edit_staged(&temp, stat);
+                        tracing::info!(pending = n, temp = %temp.display(), "手动写回：改动已挂起");
+                        return (
+                            Some(NotifyEvent {
+                                title: crate::tr(TITLE_KEY),
+                                body: crate::tr_with(
+                                    "edit.writeback.staged",
+                                    &[("name", &name), ("n", &n.to_string())],
+                                ),
+                                force_system: false,
+                            }),
+                            None,
+                        );
+                    }
+                    Err(msg) => {
+                        tracing::warn!(temp = %temp.display(), "手动写回：挂起失败 {msg}");
+                        return (
+                            Some(NotifyEvent {
+                                title: crate::tr(TITLE_KEY),
+                                body: crate::tr_with(
+                                    "edit.writeback.failed",
+                                    &[("name", &name), ("error", &msg)],
+                                ),
+                                force_system: false,
+                            }),
+                            None,
+                        );
+                    }
+                }
+            }
             let archive = spec.source.clone();
-            d.release_session_for_edit(&archive);
+            if spec.write_back.is_some() {
+                // 嵌套会话：外层句柄在 open_stack 里 ⇒ 必须收回顶层（保住内层物化档）
+                d.detach_nested_for_write_back(&archive);
+            } else {
+                d.release_session_for_edit(&archive);
+            }
             match super::dispatch::submit_spec_locked(&mut d, *spec) {
                 Ok(job_id) => {
                     d.note_external_edit_submitted(&temp, stat, job_id);
                     tracing::info!(job = job_id, temp = %temp.display(), "外部编辑写回：已提交任务");
-                    None
+                    // 开进度窗跟踪：写回可能是**全量重压**（组合链）或大镜像就地写，
+                    // 只留任务中心一行的话用户面对的是「保存了但没反应」。
+                    (None, Some(job_id))
                 }
                 Err(msg) => {
                     tracing::warn!(temp = %temp.display(), "外部编辑写回：提交失败 {msg}");
-                    Some(NotifyEvent {
-                        title: crate::tr(TITLE_KEY),
-                        body: crate::tr_with(
-                            "edit.writeback.failed",
-                            &[("name", &name), ("error", &msg)],
-                        ),
-                        force_system: false,
-                    })
+                    (
+                        Some(NotifyEvent {
+                            title: crate::tr(TITLE_KEY),
+                            body: crate::tr_with(
+                                "edit.writeback.failed",
+                                &[("name", &name), ("error", &msg)],
+                            ),
+                            force_system: false,
+                        }),
+                        None,
+                    )
                 }
             }
         }
@@ -218,9 +277,18 @@ pub(crate) fn write_back_target(
     archive: &std::path::Path,
     entry: hzip_format::EntryId,
 ) -> WriteBack {
-    if !d.open_stack.is_empty() {
+    // 嵌套会话（T-IMG0）：按**写回链**判定——链可写就真写回（外层逐层冒泡），
+    // 建不起来（rar/cpio 外层、深度 > 1、延迟层）才拒绝并给出具体理由。
+    if let Some(sc) = &d.session_chain {
+        if sc.editable {
+            return WriteBack::Enabled {
+                archive: archive.to_path_buf(),
+                entry,
+                chain: Some(sc.chain.clone()),
+            };
+        }
         return WriteBack::Disabled {
-            reason: "edit.writeback.nested",
+            reason: sc.reason.unwrap_or("edit.writeback.nested"),
         };
     }
     if !d.caps_edit() {
@@ -231,6 +299,7 @@ pub(crate) fn write_back_target(
     WriteBack::Enabled {
         archive: archive.to_path_buf(),
         entry,
+        chain: None,
     }
 }
 
@@ -247,8 +316,13 @@ pub(crate) fn reconcile_and_apply(
         .map(|mut d| d.reconcile_external_edits())
         .unwrap_or_default();
     for action in actions {
-        if let Some(ev) = apply_save_action(data, Some(action)) {
+        let (notify, job) = apply_save_action(data, Some(action));
+        if let Some(ev) = notify {
             let _ = tx.try_send(VmSignal::Notify(ev));
+        }
+        if let Some(job_id) = job {
+            // 进度窗（与压缩/解压同款形态）：写回可能是组合链全量重压/大镜像就地写
+            let _ = tx.try_send(VmSignal::OpenProgress(job_id));
         }
     }
 }

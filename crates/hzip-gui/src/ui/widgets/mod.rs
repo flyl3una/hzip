@@ -11,6 +11,7 @@
 pub mod breadcrumb;
 pub mod checkbox;
 pub mod file_icon;
+pub mod hover_tip;
 pub mod icon;
 pub mod key_capture;
 pub mod number;

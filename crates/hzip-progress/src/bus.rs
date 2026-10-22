@@ -30,9 +30,12 @@ struct Slot {
 }
 
 /// 多订阅者广播总线（02 §4.1）。
-#[derive(Debug, Default)]
+///
+/// `slots` 是 `Arc`：总线可**廉价克隆共享**（T-IMG0 写回：把任务的进度总线交给
+/// 外层容器的写器，让「重建外层」这段也有字节进度，而不是只在最后才更新）。
+#[derive(Debug, Default, Clone)]
 pub struct ProgressBus {
-    slots: RwLock<Vec<Slot>>,
+    slots: std::sync::Arc<RwLock<Vec<Slot>>>,
 }
 
 /// 单订阅者接收端（每订阅者独立有界队列）。
@@ -88,7 +91,7 @@ impl ProgressBus {
     /// 空总线。
     pub fn new() -> Self {
         Self {
-            slots: RwLock::new(Vec::new()),
+            slots: std::sync::Arc::new(RwLock::new(Vec::new())),
         }
     }
 

@@ -51,6 +51,18 @@ pub struct JobSpec {
     pub compress: Option<crate::services::compress::CompressSpec>,
     /// 批量编辑变更集（T-MENU6；`JobKind::EditBatch` 消费；None → 空 ChangeSet）
     pub changes: Option<hzip_format::ChangeSet>,
+    /// 嵌套/组合写回链（T-IMG0；`JobKind::EditBatch` 消费；None → 普通就地/重写编辑）。
+    ///
+    /// 非 None 时：`source` = 被编辑的**内层物化映像**，本链描述「怎么逐层冒泡到
+    /// `outer`」（见 [`crate::services::writeback::WriteBackChain`]）。
+    pub write_back: Option<crate::services::writeback::WriteBackChain>,
+    /// **外层容器**密码（T-IMG0 写回链专用；`None` → 外层若加密则任务报密码错）。
+    ///
+    /// 为什么要单独一个字段：写回链里「内层映像」与「外层容器」是**两个档案**，
+    /// 各自的密码不同（`password` 管 `source`，本字段管 `write_back.outer`）。
+    /// 用户实测 2026-10-19：加密的 `qcow2.zip` 里删文件 ⇒ 外层重建读其它加密条目
+    /// 时无密码 ⇒ 「密码错误或者加密数据损坏」。
+    pub outer_password: Option<zeroize::Zeroizing<String>>,
     /// 档案密码（用户口径 2026-09-28；`EditSave`/`EditBatch` 消费）。
     ///
     /// 加密档案重写（读旧条目 / 写新条目）所需；`None` → 由服务层经
@@ -69,6 +81,17 @@ impl std::fmt::Debug for JobSpec {
             .field("extract", &self.extract)
             .field("compress", &self.compress)
             .field("changes", &self.changes)
+            .field(
+                "outer_password",
+                &format_args!(
+                    "{}",
+                    if self.outer_password.is_some() {
+                        "Some(<redacted>)"
+                    } else {
+                        "None"
+                    }
+                ),
+            )
             .field(
                 "password",
                 // `format_args!`：`&str` 的 Debug 会带引号，这里要裸字面
@@ -96,6 +119,8 @@ impl JobSpec {
             extract: None,
             compress: None,
             changes: None,
+            write_back: None,
+            outer_password: None,
             password: None,
         }
     }
@@ -110,6 +135,8 @@ impl JobSpec {
             extract: Some(opts),
             compress: None,
             changes: None,
+            write_back: None,
+            outer_password: None,
             password: None,
         }
     }

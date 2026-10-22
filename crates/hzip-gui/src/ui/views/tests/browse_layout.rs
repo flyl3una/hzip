@@ -482,3 +482,29 @@ mod view_mode_tests {
         });
     }
 }
+
+/// 悬浮提示文本：档案根 → 档案名；其余 → **档案内完整路径**；meta 缺失 → 行标签。
+/// （用户口径 2026-10-19：长名被截断时悬浮要看全，且要能区分同名条目）
+#[test]
+fn tree_tooltip_text_prefers_full_path() {
+    use crate::ui::views::browse_layout::tree_tooltip_text;
+    assert_eq!(
+        tree_tooltip_text(Some(""), "root.zip", "root.zip"),
+        "root.zip"
+    );
+    assert_eq!(
+        tree_tooltip_text(Some("Partition 1/etc/fstab"), "fstab", "disk.img"),
+        "Partition 1/etc/fstab",
+        "树行给完整档案内路径（含分区前缀）"
+    );
+    assert_eq!(
+        tree_tooltip_text(None, "fallback", "disk.img"),
+        "fallback",
+        "元数据滞后一帧时退回行标签，不显示错名字"
+    );
+    assert_eq!(
+        tree_tooltip_text(Some(""), "x", ""),
+        "x",
+        "档案名未知退回标签"
+    );
+}

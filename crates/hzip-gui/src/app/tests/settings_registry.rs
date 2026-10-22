@@ -286,8 +286,8 @@ fn zh_cn_text_matches_pre_i18n_wording() {
 fn registry_index_is_unique_and_complete() {
     assert_eq!(
         REGISTRY.len(),
-        34,
-        "设置项总数（34 = 33 + 快捷键整节）+ 动作按钮不进表"
+        35,
+        "设置项总数（35 = 34 + 快捷键整节 + 写回节奏）+ 动作按钮不进表"
     );
     for (ix, d) in REGISTRY.iter().enumerate() {
         assert_eq!(index(d.id), ix, "index({:?}) 与表顺序不一致", d.id);

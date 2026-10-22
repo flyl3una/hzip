@@ -160,7 +160,7 @@ impl ZipWriterImpl {
             level: opts.level,
             enc: opts.encryption,
             cancel: CancellationToken::new(),
-            progress: ProgressBus::new(),
+            progress: opts.progress.clone().unwrap_or_default(),
             pending: None,
         }))
     }

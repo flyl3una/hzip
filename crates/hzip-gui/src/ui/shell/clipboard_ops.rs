@@ -120,6 +120,7 @@ impl AppShell {
                 // epoch = 0：复制不是换会话（不改会话，不受顶替影响）
                 epoch: 0,
                 toast_on_error: true,
+                immediate_show: false,
             },
             work,
         );
@@ -182,6 +183,11 @@ impl AppShell {
         if sources.is_empty() {
             return;
         }
+        // 会话不可写 = 粘贴这种**改写档案**的操作当场拒绝（见
+        // `refuse_readonly_write`）。菜单已置灰，这里是绕过入口的兜底。
+        if self.refuse_readonly_write() {
+            return;
+        }
         let Some(data) = self.data.clone() else {
             return;
         };
@@ -196,7 +202,8 @@ impl AppShell {
             let Ok(d) = data.lock() else {
                 return;
             };
-            let Some(archive) = d.archive.clone() else {
+            // 落点 = 本会话源档案（嵌套会话 = 内层物化档：变更 id 属内层条目空间）
+            let Some(archive) = d.edit_target() else {
                 return;
             };
             // 粘贴落点 = 当前浏览目录（与「添加」同口径；用户口径 2026-09-29）
@@ -212,8 +219,15 @@ impl AppShell {
             return;
         }
         let count = changes.changes.len();
-        if let Ok(mut d) = data.lock() {
-            d.stage_edit_batch(archive, changes);
+        let staged = if let Ok(mut d) = data.lock() {
+            d.stage_edit_batch(archive, changes)
+        } else {
+            return;
+        };
+        if let Err(msg) = staged {
+            // 暂存被拒（组装与提交之间下钻进了内层容器）：不弹确认框，直说原因
+            self.notify(crate::tr("edit.commit.failed"), msg);
+            return;
         }
         let on = self.confirm_handler();
         window.open_dialog(cx, move |_, _window, cx| {

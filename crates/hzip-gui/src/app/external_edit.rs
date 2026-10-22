@@ -69,12 +69,15 @@ use super::state::AppData;
 /// 期间在 hzip 里翻别的档案）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteBack {
-    /// 可写回：保存后提交 `EditBatch + Replace{entry}`。
+    /// 可写回：保存后提交 `EditBatch + Replace{entry}`（嵌套会话另带写回链）。
     Enabled {
-        /// 该条目所属的档案（顶层会话的源档案路径）
+        /// 该条目所属的档案（顶层会话 = 实体档案；嵌套会话 = 内层物化档）
         archive: PathBuf,
         /// **读侧投影**的条目 id（界面点的那一条）
         entry: EntryId,
+        /// 嵌套/组合会话的写回链（`None` = 顶层单档：就地/重写即可；
+        /// `Some` ⇒ core 逐层冒泡回最外层实体档案，T-IMG0）
+        chain: Option<hzip_core::services::WriteBackChain>,
     },
     /// 不可写回：保存时按 `reason`（i18n 键）告知用户，**绝不**提交任务。
     Disabled {
@@ -228,7 +231,11 @@ impl AppData {
                 self.external_edits[idx].told = true;
                 Some(SaveAction::Refused { reason, name })
             }
-            WriteBack::Enabled { archive, entry } => {
+            WriteBack::Enabled {
+                archive,
+                entry,
+                chain,
+            } => {
                 if applied == Some(stat) {
                     return None; // 内容没变（含我们自己物化那一次的迟到事件）
                 }
@@ -236,13 +243,22 @@ impl AppData {
                     self.external_edits[idx].pending = true; // 在飞：任务结束后补
                     return None;
                 }
-                let spec = edit_spec(&archive, entry, &temp_path, self);
+                let spec = edit_spec(&archive, entry, &temp_path, self, chain);
                 Some(SaveAction::Submit {
                     spec: Box::new(spec),
                     stat,
                     temp: temp_path,
                 })
             }
+        }
+    }
+
+    /// 手动写回模式：本次保存**已挂起**（没有在飞任务）——`applied` 照常回填，
+    /// 同一内容不再重复入批；`inflight` 保持空（下一次保存立刻再挂）。
+    pub fn note_external_edit_staged(&mut self, temp: &Path, stat: (u64, u64)) {
+        if let Some(e) = self.external_edits.iter_mut().find(|e| e.temp == temp) {
+            e.applied = Some(stat);
+            e.inflight = None;
         }
     }
 
@@ -306,7 +322,13 @@ impl AppData {
 ///
 /// 密码取会话缓存（该档案此前经密码门验证过的密码）——与既有编辑入口同口径：
 /// 未缓存则由服务层经密码门询问一次。
-fn edit_spec(archive: &Path, entry: EntryId, temp: &Path, d: &AppData) -> hzip_core::jobs::JobSpec {
+fn edit_spec(
+    archive: &Path,
+    entry: EntryId,
+    temp: &Path,
+    d: &AppData,
+    chain: Option<hzip_core::services::WriteBackChain>,
+) -> hzip_core::jobs::JobSpec {
     let mut spec =
         hzip_core::jobs::JobSpec::new(hzip_core::jobs::JobKind::EditBatch, archive.to_path_buf());
     spec.changes = Some(ChangeSet {
@@ -316,6 +338,12 @@ fn edit_spec(archive: &Path, entry: EntryId, temp: &Path, d: &AppData) -> hzip_c
         }],
     });
     spec.password = d.cached_password(archive);
+    // 嵌套会话：由 core 把这次 Replace 逐层冒泡回最外层实体档案（T-IMG0）；
+    // 外层容器若是加密档案，密码同样要带上（否则重建时读不了其它加密条目）。
+    spec.outer_password = chain
+        .as_ref()
+        .and_then(|chain| d.cached_password(&chain.outer));
+    spec.write_back = chain;
     spec
 }
 

@@ -249,6 +249,12 @@ pub struct Ui {
     pub columns: Columns,
     /// 压缩文件中显示 `..` 跳上级（R-GUI2 #4）
     pub show_dotdot: bool,
+    /// **改动后立即写回**（默认 true = 自动保存）。
+    ///
+    /// `false` = 手动保存：改动先挂起（浏览页工具栏出现「保存 (n)」），由用户
+    /// 一次性合并写回——组合链/大档案每次写回都要全量重压，改多个文件时这一步
+    /// 很贵（2026-10-19 用户口径）。
+    pub write_back_immediate: bool,
     /// 自动更新开关（检查逻辑挂账 T43；R-GUI2 #3）
     pub auto_update: bool,
     /// 文件关联勾选扩展名集合（R-GUI2 #3 存偏好 / R2-05 写注册表）
@@ -324,6 +330,7 @@ impl Default for Ui {
             default_level: "normal".into(),
             columns: Columns::default(),
             show_dotdot: true,
+            write_back_immediate: true,
             auto_update: false,
             assoc_formats: Vec::new(),
             ctx_extract: Vec::new(),

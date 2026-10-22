@@ -20,8 +20,10 @@ pub mod convert;
 pub mod edit;
 pub mod extract;
 pub mod preview;
+pub mod reencode;
 pub mod space;
 pub mod walk;
+pub mod writeback;
 
 mod dispatch;
 
@@ -29,3 +31,4 @@ mod dispatch;
 mod tests;
 
 pub(crate) use dispatch::execute;
+pub use writeback::{WriteBackChain, WriteBackLayer};

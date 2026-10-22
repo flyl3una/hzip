@@ -44,6 +44,7 @@ fn save_decision_dedupes_and_builds_the_replace_spec() {
     let target = WriteBack::Enabled {
         archive: archive.clone(),
         entry: 3,
+        chain: None,
     };
     d.arm_external_edit("a.txt", &temp, target);
 
@@ -95,7 +96,15 @@ fn save_during_inflight_is_replayed_after_the_job_ends() {
     std::fs::write(&temp, b"v1").unwrap();
 
     let mut d = app();
-    d.arm_external_edit("a.txt", &temp, WriteBack::Enabled { archive, entry: 0 });
+    d.arm_external_edit(
+        "a.txt",
+        &temp,
+        WriteBack::Enabled {
+            archive,
+            entry: 0,
+            chain: None,
+        },
+    );
     // 第一次保存：出动作 + 回填在飞（用一个人为 id——任务行不存在 ⇒ reconcile 视为已结束）
     //
     // **每次写入都刻意换长度**：去重口径是 `(mtime_ns, len)`，而 Windows 的文件时间戳
@@ -177,26 +186,30 @@ fn write_back_target_follows_session_shape() {
     d.main.open(&d.engine, &archive).expect("open zip");
     d.archive = Some(archive.clone());
     match crate::ui::shell::external_edits::write_back_target(&d, &archive, 1) {
-        WriteBack::Enabled { archive: a, entry } => {
+        WriteBack::Enabled {
+            archive: a,
+            entry,
+            chain,
+        } => {
+            assert!(chain.is_none(), "顶层单档会话不带写回链");
             assert_eq!(a, archive);
             assert_eq!(entry, 1);
         }
         other => panic!("顶层 zip 会话应可写回：{other:?}"),
     }
 
-    // ③ 进了内层容器（嵌套会话）⇒ 拒绝（临时文件属于内层条目空间，写外层会写错东西）
-    d.open_stack.push(crate::app::state::OpenFrame {
-        crumbs: Vec::new(),
-        container_path: "inner.zip".into(),
-        vm: crate::viewmodel::MainViewModel::new(),
-        temp: None,
-    });
-    assert!(matches!(
-        crate::ui::shell::external_edits::write_back_target(&d, &archive, 1),
-        WriteBack::Disabled {
-            reason: "edit.writeback.nested"
+    // ③ 嵌套会话（T-IMG0）：**不再一律拒绝**——链能重建外层就写回（带链），
+    //    链建不起来才按理由拒绝（本例夹具：链状态装配不出可写链）。
+    d.begin_nested_session(None, "inner.zip");
+    match crate::ui::shell::external_edits::write_back_target(&d, &archive, 1) {
+        WriteBack::Disabled { reason } => assert!(
+            reason.starts_with("edit.writeback.") || reason.starts_with("vol."),
+            "拒绝必须带可展示的理由键，实得 {reason}"
+        ),
+        WriteBack::Enabled { chain, .. } => {
+            assert!(chain.is_some(), "嵌套会话写回必须带链（外层逐层冒泡）");
         }
-    ));
+    }
 }
 
 /// 端到端：保存 → 提交 `EditBatch` → **档案里条目内容真的变了**（其余条目原样）。
@@ -223,6 +236,7 @@ fn save_back_rewrites_the_archive() {
         WriteBack::Enabled {
             archive: archive.clone(),
             entry: 0,
+            chain: None,
         },
     );
 
@@ -235,8 +249,13 @@ fn save_back_rewrites_the_archive() {
         .unwrap()
         .on_external_save(&temp, stat)
         .expect("应出提交动作");
-    let notice = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
+    let (notice, submitted_job) =
+        crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
     assert!(notice.is_none(), "提交成功不该产生提示：{notice:?}");
+    assert!(
+        submitted_job.is_some(),
+        "提交成功要回带 job id（开进度窗用）"
+    );
     let job = {
         let d = data.lock().unwrap();
         d.external_edit_job(&temp).expect("已在飞")
@@ -318,7 +337,9 @@ fn save_back_inside_a_volume_writes_in_place() {
 
     // 判定：顶层卷会话 ⇒ 可写回，且目标就是这一条
     match crate::ui::shell::external_edits::write_back_target(&d, &image, entry) {
-        WriteBack::Enabled { archive, entry: e } => {
+        WriteBack::Enabled {
+            archive, entry: e, ..
+        } => {
             assert_eq!(archive, image);
             assert_eq!(e, entry);
         }
@@ -333,6 +354,8 @@ fn save_back_inside_a_volume_writes_in_place() {
         WriteBack::Enabled {
             archive: image.clone(),
             entry,
+
+            chain: None,
         },
     );
 
@@ -344,7 +367,7 @@ fn save_back_inside_a_volume_writes_in_place() {
         .unwrap()
         .on_external_save(&temp, stat)
         .expect("应出提交动作");
-    let notice = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
+    let (notice, _job) = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
     assert!(notice.is_none(), "提交应成功：{notice:?}");
     let job = {
         let d = data.lock().unwrap();
@@ -452,7 +475,9 @@ fn save_back_inside_a_two_partition_image_hits_the_right_partition() {
         .expect("应能列出分区 2 的条目行");
     let (entry, name) = row;
     match crate::ui::shell::external_edits::write_back_target(&d, &image, entry) {
-        WriteBack::Enabled { archive, entry: e } => {
+        WriteBack::Enabled {
+            archive, entry: e, ..
+        } => {
             assert_eq!(archive, image);
             assert_eq!(e, entry, "写回目标 = 界面点的那一条");
         }
@@ -469,6 +494,8 @@ fn save_back_inside_a_two_partition_image_hits_the_right_partition() {
         WriteBack::Enabled {
             archive: image.clone(),
             entry,
+
+            chain: None,
         },
     );
 
@@ -480,7 +507,7 @@ fn save_back_inside_a_two_partition_image_hits_the_right_partition() {
         .unwrap()
         .on_external_save(&temp, stat)
         .expect("应出提交动作");
-    let notice = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
+    let (notice, _job) = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
     assert!(notice.is_none(), "提交应成功：{notice:?}");
     let job = {
         let d = data.lock().unwrap();
@@ -528,4 +555,157 @@ fn save_back_inside_a_two_partition_image_hits_the_right_partition() {
     )
     .unwrap();
     assert_eq!(keep, b"one", "分区 1 的条目必须原样（不得被误写）");
+}
+
+/// 手动写回模式（设置-通用「改动后立即写回」= 关）：外部编辑器保存**不提交任务**，
+/// 而是挂起——`applied` 照常回填（同一内容不重复入批），批次里留一条 Replace，
+/// 预览取到的也是这份新内容。
+#[test]
+fn manual_mode_stages_the_save_instead_of_submitting() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path().join("doc.zip");
+    write_zip(&archive, &[("a.txt", b"old")]);
+    let temp = dir.path().join("a.txt");
+    std::fs::write(&temp, b"old").unwrap();
+
+    let mut d = app();
+    d.settings.write_back_immediate = false;
+    d.main.open(&d.engine, &archive).expect("open zip");
+    d.archive = Some(archive.clone());
+    let entry = d
+        .main
+        .entries()
+        .iter()
+        .find(|e| e.name == "a.txt")
+        .map(|e| e.id)
+        .expect("a.txt 行");
+    d.arm_external_edit(
+        "a.txt",
+        &temp,
+        WriteBack::Enabled {
+            archive: archive.clone(),
+            entry,
+            chain: None,
+        },
+    );
+
+    let data = std::sync::Arc::new(std::sync::Mutex::new(d));
+    std::fs::write(&temp, b"NEW").unwrap();
+    let stat = stat_of(&temp).unwrap();
+    let action = data
+        .lock()
+        .unwrap()
+        .on_external_save(&temp, stat)
+        .expect("应出提交动作");
+    let (notice, job) = crate::ui::shell::external_edits::apply_save_action(&data, Some(action));
+    assert!(notice.is_some(), "挂起要有一条提示");
+    assert!(job.is_none(), "手动模式不得提交任务");
+    let d = data.lock().unwrap();
+    assert_eq!(d.pending_count(), 1, "改动应挂起一条");
+    assert!(
+        d.pending_preview(entry).is_some(),
+        "挂起后预览必须取到新内容"
+    );
+    assert!(d.external_edit_job(&temp).is_none(), "不得有在飞任务");
+}
+
+/// 手动保存**全链路**：挂起 → flush（与点「保存」同一条路）→ 一个写回任务 →
+/// **外层档案里的内层档案真的变了**。
+///
+/// 用户实测 2026-10-19：点保存提示成功，但重开 `qcow2.zip` 里的影像还是旧的。
+/// 这里用「zip 里套 zip」等价复现同一条链路（EntryReplace + 写回链 + 原子替换）。
+#[test]
+fn manual_flush_writes_the_nested_container_back_into_the_outer_archive() {
+    use crate::ui::contracts::{SignalRx, SignalTx};
+    let dir = tempfile::tempdir().unwrap();
+    // 内层 zip（被包住的「容器」）：a.txt = old
+    let inner_src = dir.path().join("inner_src.zip");
+    write_zip(&inner_src, &[("a.txt", b"old")]);
+    let inner_bytes = std::fs::read(&inner_src).unwrap();
+    // 外层 zip：inner.zip + keep.txt
+    let outer = dir.path().join("outer.zip");
+    write_zip(
+        &outer,
+        &[("inner.zip", &inner_bytes), ("keep.txt", b"keep")],
+    );
+
+    let mut d = app();
+    d.settings.write_back_immediate = false; // 手动写回
+    let (tx, _rx): (SignalTx, SignalRx) = smol::channel::bounded(8);
+    d.signal_tx = Some(std::sync::Arc::new(tx));
+    d.main.open(&d.engine, &outer).expect("open outer");
+    d.archive = Some(outer.clone());
+    let inner_entry = d
+        .main
+        .entries()
+        .iter()
+        .find(|e| e.name == "inner.zip")
+        .map(|e| e.id)
+        .expect("inner.zip 行");
+
+    // 会话源 = 内层 zip 的物化档；变更 = 内层 a.txt（内层投影第 0 条）→ NEW
+    let inner_temp = dir.path().join("materialized-inner.zip");
+    std::fs::write(&inner_temp, &inner_bytes).unwrap();
+    let new_content = dir.path().join("a-new.txt");
+    std::fs::write(&new_content, b"NEW").unwrap();
+    let mut spec =
+        hzip_core::jobs::JobSpec::new(hzip_core::jobs::JobKind::EditBatch, inner_temp.clone());
+    spec.changes = Some(hzip_format::ChangeSet {
+        changes: vec![hzip_format::Change::Replace {
+            entry: 0,
+            src: new_content.clone(),
+        }],
+    });
+    spec.write_back = Some(hzip_core::services::WriteBackChain {
+        outer: outer.clone(),
+        layers: vec![hzip_core::services::WriteBackLayer::EntryReplace {
+            entry: inner_entry,
+            entry_name: "inner.zip".into(),
+        }],
+    });
+
+    assert_eq!(d.stage_pending_from_spec(&spec).unwrap(), 1);
+    let job = d.flush_pending().unwrap().expect("应提交写回任务");
+    let data = std::sync::Arc::new(std::sync::Mutex::new(d));
+    wait_job(&data, job);
+
+    // 外层档案里的 inner.zip 必须含 a.txt = NEW
+    let d = data.lock().unwrap();
+    let b = d
+        .engine
+        .browse(
+            hzip_format::Source::File(outer.clone()),
+            &Default::default(),
+        )
+        .unwrap();
+    let infos = b.entries();
+    let ix = infos
+        .iter()
+        .position(|e| e.name.as_str() == "inner.zip")
+        .expect("外层仍有 inner.zip");
+    let mut buf = Vec::new();
+    b.read_entry(infos[ix].id, hzip_format::PasswordRef::none())
+        .unwrap()
+        .read_to_end(&mut buf)
+        .unwrap();
+    let inner_after = dir.path().join("inner-after.zip");
+    std::fs::write(&inner_after, &buf).unwrap();
+    let ib = d
+        .engine
+        .browse(hzip_format::Source::File(inner_after), &Default::default())
+        .unwrap();
+    let iinfos = ib.entries();
+    let ax = iinfos
+        .iter()
+        .position(|e| e.name.as_str() == "a.txt")
+        .expect("内层仍有 a.txt");
+    let mut abuf = Vec::new();
+    ib.read_entry(iinfos[ax].id, hzip_format::PasswordRef::none())
+        .unwrap()
+        .read_to_end(&mut abuf)
+        .unwrap();
+    assert_eq!(
+        abuf, b"NEW",
+        "外层档案里的内层档案必须被写回（用户实测：重开后被还原）"
+    );
 }

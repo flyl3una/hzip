@@ -586,6 +586,12 @@ zh-CN = "打开失败"
 
 # —— 过程明细（用户口径 2026-09-24：打开/进入容器要能看见后台在干什么）——
 # 阶段文案由工作者线程写（`OpenDetail::set_phase`），随状态行下一行显示。
+# `phase_prepare` 例外：**流程启动时**主线程先写一句，避免窗口渲染在工人线程
+# 首个相位之前（密码门放行后的重跑窗口立即弹出时必然如此）而显示空白。
+
+[openprogress.phase_prepare]
+en = "Preparing…"
+zh-CN = "准备中…"
 
 [openprogress.phase_expand_layer]
 en = "Expanding the inner container…"

@@ -316,7 +316,7 @@ impl SevenZipWriter {
         Ok(Box::new(SevenZipWriter {
             shared,
             cancel: CancellationToken::new(),
-            progress: ProgressBus::new(),
+            progress: opts.progress.clone().unwrap_or_default(),
             pending: None,
             to_stdout,
             area,

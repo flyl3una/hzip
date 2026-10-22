@@ -103,6 +103,10 @@ pub struct OpenOptions {
 /// 创建选项（写入方向）。数据类。
 #[derive(Debug, Clone)]
 pub struct CreateOptions {
+    /// 进度总线（可选）：给了就让写器把自己的字节事件发到这条总线——编辑器的
+    /// `rewrite` 默认自建一条无人订阅的总线，调用方（如 T-IMG0 的嵌套/组合写回）
+    /// 需要「重建外层」阶段的字节进度时通过本字段注入。
+    pub progress: Option<hzip_progress::ProgressBus>,
     /// 统一压缩级别（02 §6.3）
     pub level: hzip_codec::level::Level,
     /// 压缩方式（`None` = 沿用格式默认编码器）。
@@ -139,6 +143,7 @@ pub struct CreateOptions {
 impl Default for CreateOptions {
     fn default() -> Self {
         Self {
+            progress: None,
             level: hzip_codec::level::Level::Normal,
             method: None,
             threads: 0,

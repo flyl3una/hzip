@@ -159,6 +159,24 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
     // 940 MB `.cpio.gz` 时 ENOSPC 失败。启动扫一遍（毫秒级 `read_dir`）是唯一的
     // 自愈时机；阈值 24 h，不会误删在用的缓冲（见 `services::space`）。
     hzip_core::services::space::sweep_stale_spools(hzip_core::services::space::SPOOL_STALE_AFTER);
+    // 会话目录自愈（同上）：正常退出只清当次会话（`app::exit::graceful_shutdown`），
+    // 崩溃/强杀留下的没人收——2026-10-19 用户实测 `%TEMP%\hzip` 堆到 2115 个目录 /
+    // 47 GB。后台线程扫一遍：读 pid 文件，进程已死（或创建时间不符）整目录删，
+    // 活会话（另一个 hzip 实例）保留。**不阻塞启动**（02 §9.2 F 步调度语义）。
+    std::thread::Builder::new()
+        .name("hzip-temp-sweep".into())
+        .spawn(|| {
+            let root = hzip_platform::dirs::temp_root();
+            let removed = hzip_platform::temp_area::cleanup_orphans(&root);
+            if removed > 0 {
+                tracing::info!(
+                    removed,
+                    root = %root.display(),
+                    "启动自愈：清理死会话临时目录"
+                );
+            }
+        })
+        .ok();
 
     // —— Engine + TempArea + 配置 ——
     let engine = Arc::new(Engine::new(EngineConfig::default()).map_err(|e| e.to_string())?);
@@ -364,8 +382,13 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                 let remaining = registry.unregister_window_id(window_id);
                 let live = cx.windows().len();
                 if crate::ui::shell::windows::all_windows_closed(remaining, live) {
-                    if let Ok(d) = data.lock() {
-                        exit::graceful_shutdown(&d.engine, &d.jobs, None);
+                    if let Ok(mut d) = data.lock() {
+                        // 退出前尽力写回挂起改动（手动写回模式；提交后由宽限等待落账）
+                        if let Err(e) = d.flush_pending() {
+                            tracing::warn!("退出前写回挂起改动失败：{e}");
+                        }
+                        // 会话临时目录必须交出去清（此前传 None ⇒ 会话目录永不清理）
+                        exit::graceful_shutdown(&d.engine, &d.jobs, d.temp_area.as_deref());
                     }
                 } else {
                     tracing::debug!(remaining, live, "仍有窗口存活，退进程延后");
@@ -1096,8 +1119,12 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                         }
                         if quit_requested {
                             tracing::info!("QuitRequested：全部任务完成，优雅退出 hzip");
-                            if let Ok(d) = data.lock() {
-                                exit::graceful_shutdown(&d.engine, &d.jobs, None);
+                            if let Ok(mut d) = data.lock() {
+                                // 同上：挂起改动尽力写回 + 会话临时目录交给退出钩子清
+                                if let Err(e) = d.flush_pending() {
+                                    tracing::warn!("退出前写回挂起改动失败：{e}");
+                                }
+                                exit::graceful_shutdown(&d.engine, &d.jobs, d.temp_area.as_deref());
                             }
                             cx.update(|cx| cx.quit());
                             return; // 泵循环退出（进程随事件循环收尾）

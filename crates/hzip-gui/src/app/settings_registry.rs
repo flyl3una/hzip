@@ -967,6 +967,22 @@ pub const REGISTRY: &[SettingDef] = &[
         effect: Effect::DataOnly,
         commit: Commit::Immediate,
     },
+    SettingDef {
+        id: SettingId::WriteBackImmediate,
+        page: SettingsTab::General,
+        label: "setting.write_back_immediate.label",
+        help: Some("setting.write_back_immediate.help"),
+        // 显式两选一（用户口径 2026-10-19「自动、手动保存」）：开关的「开/关」
+        // 容易被读反，这里直接给选项文案。
+        widget: WidgetKind::Select {
+            label_keys: &WRITE_BACK_MODE_LABEL_KEYS,
+        },
+        default: default_index_zero,
+        load: load_write_back_immediate,
+        store: store_write_back_immediate,
+        effect: Effect::DataOnly,
+        commit: Commit::Immediate,
+    },
 ];
 
 /// 设置项 → REGISTRY 下标（穷举匹配：新增变体漏登记 = 编译错误）。
@@ -1006,6 +1022,7 @@ pub const fn index(id: SettingId) -> usize {
         SettingId::FileTypeIcons => 31,
         SettingId::Lang => 32,
         SettingId::Keymap => 33,
+        SettingId::WriteBackImmediate => 34,
     }
 }
 
@@ -1560,6 +1577,25 @@ fn store_lang(cfg: &mut Config, app: &mut AppData, v: &SettingValue) {
     let value = labels::value_of(&labels::LANG, ix).to_string();
     cfg.ui.lang = value;
     app.settings.lang_ix = ix;
+}
+
+/// 写回节奏白名单（设置页 Select 选项文案键；下标 0 = 自动、1 = 手动）。
+const WRITE_BACK_MODE_LABEL_KEYS: [&str; 2] =
+    ["opt.write_back_mode.auto", "opt.write_back_mode.manual"];
+
+fn load_write_back_immediate(app: &AppData, _cfg: &Config) -> SettingValue {
+    SettingValue::Index(if app.settings.write_back_immediate {
+        0
+    } else {
+        1
+    })
+}
+
+fn store_write_back_immediate(cfg: &mut Config, app: &mut AppData, v: &SettingValue) {
+    let Some(ix) = v.as_index() else { return };
+    let immediate = ix == 0; // 0 = 自动保存；1（或越界）= 手动
+    cfg.ui.write_back_immediate = immediate;
+    app.settings.write_back_immediate = immediate;
 }
 
 fn store_show_dotdot(cfg: &mut Config, app: &mut AppData, v: &SettingValue) {

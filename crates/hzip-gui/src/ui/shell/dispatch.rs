@@ -720,6 +720,7 @@ impl AppShell {
                         labels,
                         epoch,
                         toast_on_error: true,
+                        immediate_show: false,
                     },
                     work,
                 );
@@ -982,16 +983,23 @@ pub(crate) fn submit_edit_batch_locked(
     d: &mut crate::app::state::AppData,
     archive: &std::path::Path,
     changes: hzip_format::ChangeSet,
+    write_back: Option<hzip_core::services::WriteBackChain>,
 ) -> Result<u64, String> {
     if changes.changes.is_empty() {
         return Err("没有需要提交的变更".into());
     }
     if !d.caps_edit() {
-        return Err("该格式不支持编辑".into());
+        return Err(d.readonly_write_message());
     }
     let mut spec =
         hzip_core::jobs::JobSpec::new(hzip_core::jobs::JobKind::EditBatch, archive.to_path_buf());
+    // 写回链的外层容器**可能是加密档案**（用户实测 2026-10-19：加密 `qcow2.zip`
+    // 里删文件 ⇒ 外层重建读其它条目无密码 ⇒ 密码错）：密码取外层档案的会话缓存。
+    spec.outer_password = write_back
+        .as_ref()
+        .and_then(|chain| d.cached_password(&chain.outer));
     spec.changes = Some(changes);
+    spec.write_back = write_back;
     // 会话密码缓存（用户口径 2026-09-28「解密中」态）：该档案此前经密码门验证过的
     // 密码直接带上——已解锁的档案重命名/新建**不再重复问密码**。未缓存 → 服务层
     // 经 `JobRequest::Password` 弹窗询问（首次编辑加密档的正常路径）。
