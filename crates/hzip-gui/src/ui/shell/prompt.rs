@@ -164,6 +164,27 @@ fn spawn_gate_verify(data: AppDataHandle, key: std::path::PathBuf, pw: String, a
                     {
                         r.gate_disarm();
                     }
+                    // **必须让用户看见**（用户实测 2026-10-22：密码输对了、门却静默
+                    // 关闭——磁盘不足/IO 失败只进日志，界面看起来「什么都没发生」）。
+                    let body = format!("{e}\n{}", key.display());
+                    if let Ok(d) = data.lock() {
+                        if let Ok(mut jobs) = d.jobs.lock() {
+                            jobs.record_op(
+                                "open",
+                                &key.display().to_string(),
+                                &key.display().to_string(),
+                                &Err(body.clone()),
+                            );
+                        }
+                        if let Some(tx) = d.signal_tx.as_ref() {
+                            let _ = tx.try_send(crate::viewmodel::VmSignal::ShowMessage(
+                                crate::viewmodel::message::MessageDialog::error(
+                                    crate::tr("dlg.password.verify_failed.title"),
+                                    body,
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
             if let Ok(d) = data.lock()

@@ -474,11 +474,12 @@ impl Browser {
 ///
 /// 分级（与 `extract::resolve_early_password` 同一判据）：
 /// 1. **头加密档案**：`open_reader` 带密码解头，成败即结论（精确）；
-/// 2. **数据加密（头明文）**：取**首个加密条目**读一次（只读头部
-///    [`PREFLIGHT_HEAD_BYTES`]）——密码正确性在首个加密块即判定；错密码立即
-///    `Password` 错。旧实现只验 `size_packed ≤ PREFLIGHT_MAX_BYTES` 的小条目，
-///    几十 GB 的唯一加密条目因此**根本不验**（用户实测 2026-10-19：输入后仍要
-///    等物化到一半才报错，门重问第二次、看着像「打开两次」）；
+/// 2. **数据加密（头明文）**：取**首个加密条目**调格式层的
+///    [`hzip_format::ArchiveReader::verify_password`]——zip 是「建流即判定」
+///    （ZipCrypto 校验头 / AES password-verification），O(1)；其它格式退回
+///    「读 64 KiB 头部」。旧实现在此逐字节读头部，加密大条目会触发整条 spool
+///    （用户实测 2026-10-22：密码门后卡 60 s，临时盘不足时以 ENOSPC 收场，
+///    界面看起来「输完密码什么都没发生」）；
 /// 3. 没有加密条目 → `Ok(())`（无密码可验）。
 ///
 /// 返回 `Err(HzipError::Password { .. })` = 密码错误（唯一失败语义）；
@@ -494,22 +495,17 @@ pub fn preflight_password(
     };
     let reader = registry.open_reader(Source::File(path.to_path_buf()), &opts)?;
     let entries = reader.entries()?;
-    // 任一加密条目：**读头部即可验密码**（ZipCrypto/AES 在首块就校验）。
+    // 任一加密条目：**建流即判定**（格式层实现 `verify_password`：ZipCrypto 校验头 /
+    // AES password-verification；其它格式退回「读 64 KiB 头部」）。
     //
-    // 旧实现只验 `size_packed <= 64 MiB` 的小条目 ⇒ 几十 GB 的镜像（唯一加密条目）
-    // 根本没法验 ⇒ **任何输入都被当成正确并缓存**，直到物化到一半才报密码错 ⇒
-    // 密码门重问第二次、界面看着像「打开两次」（用户实测 2026-10-19 的直接成因）。
+    // 为什么不在这里直接 `read_entry`（2026-10-22 实测）：加密的 4.34 GB zip 条目会
+    // 走整条 spool 两遍法 ⇒ 「验密码」实际是先解 4.34 GB 到临时盘（60 s），临时盘
+    // 不足时以 ENOSPC 收场；用户在密码门后看到的只有「什么都没发生」。
     if let Some(info) = entries.iter().find(|e| e.encrypted) {
-        let mut stream = reader.read_entry(info.id, PasswordRef::new(pw))?;
-        let mut head = [0u8; PREFLIGHT_HEAD_BYTES];
-        let _ = std::io::Read::read(&mut stream, &mut head)?;
+        reader.verify_password(info.id, PasswordRef::new(pw))?;
     }
     Ok(())
 }
-
-/// 密码预检只读头部这么多字节：密码正确性在首个加密块就已判定，读完整条
-/// 几十 GB 的镜像没有意义（旧实现在此直接跳过 ⇒ 大档案的密码根本不验）。
-const PREFLIGHT_HEAD_BYTES: usize = 64 * 1024;
 
 /// 有界预检上限（与 `extract::PREFLIGHT_MAX_BYTES` 同值；超限跳过预检=降级）。
 pub const PREFLIGHT_MAX_BYTES: u64 = 64 * 1024 * 1024;

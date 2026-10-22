@@ -671,3 +671,15 @@ zh-CN = "密码错误"
 [dlg.password.failed_body]
 en = "Wrong password too many times ({max}); this operation was cancelled."
 zh-CN = "密码连续错误 {max} 次，已取消本次操作。"
+
+[dlg.password.verify_failed.title]
+en = "Cannot continue after the password"
+zh-CN = "密码已接受，但后续步骤失败"
+
+[open.container.need_space]
+en = "Not enough temporary disk space to open this container: {need} needed, {avail} available ({dir}). Free up space, or point the TEMP env var at a roomier drive and restart hzip (the copy lands there)"
+zh-CN = "临时盘空间不足，无法展开这层容器：需要 {need}，可用 {avail}（{dir}）。\n清理空间后重试；或把环境变量 TEMP 指向空间更大的盘再启动 hzip（副本会落在那边）"
+
+[open.container.truncated]
+en = "The nested copy came out incomplete ({got} of {want}); it was discarded. The source archive may be damaged, or the temp disk ran out of space"
+zh-CN = "嵌套副本未完整写出（{got} / {want}），已丢弃。源档案可能损坏，或临时盘空间不足"

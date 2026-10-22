@@ -191,3 +191,49 @@ fn orphan_sweep_reclaims_dead_sessions_at_scale() {
     let left = std::fs::read_dir(&root).unwrap().flatten().count();
     assert_eq!(left, 0, "扫完不留目录，实留 {left}");
 }
+
+/// `adopt_file`：把已在盘上的一份副本**移动**进会话目录（不复制、不额外占空间），
+/// 源文件随之消失；目标内容逐字节一致。
+#[test]
+fn adopt_file_moves_existing_copy() {
+    let (dir, ta) = temp_session();
+    let src = dir.path().join("spool.bin");
+    std::fs::write(&src, b"decoded-entry-bytes").unwrap();
+    let e = EntryNameSafe::sanitize("disk.qcow2").unwrap();
+
+    let landed = ta
+        .adopt_file(Path::new("/data/a.zip"), &e, &src)
+        .expect("adopt 应成功");
+
+    assert!(landed.starts_with(ta.session_dir()), "必须落在会话目录");
+    assert_eq!(landed.file_name().unwrap(), "disk.qcow2");
+    assert_eq!(std::fs::read(&landed).unwrap(), b"decoded-entry-bytes");
+    assert!(!src.exists(), "移动后源副本必须消失（否则临时盘双份占用）");
+    ta.cleanup().unwrap();
+}
+
+/// 物化写盘失败时必须删掉半截文件：否则几 GB 残留在临时盘里，下一次尝试继续撞
+/// 空间不足（用户实测 2026-10-22）。
+#[test]
+fn materialize_removes_partial_file_on_write_error() {
+    let (_d, ta) = temp_session();
+    let e = EntryNameSafe::sanitize("broken.bin").unwrap();
+    struct Fail;
+    impl std::io::Read for Fail {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full (simulated)"))
+        }
+    }
+    let err = ta
+        .materialize(Path::new("x.zip"), &e, Fail)
+        .expect_err("写盘失败必须报错");
+    assert!(err.to_string().contains("disk full"));
+    let target = ta
+        .session_dir()
+        .join(super::archive_hash(Path::new("x.zip")));
+    let leftovers: Vec<_> = std::fs::read_dir(&target)
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "不得留下半截文件：{leftovers:?}");
+    ta.cleanup().unwrap();
+}

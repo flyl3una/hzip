@@ -2770,3 +2770,316 @@ fn leaving_settings_tab_releases_key_recording(cx: &mut gpui_kit::TestAppContext
         "切走设置页后 ctrl-q 必须恢复派发（订阅没 drop = 键盘被永久吞掉）"
     );
 }
+
+/// 加密 zip 里的容器条目：进容器必须**复用**格式层已 spool 的那份副本（移动，
+/// 不再复制），且内层会话内容完整。
+///
+/// 用户实测 2026-10-22：7.3 GB 的 `qcow2.zip`，spool（整条解码）+ 物化副本 =
+/// 两份 ⇒ 临时盘被挤爆、密码后无任何提示。这里守三件事：
+/// ① 会话确实换成内层档案（`nested` + 标题）；② 会话源文件**只有一份**且长度等于
+/// 条目解码后大小（证明走的是移动而不是「spool 后再复制」，也没被截断）；
+/// ③ 内层条目可读（内容对）。
+#[gpui_kit::test]
+fn container_open_moves_spooled_copy_for_encrypted_entries(cx: &mut gpui_kit::TestAppContext) {
+    use hzip_format::FormatHandler as _;
+    use std::io::Write;
+
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(64);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let data_for_window = data.clone();
+    let shell_slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = shell_slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let app_shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_for_window.clone()),
+            Some(tx.clone()),
+        );
+        let app_shell = cx.new(|_| app_shell);
+        *slot2.borrow_mut() = Some(app_shell.clone());
+        let view: gpui_kit::AnyView = app_shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = shell_slot.borrow().clone().expect("shell 实体");
+
+    // 夹具：加密 zip（ZipCrypto）里放一份真实 tar
+    const PW: &str = "nested-pw";
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let inner = dir.path().join("child.tar");
+    crate::viewmodel::testutil::write_ustar(&inner, &[("deep/inner.txt", b"payload")]);
+    let inner_bytes = std::fs::read(&inner).expect("读内层");
+    let outer = dir.path().join("outer.zip");
+    let pwz = zeroize::Zeroizing::new(PW.to_string());
+    {
+        let mut w = hzip_fmt_zip::ZipFormatHandler::new()
+            .create_writer(
+                hzip_format::Sink::File(outer.clone()),
+                &hzip_format::CreateOptions {
+                    encryption: Some(hzip_format::EncryptionRequest::ZipCrypto),
+                    ..Default::default()
+                },
+            )
+            .expect("create");
+        let meta = hzip_format::EntryMeta {
+            name: "child.tar".into(),
+            size_raw: Some(inner_bytes.len() as u64),
+            ..Default::default()
+        };
+        let mut s = w
+            .next_entry(&meta, hzip_format::PasswordRef::new(&pwz))
+            .expect("entry");
+        s.write_all(&inner_bytes).expect("write");
+        s.finish().expect("finish");
+        w.finish().expect("finish archive");
+    }
+
+    allow_parking_for_real_io(vtcx);
+    let task = vtcx.update(|_, cx| {
+        crate::ui::shell::open_archive_task(cx, data.clone(), outer.clone(), false)
+    });
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    let wait = |vtcx: &mut gpui_kit::VisualTestContext, what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}：20s 内未完成");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            vtcx.run_until_parked();
+        }
+    };
+    {
+        let probe = data.clone();
+        wait(vtcx, "打开外层档案", &|| {
+            probe.lock().map(|d| d.main.is_open()).unwrap_or(false)
+        });
+    }
+    // 密码门：直接置缓存（headless 不走对话框）
+    data.lock()
+        .unwrap()
+        .remember_password(&outer, zeroize::Zeroizing::new(PW.to_string()));
+
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.open_container("child.tar", cx));
+    });
+    {
+        let probe = data.clone();
+        wait(vtcx, "进入加密容器", &|| {
+            probe
+                .lock()
+                .map(|d| d.export_snapshot().nested)
+                .unwrap_or(false)
+        });
+    }
+
+    let (snap_name, src, entries) = {
+        let d = data.lock().unwrap();
+        let src = d.main.source_path().map(|p| p.to_path_buf());
+        let names: Vec<String> = d
+            .main
+            .entries()
+            .iter()
+            .map(|e| e.name.as_str().to_string())
+            .collect();
+        (d.export_snapshot().archive_name, src, names)
+    };
+    assert_eq!(snap_name, "child.tar", "内层会话标题 = 容器条目名");
+    let src = src.expect("嵌套会话必须有源文件（物化副本）");
+    assert!(
+        src.starts_with(
+            data.lock()
+                .unwrap()
+                .temp_area
+                .as_ref()
+                .unwrap()
+                .session_dir()
+        ),
+        "会话源应落在会话临时目录：{}",
+        src.display()
+    );
+    let len = std::fs::metadata(&src).expect("源文件应存在").len();
+    assert_eq!(
+        len,
+        inner_bytes.len() as u64,
+        "物化副本必须完整（截断 = 内层内容不对）"
+    );
+    // 会话目录里**只该有这一份**副本（spool 已被移动，不残留第二份同内容文件）
+    let session_dir = data
+        .lock()
+        .unwrap()
+        .temp_area
+        .as_ref()
+        .unwrap()
+        .session_dir()
+        .to_path_buf();
+    let mut files = 0usize;
+    let mut stack = vec![session_dir];
+    while let Some(p) = stack.pop() {
+        for e in std::fs::read_dir(&p).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().map(|n| n != "session.json") == Some(true) {
+                files += 1;
+            }
+        }
+    }
+    assert_eq!(
+        files, 1,
+        "会话目录里应只有一份副本（旧的 spool+物化会留两份）"
+    );
+    assert!(
+        entries.iter().any(|n| n == "deep/inner.txt"),
+        "内层条目应可读：{entries:?}"
+    );
+}
+
+/// 套娃包装必须显式提示：进到「只有一行、且与本条目同名」的层时投递通知。
+///
+/// 用户实测 2026-10-22：`X.qcow2.zip` 里的 `X.qcow2` 本身还是 zip（里面又有一个
+/// 同名 `X.qcow2`）——进入后看到「还是那个 qcow2」，用户读作「没打开」。这里守
+/// 提示的触发条件（单条目 + 同名 + 非目录），不再让用户靠猜。
+#[gpui_kit::test]
+fn entering_a_single_entry_wrapper_notifies_the_user(cx: &mut gpui_kit::TestAppContext) {
+    use std::io::Write;
+
+    let (tx, rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(256);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    {
+        let mut d = data.lock().expect("lock");
+        d.signal_tx = Some(tx.clone());
+        d.temp_area = Some(Arc::new(
+            hzip_platform::temp_area::TempArea::new_session(None).expect("temp area"),
+        ));
+    }
+    let data_for_window = data.clone();
+    let shell_slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::Entity<AppShell>>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot2 = shell_slot.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let app_shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_for_window.clone()),
+            Some(tx.clone()),
+        );
+        let app_shell = cx.new(|_| app_shell);
+        *slot2.borrow_mut() = Some(app_shell.clone());
+        let view: gpui_kit::AnyView = app_shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+    let shell = shell_slot.borrow().clone().expect("shell 实体");
+
+    // 夹具：outer.zip → inner.zip（真身是 tar，但名字仍叫 inner.zip）
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let tar = dir.path().join("payload.tar");
+    crate::viewmodel::testutil::write_ustar(&tar, &[("real/file.txt", b"payload")]);
+    let tar_bytes = std::fs::read(&tar).expect("读 tar");
+    let make_zip = |path: &std::path::Path, name: &str, bytes: &[u8]| {
+        let mut w = hzip_format::FormatHandler::create_writer(
+            &hzip_fmt_zip::ZipFormatHandler::new(),
+            hzip_format::Sink::File(path.to_path_buf()),
+            &hzip_format::CreateOptions::default(),
+        )
+        .expect("create");
+        let meta = hzip_format::EntryMeta {
+            name: name.into(),
+            size_raw: Some(bytes.len() as u64),
+            ..Default::default()
+        };
+        let mut s = w
+            .next_entry(&meta, hzip_format::PasswordRef::none())
+            .expect("entry");
+        s.write_all(bytes).expect("write");
+        s.finish().expect("finish entry");
+        w.finish().expect("finish archive");
+    };
+    let inner = dir.path().join("inner.zip");
+    make_zip(&inner, "inner.zip", &tar_bytes);
+    let inner_bytes = std::fs::read(&inner).expect("读 inner");
+    let outer = dir.path().join("outer.zip");
+    make_zip(&outer, "inner.zip", &inner_bytes);
+
+    allow_parking_for_real_io(vtcx);
+    let task = vtcx.update(|_, cx| {
+        crate::ui::shell::open_archive_task(cx, data.clone(), outer.clone(), false)
+    });
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            let _ = task.await;
+        })
+        .detach();
+    });
+    let wait = |vtcx: &mut gpui_kit::VisualTestContext, what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}：20s 内未完成");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            vtcx.run_until_parked();
+        }
+    };
+    {
+        let probe = data.clone();
+        wait(vtcx, "打开外层档案", &|| {
+            probe.lock().map(|d| d.main.is_open()).unwrap_or(false)
+        });
+    }
+    vtcx.update(|_, cx| {
+        shell.update(cx, |s, cx| s.open_container("inner.zip", cx));
+    });
+    {
+        let probe = data.clone();
+        wait(vtcx, "进入包装层", &|| {
+            probe
+                .lock()
+                .map(|d| d.export_snapshot().nested)
+                .unwrap_or(false)
+        });
+    }
+
+    let want_title = crate::tr("notify.wrapper_level.title");
+    let mut found = false;
+    while let Ok(sig) = rx.try_recv() {
+        if let crate::viewmodel::VmSignal::Notify(ev) = sig
+            && ev.title == want_title
+        {
+            assert!(
+                ev.body.contains("inner.zip"),
+                "提示应点名那个同名条目：{}",
+                ev.body
+            );
+            found = true;
+        }
+    }
+    assert!(found, "进入单条目同名包装层必须提示用户再双击一次");
+}

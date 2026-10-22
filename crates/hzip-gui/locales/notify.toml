@@ -180,3 +180,11 @@ zh-CN = "{name}：无法监听临时文件，保存不会写回"
 [edit.writeback.failed]
 en = "{name}: write-back failed: {error}"
 zh-CN = "{name}：写回失败：{error}"
+
+[notify.wrapper_level.title]
+en = "One more layer inside"
+zh-CN = "这一层还是包装"
+
+[notify.wrapper_level]
+en = "{name} inside is itself an archive wrapper. Double-click it once more to reach the real image/contents"
+zh-CN = "里面的 {name} 本身还是个压缩包装。再双击它一次，才是真正的镜像/内容"

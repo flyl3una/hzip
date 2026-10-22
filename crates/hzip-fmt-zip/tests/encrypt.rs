@@ -180,3 +180,155 @@ fn zip_caps_declare_write_encryption() {
     );
     assert!(e.is_ok(), "AES-256 在 zip 写白名单内");
 }
+
+/// TC-ENC-ZIP：密码验证必须是 **O(1)**，不得解码整条条目。
+///
+/// 用户实测 2026-10-22：`qcow2.zip` 里 4.34 GB 的加密条目，密码门「验证通过」
+/// 实际走了 `read_entry` 的 spool 两遍法——先把整条解码进临时盘（60 s），临时盘
+/// 只剩 4.2 GB 时以 ENOSPC 收场，界面看起来「输完密码什么都没发生」。
+///
+/// 判据：256 MiB 全零条目（deflate 后极小）用 `verify_password` 验证，
+/// 正确密码 → `Ok` 且**远快于整条解码**；错密码 → `Password`；验证后数据仍可读。
+#[test]
+fn verify_password_does_not_decode_the_whole_entry() {
+    let dir = tmp_dir("enc-verify");
+    let p = dir.join("big.zip");
+    let pwz = zeroize::Zeroizing::new("verify-pw".to_string());
+    const SIZE: u64 = 256 * 1024 * 1024;
+
+    let mut w = handler()
+        .create_writer(
+            Sink::File(p.clone()),
+            &CreateOptions {
+                encryption: Some(EncryptionRequest::ZipCrypto),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let meta = EntryMeta {
+        name: "disk.qcow2".into(),
+        size_raw: Some(SIZE),
+        is_dir: false,
+        ..Default::default()
+    };
+    let mut s = w.next_entry(&meta, PasswordRef::new(&pwz)).unwrap();
+    let chunk = vec![0u8; 1 << 20];
+    for _ in 0..(SIZE / (1 << 20)) {
+        s.write_all(&chunk).unwrap();
+    }
+    s.finish().unwrap();
+    w.finish().unwrap();
+
+    let r = handler()
+        .open_reader(Source::File(p), &OpenOptions::default())
+        .unwrap();
+    let e = r
+        .entries()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name.as_str() == "disk.qcow2")
+        .expect("条目应存在");
+    assert!(e.encrypted, "fixture 必须加密");
+
+    let started = std::time::Instant::now();
+    r.verify_password(e.id, PasswordRef::new(&pwz))
+        .expect("正确密码应通过");
+    let took = started.elapsed();
+    // 旧实现（read_entry + spool）要把 256 MiB 解码写盘（数百 ms 起）；
+    // 新实现只校验加密头。留足余量给慢 CI。
+    assert!(
+        took < std::time::Duration::from_millis(300),
+        "verify_password 解码了整条条目（{took:?}）：密码门会被大条目卡死"
+    );
+
+    let wrong = zeroize::Zeroizing::new("bad-pw".to_string());
+    match r.verify_password(e.id, PasswordRef::new(&wrong)) {
+        Err(HzipError::Password { .. }) => {}
+        other => panic!("错密码必须报 Password，实际 {other:?}"),
+    }
+
+    // 验证不消费/破坏条目：正确密码仍能完整读出数据
+    let mut s = r
+        .read_entry(e.id, PasswordRef::new(&pwz))
+        .expect("验证后仍应可读");
+    let mut buf = vec![0u8; 1 << 20];
+    assert_eq!(
+        std::io::Read::read(&mut s, &mut buf).unwrap(),
+        1 << 20,
+        "验证后条目数据必须完整可读"
+    );
+}
+
+/// `take_entry_file`：加密条目交出**已在盘上**的整条解码副本，供调用方移动
+/// （避免 spool + 物化双份占用）；明文条目/错误密码/无密码一律 `None`。
+#[test]
+fn take_entry_file_hands_over_the_spooled_copy_only_for_encrypted_entries() {
+    let dir = tmp_dir("take-entry");
+    let p = dir.join("take.zip");
+    let pwz = zeroize::Zeroizing::new("take-pw".to_string());
+    let mut w = handler()
+        .create_writer(
+            Sink::File(p.clone()),
+            &CreateOptions {
+                encryption: Some(EncryptionRequest::ZipCrypto),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for (name, data) in [("a.bin", &b"hello-take"[..]), ("b.bin", &b"plain"[..])] {
+        let meta = EntryMeta {
+            name: name.into(),
+            size_raw: Some(data.len() as u64),
+            ..Default::default()
+        };
+        let mut s = w.next_entry(&meta, PasswordRef::new(&pwz)).unwrap();
+        s.write_all(data).unwrap();
+        s.finish().unwrap();
+    }
+    w.finish().unwrap();
+
+    let r = handler()
+        .open_reader(Source::File(p), &OpenOptions::default())
+        .unwrap();
+    let entries = r.entries().unwrap();
+    let a = entries
+        .iter()
+        .find(|e| e.name.as_str() == "a.bin")
+        .expect("a.bin");
+
+    // 无密码 / 错密码：不交出任何文件
+    let mut seen = 0u64;
+    let mut noop = |n: u64| seen = n;
+    assert!(
+        r.take_entry_file(a.id, PasswordRef::none(), &mut noop)
+            .is_none()
+    );
+    let wrong = zeroize::Zeroizing::new("nope".to_string());
+    assert!(
+        r.take_entry_file(a.id, PasswordRef::new(&wrong), &mut noop)
+            .is_none()
+    );
+
+    let sp = r
+        .take_entry_file(a.id, PasswordRef::new(&pwz), &mut |n: u64| seen = n)
+        .expect("正确密码应交出 spool 副本");
+    assert_eq!(
+        seen,
+        b"hello-take".len() as u64,
+        "必须报出解码进度（否则进度窗不动）"
+    );
+    assert!(sp.exists(), "交出的必须是真实文件：{}", sp.display());
+    assert_eq!(
+        std::fs::read(&sp).unwrap(),
+        b"hello-take",
+        "副本内容必须与条目一致"
+    );
+    // 交出后 reader 仍可重建副本（后续读取不依赖已交出的文件）
+    let mut s = r
+        .read_entry(a.id, PasswordRef::new(&pwz))
+        .expect("交出后仍应可读");
+    let mut buf = Vec::new();
+    std::io::Read::read_to_end(&mut s, &mut buf).unwrap();
+    assert_eq!(buf, b"hello-take");
+    std::fs::remove_file(&sp).ok();
+}

@@ -408,6 +408,17 @@ impl ZipReader {
 
     /// 有密码的解密 spool（`read_entry` 加密条目路径；zipcrypto 预验失败 → 3101）。
     fn ensure_spool_with_pw(&self, id: usize, pw: &str) -> Result<(PathBuf, u64), HzipError> {
+        self.ensure_spool_with_pw_cb(id, pw, &mut |_| {})
+    }
+
+    /// 同上，但把解码进度（累计字节）回调出去：`take_entry_file` 用它推动进度窗
+    /// ——几十秒的静默解码，用户看到的是「卡死」（2026-10-22 实测）。
+    fn ensure_spool_with_pw_cb(
+        &self,
+        id: usize,
+        pw: &str,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<(PathBuf, u64), HzipError> {
         {
             let g = self.spooled.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(Some(s)) = g.get(id) {
@@ -424,7 +435,7 @@ impl ZipReader {
             let mut file = g
                 .by_index_decrypt(id, &pw_bytes)
                 .map_err(|e| crate::map_zip_err(e, &self.format))?;
-            decode_spool(&mut file, &sp_path, &meta, &self.format)
+            decode_spool_with(&mut file, &sp_path, &meta, &self.format, progress)
         });
         match result {
             Ok(len) => {
@@ -554,6 +565,17 @@ fn decode_spool(
     meta: &ReadMeta,
     format: &FormatId,
 ) -> Result<u64, HzipError> {
+    decode_spool_with(file, sp_path, meta, format, &mut |_| {})
+}
+
+/// [`decode_spool`] + 进度回调（累计写出的字节数）。
+fn decode_spool_with(
+    file: &mut zip::read::ZipFile<'_, ZipSrc>,
+    sp_path: &Path,
+    meta: &ReadMeta,
+    format: &FormatId,
+    progress: &mut dyn FnMut(u64),
+) -> Result<u64, HzipError> {
     let mut out = std::fs::File::create(sp_path).map_err(crate::map_io)?;
     let mut crc = Crc32::new();
     let mut buf = vec![0u8; COPY_CHUNK_BYTES as usize];
@@ -566,6 +588,7 @@ fn decode_spool(
         }
         crc.update(&buf[..n]);
         out.write_all(&buf[..n]).map_err(crate::map_io)?;
+        progress(crc.bytes());
     }
     out.flush().map_err(crate::map_io)?;
     // `crc32 == 0` → 视为未提供（02 §8.3；同 decode_copy：AE-2 存 0 由 HMAC 兜）
@@ -717,6 +740,61 @@ impl ArchiveReader for ZipReader {
         };
         let f = std::fs::File::open(&sp).map_err(crate::map_io)?;
         Ok(Box::new(io::BufReader::new(f).take(len)) as Box<dyn Read + Send>)
+    }
+
+    /// 加密条目的密码验证：**O(1)，不落 spool**。
+    ///
+    /// `by_index_decrypt` 建流时就校验密码（ZipCrypto 的 1 字节校验头按 CRC/时间
+    /// 比对，AES 的 2 字节 password-verification 值经 PBKDF2 比对），拿到
+    /// `ZipFile` 即已判定正确性，数据区一个字节都不用读。
+    ///
+    /// 为什么必须覆盖默认实现（用户实测 2026-10-22）：默认走 `read_entry`，
+    /// 而加密条目在 zip 里是**整条 spool 两遍法** ⇒ 密码门为了验一个 4.34 GB
+    /// 条目，先把整条解码进临时盘（60 s），临时盘不够时再以 ENOSPC 收场，
+    /// 用户看到的是「输完密码什么都没有发生」。
+    fn verify_password(&self, id: usize, pw: PasswordRef<'_>) -> Result<(), HzipError> {
+        let meta = self.meta(id)?;
+        if !meta.encrypted || meta.is_dir {
+            return Ok(());
+        }
+        let Some(p) = pw.as_str() else {
+            return Err(HzipError::Password {
+                target: hzip_error::PasswordTarget::Entry,
+            });
+        };
+        let mut g = self.archive.lock().unwrap_or_else(|p| p.into_inner());
+        // 只建流、不读：错密码在此处就报 `InvalidPassword` → `Password`
+        g.by_index_decrypt(id, p.as_bytes())
+            .map(|_| ())
+            .map_err(|e| crate::map_zip_err(e, &self.format))
+    }
+
+    /// 加密条目已有一份完整 spool 副本 ⇒ 交出去让调用方**移动**（见 trait 文档）。
+    ///
+    /// 只有「磁盘上的整条解码副本」才有资格：`direct_reader`（明文直读）不落盘，
+    /// 目录条目没有数据，长度不符（源损坏）时宁可让调用方走流式路径重解码以拿到
+    /// 确切错误。
+    fn take_entry_file(
+        &self,
+        id: usize,
+        pw: PasswordRef<'_>,
+        progress: &mut dyn FnMut(u64),
+    ) -> Option<std::path::PathBuf> {
+        let meta = self.meta(id).ok()?;
+        if meta.is_dir || !meta.encrypted {
+            return None;
+        }
+        let p = pw.as_str()?;
+        let (sp, len) = self.ensure_spool_with_pw_cb(id, p, progress).ok()?;
+        if meta.size_raw != 0 && len != meta.size_raw {
+            return None;
+        }
+        // 交出所有权：清掉缓存槽，本 reader 若再被读会重新解码
+        let mut g = self.spooled.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(slot) = g.get_mut(id) {
+            *slot = None;
+        }
+        Some(sp)
     }
 
     fn extract(

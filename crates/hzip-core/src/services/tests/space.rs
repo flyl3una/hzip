@@ -105,3 +105,34 @@ fn sweep_covers_both_spool_roots() {
         let _ = std::fs::remove_dir(&root);
     }
 }
+
+/// 进入容器的空间需求 = 条目解码后大小 × 1.05（峰值只有一份副本）。
+#[test]
+fn container_entry_need_is_one_copy_with_headroom() {
+    // 7.9 GB 条目：一份副本 + 5% 余量（不是 2×——加密条目的 spool 副本会被移动，
+    // 不再复制；见 `TempArea::adopt_file`）
+    assert_eq!(container_entry_need(1_000), 1050);
+    assert_eq!(container_entry_need(0), 0);
+    let big = container_entry_need(7_902_920_704);
+    assert!(
+        (8_200_000_000..8_400_000_000).contains(&big),
+        "7.9 GB 条目应要求约 8.3 GB，实际 {big}"
+    );
+}
+
+/// 短差额判定：够 → None；不够 → (need, avail)；查不到可用空间 → None（放行）。
+#[test]
+fn temp_space_shortfall_reports_numbers_only_when_short() {
+    let dir = tempfile::tempdir().unwrap();
+    let dirs = vec![dir.path().to_path_buf()];
+    assert_eq!(temp_space_shortfall(&dirs, 0), None, "0 字节需求不得拦");
+    let too_much = temp_space_shortfall(&dirs, u64::MAX / 2);
+    let (need, avail) = too_much.expect("半 u64 必然放不下");
+    assert_eq!(need, u64::MAX / 2);
+    assert!(avail < need, "必须报出实际可用量：{avail}");
+    // 不存在的目录 → 查不到可用空间 → 放行
+    assert_eq!(
+        temp_space_shortfall(&[dir.path().join("nope")], u64::MAX / 2),
+        None
+    );
+}

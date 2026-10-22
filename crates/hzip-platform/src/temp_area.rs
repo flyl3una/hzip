@@ -133,8 +133,43 @@ impl TempArea {
         std::fs::create_dir_all(&hash_dir)?;
         let target = hash_dir.join(entry.as_str());
         let mut out = std::fs::File::create(&target)?;
-        io::copy(&mut bytes, &mut out)?;
+        // 写盘失败（ENOSPC 等）时删掉半截文件：否则几 GB 的残留会一直占着临时盘，
+        // 下一次尝试还会撞上「空间不足」（用户实测 2026-10-22）。
+        if let Err(e) = io::copy(&mut bytes, &mut out) {
+            drop(out);
+            let _ = std::fs::remove_file(&target);
+            return Err(e);
+        }
         Ok(target)
+    }
+
+    /// 把调用方手里**已经在盘上**的一份完整条目副本收进会话目录。
+    ///
+    /// 与 [`Self::materialize`] 同一个落点规则，但走 `rename`：同卷移动近乎免费、
+    /// 不额外占空间（跨卷/目标占用时退回复制）。用于「格式层已经 spool 过一整份」
+    /// 的加密条目——再复制一遍会让临时盘峰值翻倍（4.34 GB 条目 = 8.7 GB，用户实测
+    /// 2026-10-22 直接被挤爆）。
+    ///
+    /// `src` 的所有权归本方法：移动成功即消失，复制回退会删掉它。
+    pub fn adopt_file(
+        &self,
+        archive: &Path,
+        entry: &EntryNameSafe,
+        src: &Path,
+    ) -> io::Result<PathBuf> {
+        self.assert_not_cleaning()?;
+        let hash_dir = self.session.join(archive_hash(archive));
+        std::fs::create_dir_all(&hash_dir)?;
+        let target = hash_dir.join(entry.as_str());
+        match std::fs::rename(src, &target) {
+            Ok(()) => Ok(target),
+            Err(_) => {
+                // 跨卷（%TEMP% 与会话目录不同盘）或目标被占用 → 复制后删源
+                std::fs::copy(src, &target)?;
+                let _ = std::fs::remove_file(src);
+                Ok(target)
+            }
+        }
     }
 
     /// 注册变更回调（内部转 [`crate::watch`] 模块，进入 Watching 态，02 §5.3.5）。

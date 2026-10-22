@@ -153,6 +153,31 @@ pub(crate) fn precheck_open_temp_space(
     }
 }
 
+/// 进入嵌套容器所需的临时盘空间（字节，已含 [`SPACE_HEADROOM`]）。
+///
+/// 峰值 = **一份**内层档案：明文条目由格式层直读、流式写出；加密条目在 zip 里
+/// 先 spool 解码成一份副本，随后被 [`hzip_platform::temp_area::TempArea::adopt_file`]
+/// **移动**进会话目录（不再复制）。
+///
+/// 为什么不复用 [`precheck_open_temp_space`]：那条算的是「编码层声明大小」，只在
+/// **打开档案**时跑；双击压缩包里的条目是另一条路径，而它正是在这一步把临时盘
+/// 写爆的（用户实测 2026-10-22：4.2 GB 可用 vs 7.9 GB 条目）。
+pub fn container_entry_need(size_raw: u64) -> u64 {
+    (size_raw as f64 * SPACE_HEADROOM) as u64
+}
+
+/// 这些目录里**最紧**的一块能否放下 `need`；放不下返回 `(need, avail)`。
+///
+/// `None` = 可用空间查不到（目录不存在/无权限）⇒ 放行：预检本身绝不能挡住
+/// 能打开的档案，真正的写盘错误仍由物化/长度校验兜底。
+pub fn temp_space_shortfall(dirs: &[PathBuf], need: u64) -> Option<(u64, u64)> {
+    let avail = dirs
+        .iter()
+        .filter_map(|d| hzip_platform::fs_util::available_bytes(d).ok())
+        .min()?;
+    (avail < need).then_some((need, avail))
+}
+
 /// 回收超龄的临时缓冲孤儿（`hzip-spool-*`；返回删除个数）。
 ///
 /// 见模块文档「临时缓冲自愈」。**尽力而为**：任何 IO 错误（无权限的临时目录、

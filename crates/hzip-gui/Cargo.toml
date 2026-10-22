@@ -48,6 +48,7 @@ embed-resource = { workspace = true }   # hzip.rc → exe 图标资源（资源 
 tempfile = { workspace = true }
 toml = { workspace = true }             # i18n 文案表完整性单测（读 locales/*.toml）
 hzip-format-testkit = { workspace = true, features = ["vol"] }
+hzip-fmt-zip = { workspace = true }          # 加密条目进容器：spool 副本被移动（take_entry_file）
 flate2 = { workspace = true }           # 组合档夹具（`.cpio.gz`：延迟展开用例）
 # Spike#6：headless 测试直连 gpui-kit test-support（同一 crate 升 feature，无版本分裂）
 gpui-kit = { workspace = true, features = ["test-support"] }

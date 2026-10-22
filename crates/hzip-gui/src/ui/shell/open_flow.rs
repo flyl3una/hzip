@@ -592,6 +592,37 @@ impl AppShell {
                 // ② 锁外：独立 reader 解出内层档案（与 `edit.rs` 的物化同款）。
                 //    流经 `CountingReader` ——明细行报「已处理 x / y」（y = 条目声明
                 //    原始大小，未知则只报已处理量）
+                // ② 空间预检（用户实测 2026-10-22：7.9 GB 的内层条目在只剩 4.2 GB
+                //    的临时盘上「解一半→无提示失败→内层显示成一条假记录」）。
+                //    峰值 = 一份副本（加密条目的 spool 副本会被**移动**进会话目录，
+                //    不再复制），不足时**毫秒级**失败并报数字，绝不先把几 GB
+                //    写满盘再报错。
+                if size_raw > 0 {
+                    let need = hzip_core::services::space::container_entry_need(size_raw);
+                    let root = hzip_platform::dirs::temp_root();
+                    let mut dirs = vec![root.clone()];
+                    let sys = std::env::temp_dir();
+                    if sys != root {
+                        dirs.push(sys);
+                    }
+                    if let Some((need, avail)) =
+                        hzip_core::services::space::temp_space_shortfall(&dirs, need)
+                    {
+                        tracing::warn!(
+                            need, avail,
+                            dir = %root.display(),
+                            "进入容器：临时盘空间不足（预检，未开始写盘）"
+                        );
+                        return Err(crate::tr_with(
+                            "open.container.need_space",
+                            &[
+                                ("need", &fmt_gib(need)),
+                                ("avail", &fmt_gib(avail)),
+                                ("dir", &root.display().to_string()),
+                            ],
+                        ));
+                    }
+                }
                 // 先回收死会话临时目录：大镜像物化动辄几十 GB，用户实测磁盘被
                 // 「崩溃/强杀留下的会话」塞满（自动清理看不见效果）。这里每进一次
                 // 容器扫一遍（后台线程内，几 ms~几 s），有回收就**告诉用户**。
@@ -626,48 +657,138 @@ impl AppShell {
                         },
                     )
                     .map_err(|e| hz_reason(&e))?;
-                let stream = reader
-                    .read_entry(
-                        entry_id,
-                        match &pw {
-                            Some(p) => hzip_format::PasswordRef::new(p),
-                            None => hzip_format::PasswordRef::none(),
-                        },
-                    )
-                    .map_err(|e| hz_reason(&e))?;
                 let leaf = entry_path.rsplit('/').next().unwrap_or(&entry_path);
                 let safe = hzip_platform::temp_area::EntryNameSafe::sanitize(leaf)
                     .map_err(|e| e.to_string())?;
-                let mut stream =
-                    crate::ui::views::open_progress::CountingReader::new(stream, detail.clone());
-                let temp = area
-                    .materialize(&archive, &safe, &mut stream)
-                    .map_err(|e| e.to_string())?;
-                drop(stream);
+                let pw_ref = match &pw {
+                    Some(p) => hzip_format::PasswordRef::new(p),
+                    None => hzip_format::PasswordRef::none(),
+                };
+                // 加密条目在 zip 里已被 spool 过一整份 ⇒ **移动**进会话目录，
+                // 不再复制（峰值 2× → 1×、时间也省一半；见 `take_entry_file`）。
+                //
+                // 这里的解码要几十秒（4.34 GB 实测 ~60 s），**必须**把字节数喂给进度窗：
+                // 否则用户在密码之后看到的是一个不动的「正在解出内层档案…」
+                //（用户实测 2026-10-22：「等了很久依旧没有打开」）。
+                detail.set_phase(crate::tr("openprogress.phase_extract_inner"));
+                let mut report_bytes = |n: u64| detail.add_done(n);
+                let temp =
+                    if let Some(sp) = reader.take_entry_file(entry_id, pw_ref, &mut report_bytes) {
+                        match area.adopt_file(&archive, &safe, &sp) {
+                            Ok(t) => {
+                                tracing::info!(
+                                    target = %t.display(),
+                                    "进入容器：复用已落盘的 spool 副本（移动，未复制）"
+                                );
+                                t
+                            }
+                            Err(e) => {
+                                // 移动/复制都失败：报错即可（spool 副本由它自己清理）
+                                tracing::error!(err = %e, "进入容器：收编 spool 副本失败");
+                                return Err(e.to_string());
+                            }
+                        }
+                    } else {
+                        let stream = reader
+                            .read_entry(entry_id, pw_ref)
+                            .map_err(|e| hz_reason(&e))?;
+                        let mut stream = crate::ui::views::open_progress::CountingReader::new(
+                            stream,
+                            detail.clone(),
+                        );
+                        let t = area
+                            .materialize(&archive, &safe, &mut stream)
+                            .map_err(|e| e.to_string())?;
+                        drop(stream);
+                        t
+                    };
+                // 物化长度校验：流被截断（源损坏 / 中途 EOF / 写盘失败被吞）必须
+                // 在这里失败并删掉半截文件——否则半截档案照样能「打开」，用户看到
+                // 的是一个内容不对的内层会话（2026-10-22 实测的假会话成因之一）。
+                if size_raw > 0 {
+                    let got = std::fs::metadata(&temp).map(|m| m.len()).unwrap_or(0);
+                    if got != size_raw {
+                        let _ = std::fs::remove_file(&temp);
+                        tracing::error!(
+                            temp = %temp.display(), got, want = size_raw,
+                            "进入容器：物化长度不符，已删除半截文件"
+                        );
+                        return Err(crate::tr_with(
+                            "open.container.truncated",
+                            &[("got", &fmt_gib(got)), ("want", &fmt_gib(size_raw))],
+                        ));
+                    }
+                }
                 // ③ 锁外：browse 内层（同一个同步 API，同样不进 UI 线程）
                 detail.set_phase(crate::tr("openprogress.phase_index_inner"));
-                let browser = engine
-                    .browse(
-                        hzip_format::Source::File(temp.clone()),
-                        &hzip_format::OpenOptions {
-                            defer_composite: true,
-                            ..Default::default()
-                        },
-                    )
-                    .map_err(|e| hz_reason(&e))?;
+                // `defer_composite` 只对**组合档**（内层 `.tar.gz` 等）有意义：它让
+                // 内层容器先显示成「一行、双击再展开」。对**卷容器**（qcow2/raw/vmdk）
+                // 或普通档案绝不能传 true——否则本层可能被当成延迟层（只有自己一行），
+                // 用户进去后看到「还是那个 qcow2 / 那个档案」，再双击又要密码
+                //（用户实测 2026-10-22：7.3 GB 的 qcow2.zip 无限套娃）。
+                let defer = matches!(
+                    engine
+                        .registry()
+                        .sniff(&hzip_format::Source::File(temp.clone())),
+                    Ok(hzip_format::Sniffed::Composite { .. })
+                );
+                tracing::info!(
+                    temp = %temp.display(),
+                    defer_composite = defer,
+                    "进入容器：物化完成，打开内层会话"
+                );
+                let browser = match engine.browse(
+                    hzip_format::Source::File(temp.clone()),
+                    &hzip_format::OpenOptions {
+                        defer_composite: defer,
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        // 内层打不开（损坏/不支持）⇒ 别把几 GB 的副本留在会话里
+                        let _ = std::fs::remove_file(&temp);
+                        return Err(hz_reason(&e));
+                    }
+                };
+                // 「套娃包装」判定：内层只有一行、不是目录、且与本条目**同名** ⇒
+                // 这一层只是包装（实测：`X.qcow2.zip` 里那个 `X.qcow2` 本身还是
+                // zip，再包一层 `X.qcow2`）。用户进入后看到「还是那个 qcow2」会读作
+                // 「没打开」（2026-10-22），所以显式提示再双击一次。
+                // 不做自动下钻：下一层可能是几十 GB 的镜像，自动展开会替用户决定
+                // 磁盘占用。
+                let wrapper_only = {
+                    let es = browser.entries();
+                    es.len() == 1 && !es[0].is_dir && es[0].name.as_str() == leaf
+                };
                 // ④ 落账：先在新 VM 上装好（失败可回退），再一次性换栈——不留下
                 //    「已压栈但会话为空」的半成品。落账前先比对代数（被顶替则丢弃）
                 let mut child = crate::viewmodel::MainViewModel::new();
-                child
-                    .install_browser(browser, &temp)
-                    .map_err(|e| hz_reason(&e))?;
+                if let Err(e) = child.install_browser(browser, &temp) {
+                    let _ = std::fs::remove_file(&temp);
+                    return Err(hz_reason(&e));
+                }
                 let mut d = data.lock().map_err(|_| "state 锁中毒".to_string())?;
                 if !d.session_switch_is_current(epoch) {
+                    drop(d);
+                    let _ = std::fs::remove_file(&temp);
                     return Err(SESSION_SUPERSEDED.to_string());
                 }
                 d.begin_nested_session(Some(entry_id), &entry_path);
                 d.main = child;
                 d.adopt_temp_source(temp);
+                if wrapper_only {
+                    tracing::info!(entry = %entry_path, "进入容器：内层是单条目套娃包装");
+                    if let Some(tx) = d.signal_tx.as_ref() {
+                        let _ = tx.try_send(crate::viewmodel::VmSignal::Notify(
+                            crate::viewmodel::pump::NotifyEvent {
+                                title: crate::tr("notify.wrapper_level.title"),
+                                body: crate::tr_with("notify.wrapper_level", &[("name", leaf)]),
+                                force_system: false,
+                            },
+                        ));
+                    }
+                }
                 Ok(())
             }
         };
@@ -876,6 +997,11 @@ pub(crate) const IMAGE_VIEWER_EXTS: [&str; 10] = [
 /// 2026-09-24：「这些错误都需要在任务中心记录该操作及操作结果（如果失败，则
 /// 需要记录比较明确的失败原因）」）。落账在**流程终局**做（成功与失败都记），
 /// 且不依赖调用方 await——调用方 `detach` 掉 Task 也不丢记录。
+/// 字节 → 「12.3 GiB」：空间类提示必须给数字（用户实测读不懂「磁盘满」）。
+fn fmt_gib(bytes: u64) -> String {
+    format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
 pub(crate) struct OpenFlow {
     /// 进度窗展示名（文件名 / 条目名）
     pub label: String,

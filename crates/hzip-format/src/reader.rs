@@ -149,6 +149,41 @@ pub trait ArchiveReader: Send {
         id: EntryId,
         pw: PasswordRef<'_>,
     ) -> Result<Box<dyn Read + Send>, HzipError>;
+    /// **密码验证**（不读数据区、不落盘）：格式能廉价判定就必须覆盖它。
+    ///
+    /// 默认实现沿用旧语义：`read_entry` 后只读 64 KiB 头部（密码正确性在首个
+    /// 加密块即可判定）。但**加密的大条目**上这一步可能付出整条解码的代价
+    /// （zip 的 spool 两遍法），于是「验密码」变成「解 4 GB 再报空间不足」——
+    /// 密码门卡住几十秒、用户看不到任何响应（2026-10-22 实测）。
+    /// 能 O(1) 判定的格式（zipcrypto 校验头 / AES password-verification）必须覆盖本方法。
+    fn verify_password(&self, id: EntryId, pw: PasswordRef<'_>) -> Result<(), HzipError> {
+        /// 预检只读头部这么多字节：正确性在首个加密块已判定，读完整条没意义。
+        const PREFLIGHT_HEAD_BYTES: usize = 64 * 1024;
+        let mut stream = self.read_entry(id, pw)?;
+        let mut head = [0u8; PREFLIGHT_HEAD_BYTES];
+        let _ = stream.read(&mut head)?;
+        Ok(())
+    }
+
+    /// 条目若已是**一份完整落在盘上的解码副本**，把它交出来供调用方**移动**，
+    /// 而不是再复制一遍。
+    ///
+    /// 默认 `None` = 调用方按 `read_entry` 流式写出。zip 的加密条目在 spool
+    /// 两遍法里已经写过一整份 ⇒ 再复制一份会让临时盘峰值翻倍（4.34 GB 条目 =
+    /// 8.7 GB；用户实测 2026-10-22 磁盘被这一点直接挤爆）。
+    /// 交出后实现方必须视该副本为已消费（后续 `read_entry` 重新解码）。
+    ///
+    /// `progress`：解码过程中累计写出的字节数（调用方用它推动进度窗）。加密大
+    /// 条目在这里要花几十秒，**不报进度**就是一个静止的进度窗（2026-10-22 实测）。
+    fn take_entry_file(
+        &self,
+        _id: EntryId,
+        _pw: PasswordRef<'_>,
+        _progress: &mut dyn FnMut(u64),
+    ) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// 解压（净化/冲突/配额执行逻辑归 core，本方法在 core 的驱动下逐条目落盘；
     /// fmt 实现直接调用的形态以各任务卡为准）
     fn extract(

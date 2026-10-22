@@ -4025,6 +4025,7 @@ dependencies = [
  "hzip-config",
  "hzip-core",
  "hzip-error",
+ "hzip-fmt-zip",
  "hzip-format",
  "hzip-format-testkit",
  "hzip-log",

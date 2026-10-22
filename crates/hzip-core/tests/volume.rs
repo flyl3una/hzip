@@ -504,3 +504,42 @@ fn edit_batch_inside_a_two_partition_image_hits_the_right_partition() {
         .unwrap();
     assert_eq!(keep, b"one", "分区 1 的条目必须原样（不得被误写）");
 }
+
+/// `defer_composite` 只该影响**组合档**（内层容器延迟展开）；卷容器（qcow2/raw/
+/// vmdk）的投影不能被它改变——否则 GUI 的嵌套会话会拿到「只有自己一行」的延迟层，
+/// 表现为「进入 qcow2 后还是那个 qcow2 文件、再双击又要密码」（用户实测 2026-10-22）。
+#[test]
+fn defer_composite_does_not_flatten_a_volume_projection() {
+    let (_dir, path) = write_temp(
+        "disk.img",
+        &raw_with_mbr(FixtureFs::Ext4, &[("/note.txt", b"v1" as &[u8])]),
+    );
+    let eng = engine(1, 1);
+    let eager = eng
+        .browse(hzip_format::Source::File(path.clone()), &Default::default())
+        .expect("eager browse");
+    let eager_names: Vec<String> = eager
+        .entries()
+        .iter()
+        .map(|e| e.name.as_str().to_string())
+        .collect();
+    let deferred = eng
+        .browse(
+            hzip_format::Source::File(path),
+            &hzip_format::OpenOptions {
+                defer_composite: true,
+                ..Default::default()
+            },
+        )
+        .expect("deferred browse");
+    let deferred_names: Vec<String> = deferred
+        .entries()
+        .iter()
+        .map(|e| e.name.as_str().to_string())
+        .collect();
+    assert_eq!(
+        deferred_names, eager_names,
+        "defer_composite 不得改变卷投影（应为分区/卷内条目，而非「只有自己一行」）"
+    );
+    assert!(deferred_names.iter().any(|n| n == "Partition 1"));
+}

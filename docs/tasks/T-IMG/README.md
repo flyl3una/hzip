@@ -160,7 +160,7 @@ flowchart LR
 - [x] **XFS 驱动（用户追加口径：文件系统含 XFS）**：`hzip-fs-xfs` 35 条（读+写；上游 `rust-fs-xfs 0.14.1`，**大端 + 校验和小端**）；未实现项按上游限制如实拒绝（跨目录改名 / 目录超短格式 / realtime·reflink·v4 写 / 外部日志 / 脏日志卷不可写）
 - [x] **T-IMG10 部分**（分区行：硬盘图标/类型列/语言化名 + `locales/vol.toml` 53 键双向完整性测试）——余：只读徽标与理由 tooltip、CLI 写侧动词
 - [ ] **T-IMG6 覆盖写与提交**（覆盖层/回放/幂等已实现并有用例；**余**：覆盖层扩容支持——VMDK 分配 grain 类写在覆盖模式下现以 `vol.unsupported.resize` 干净失败，见该卡 §已定边界）
-- [ ] **T-IMG0 组合/嵌套写回**（读侧组合链已通；写回外层未做）
+- [x] **T-IMG0 组合/嵌套写回**（2026-10-19 落地：`services/writeback.rs` 三形状 + `services/reencode.rs` 助手 + GUI 链装配/口径 + `tests/composite_edit.rs` 5 用例；剩余见任务书「状态」行）
 - [~] **T-IMG9 编辑管线接线**：core 的**路径选择**（单格式卷容器 ⇒ 就地写）与**变更路由**（档案级名/id → 卷内；**单卷与多卷都按分区归集**，2026-10-16 起）已落地并有现实验证（`hzip-core/tests/volume.rs::edit_batch_inside_a_volume_writes_in_place` + `::edit_batch_inside_a_two_partition_image_hits_the_right_partition`、`hzip-vol/tests/editor.rs` 11 条）；余：设置页三态开关（**「外部编辑器保存写回」与「多分区归集」已于 2026-10-16 落地**，见 T-IMG9「落地记录」）
 - [ ] **T-IMG13 加固**（fuzz/配额门槛/性能基线/交叉验证脚本）
 - [ ] **T-IMG14 文档与打包**（01/README/02 附录 C 已同步；余 CI/打包/体积登记）

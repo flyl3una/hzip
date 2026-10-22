@@ -114,3 +114,59 @@ fn browser_read_entry_uses_session_password() {
         .unwrap();
     assert_eq!(pv.bytes, CONTENT);
 }
+
+/// 预检必须是 **O(1)**：不得为验密码解码整条加密条目。
+///
+/// 用户实测 2026-10-22：4.34 GB 的加密 zip 条目让「密码门验证」先 spool 整条
+/// （60 s），临时盘只剩 4.2 GB 时以 ENOSPC 收场——界面看起来「输完密码什么都
+/// 没发生」。本用例用 128 MiB 加密条目把这条性质锁在 API 层：走 `read_entry`
+/// 的旧实现必须解码 128 MiB 才能判定。
+#[test]
+fn preflight_password_does_not_decode_a_large_encrypted_entry() {
+    const SIZE: u64 = 128 * 1024 * 1024;
+    let dir = tempfile::tempdir().unwrap();
+    let zip = dir.path().join("big-enc.zip");
+    let pwz = Zeroizing::new("gate-pw".to_string());
+    let mut w = hzip_fmt_zip::ZipFormatHandler::new()
+        .create_writer(
+            Sink::File(zip.clone()),
+            &CreateOptions {
+                encryption: Some(EncryptionRequest::ZipCrypto),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let meta = EntryMeta {
+        name: "disk.qcow2".into(),
+        size_raw: Some(SIZE),
+        ..Default::default()
+    };
+    let mut s = w.next_entry(&meta, PasswordRef::new(&pwz)).unwrap();
+    let chunk = vec![0u8; 1 << 20];
+    for _ in 0..(SIZE / (1 << 20)) {
+        s.write_all(&chunk).unwrap();
+    }
+    s.finish().unwrap();
+    w.finish().unwrap();
+
+    let eng = engine();
+    let right = Zeroizing::new("gate-pw".to_string());
+    let started = std::time::Instant::now();
+    hzip_core::services::browse::preflight_password(eng.registry(), &zip, &right)
+        .expect("正确密码应通过预检");
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_millis(300),
+        "预检耗时 {took:?}：说明它在解码整条条目（密码门会被大条目卡死）"
+    );
+
+    let wrong = Zeroizing::new("nope".to_string());
+    let started = std::time::Instant::now();
+    let err = hzip_core::services::browse::preflight_password(eng.registry(), &zip, &wrong)
+        .expect_err("错误密码必须失败");
+    assert!(matches!(err, hzip_error::HzipError::Password { .. }));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(300),
+        "错密码判定也必须即时"
+    );
+}
