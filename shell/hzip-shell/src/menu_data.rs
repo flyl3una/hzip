@@ -35,8 +35,6 @@ pub struct Item {
 pub struct MenuConfig {
     /// `hzip-gui.exe` 绝对路径。
     pub exe: String,
-    /// 已关联的档案扩展名（小写、不带点）。
-    pub archive_exts: Vec<String>,
     /// 档案文件上的条目（解压类）。
     pub archive_file: Vec<Item>,
     /// 任意文件 / 文件夹上的条目（压缩类）。
@@ -49,13 +47,6 @@ impl MenuConfig {
         !self.exe.is_empty() && (!self.archive_file.is_empty() || !self.any.is_empty())
     }
 
-    /// 目标是否属于「已关联档案」（决定解压类条目是否出现）。
-    pub fn is_archive_path(&self, path: &str) -> bool {
-        let lower = path.to_ascii_lowercase();
-        self.archive_exts
-            .iter()
-            .any(|ext| lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())))
-    }
 }
 
 /// 配置文件路径（`%APPDATA%\hzip\shell-menu.json`）。
@@ -131,16 +122,6 @@ pub fn parse(text: &str) -> Option<MenuConfig> {
         return None; // 未知 schema：宁可不出菜单，也不误读
     }
     let exe = doc.get("exe").and_then(Value::as_str)?.to_string();
-    let archive_exts = doc
-        .get("archive_exts")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(|s| s.trim_start_matches('.').to_ascii_lowercase())
-                .collect()
-        })
-        .unwrap_or_default();
 
     let items = doc.get("items");
     let group = |name: &str| -> Vec<Item> {
@@ -153,7 +134,8 @@ pub fn parse(text: &str) -> Option<MenuConfig> {
 
     Some(MenuConfig {
         exe,
-        archive_exts,
+        // 解压类条目不再按扩展名过滤（见 `command::is_applicable`）——JSON 里的
+        // `archive_exts` 仍由 GUI 写入（Linux/macOS 后端要用），本 DLL 忽略它。
         archive_file: group("archive_file"),
         any: group("any"),
     })
@@ -238,8 +220,7 @@ mod tests {
     fn parses_full_config() {
         let c = parse(SAMPLE).expect("样例须可解析");
         assert_eq!(c.exe, r"C:\Program Files\hzip\hzip-gui.exe");
-        // 扩展名归一：去点 + 小写
-        assert_eq!(c.archive_exts, vec!["zip", "7z"]);
+        // `archive_exts` 仍出现在 JSON 里（Linux/macOS 后端用），本 DLL 不再消费
         assert_eq!(c.archive_file.len(), 1);
         assert_eq!(c.archive_file[0].key, "extract_here");
         assert_eq!(c.archive_file[0].args, vec!["--extract-here", "%SEL"]);
@@ -279,33 +260,6 @@ mod tests {
         let text = r#"{"schema":1,"exe":"e","items":{"any":[]}}"#;
         let c = parse(text).expect("应解析成功");
         assert!(!c.is_usable(), "无条目时不应出菜单");
-    }
-
-    /// 解压组可见性 = 「这个路径是不是档案」，由 `archive_exts` 后缀匹配决定。
-    ///
-    /// 这是**用户可见后果最重**的一处判定：判错则右键档案时解压项整组消失
-    /// （实测缺陷：`archive_exts` 上游被错填成「文件关联勾选」，`assoc_formats=["7z"]`
-    /// 的机器上右键 `.zip` 只剩压缩项、解压项凭空消失）。
-    #[test]
-    fn archive_detection_is_case_insensitive_and_extension_scoped() {
-        let c = parse(SAMPLE).unwrap();
-        assert!(c.is_archive_path(r"C:\a\b.ZIP"), "大小写不敏感");
-        assert!(c.is_archive_path(r"D:\x\y.7z"));
-        assert!(
-            c.is_archive_path(r"C:\a\backup.tar.7z"),
-            "多段扩展名看最后一段"
-        );
-        assert!(!c.is_archive_path(r"C:\a\b.txt"));
-        // 不得把后缀包含误判为扩展名匹配（必须是点分隔的扩展名）
-        assert!(!c.is_archive_path(r"C:\a\notzip"));
-        assert!(!c.is_archive_path(r"C:\a\b.zip.txt"));
-        // 不在能力集里的扩展名：rar 由 core 的 `rar` feature 决定是否入集，
-        // 本构建未启用 → 不认（认了会对着无法解压的档案露出解压项）
-        assert!(!c.is_archive_path(r"C:\a\b.rar"));
-        // 无扩展名 / 空串 / 目录名恰好像档案
-        assert!(!c.is_archive_path(r"C:\a\README"));
-        assert!(!c.is_archive_path(""));
-        assert!(!c.is_archive_path(r"C:\a\b.zip\inner.txt"));
     }
 
     #[test]

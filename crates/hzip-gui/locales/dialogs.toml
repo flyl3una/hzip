@@ -683,3 +683,7 @@ zh-CN = "临时盘空间不足，无法展开这层容器：需要 {need}，可�
 [open.container.truncated]
 en = "The nested copy came out incomplete ({got} of {want}); it was discarded. The source archive may be damaged, or the temp disk ran out of space"
 zh-CN = "嵌套副本未完整写出（{got} / {want}），已丢弃。源档案可能损坏，或临时盘空间不足"
+
+[dlg.not_archive]
+en = "{name} is not a recognizable archive. hzip detects formats by file content (magic bytes), so renamed archives still open; if you are sure it is one, the file may be damaged or its format is not supported yet"
+zh-CN = "{name}：不是可识别的压缩包。\nhzip 按文件内容（魔数）识别格式，改了后缀名也能打开；若你确认它是压缩包，文件可能已损坏，或该格式暂不支持"

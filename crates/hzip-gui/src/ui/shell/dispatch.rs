@@ -812,7 +812,7 @@ pub(super) fn open_then_extract_with_dest(
                     // 双弹窗）。解压不依赖预打开——job 内 open_archive_retry 自问
                     // 密码（单一密码弹窗；进度窗时序由挂起机制保证，设计稿 11 §4.2）。
                 }
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(super::errors::open_failure_text(path, &e)),
             }
         }
     }

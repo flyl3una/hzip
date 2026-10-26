@@ -3,7 +3,7 @@
 use gpui_kit::App;
 
 use super::app_shell::AppShell;
-use super::errors::hz_reason;
+use super::errors::{hz_reason, open_failure_text};
 use super::runtime::AppDataHandle;
 use super::session::{SESSION_SUPERSEDED, start_session_switch};
 
@@ -1213,7 +1213,7 @@ pub(crate) fn open_archive_task(
                     });
                     return Err("需要输入密码（头加密档案）".to_string());
                 }
-                Err(e) => return Err(hz_reason(&e)),
+                Err(e) => return Err(open_failure_text(&path, &e)),
             };
             let mut d = data.lock().map_err(|_| "state 锁中毒".to_string())?;
             // 落账前比对代数：已被更新的换会话顶替 → 丢弃结果（不装会话、不记 MRU；

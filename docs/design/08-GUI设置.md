@@ -640,15 +640,19 @@ sequenceDiagram
   ——否则会吃掉其它程序留在同一份表里的关联）。
 - **语义边界（用户反馈澄清，2026-09-20）**：本页勾选 = **把 hzip-gui 注册为该格式的
   系统默认打开程序**（ProgId + `.ext` 关联），**不是**「勾了才支持该格式的压缩/解压」。
-  压缩/解压能力由引擎注册表决定、默认可用；右键菜单里解压条目的显隐由**能力集**
-  `archive_exts` 判定（与勾选解耦——回归锚点 `menu_spec_archive_exts_follows_capability_not_association`）。
+  压缩/解压能力由引擎注册表决定、默认可用。
+  **解压条目的显隐（2026-10-26 起）**：Windows DLL 对**任意文件**都给出解压组——
+  扩展名不是证据（`disk.img`/无扩展名的文件可能就是 zip），真正判定交给引擎按
+  **魔数**嗅探（zip 等魔数优先、扩展名仅最后兜底），不是档案就弹「不是可识别的
+  压缩包」错误窗。`archive_exts` 因此**不再参与 Windows 的显隐判定**（Linux/macOS
+  后端仍按它过滤）。
 - **时机**：E 显式应用。**现状：✅ 已接线**（须按按钮，非即时）。
   > 注意两个按钮写的**不是同一处**：
   > - 「应用关联」→ `apply_association`：ProgId + `.ext`（`OpenWithProgids`/`DefaultIcon`），
   >   影响双击打开与「打开方式」列表；
   > - 「应用到系统」（**上下文菜单页**）→ `context_menu::install`：写
-  >   `%APPDATA%\hzip\shell-menu.json`，其中 `archive_exts` 决定右键菜单里
-  >   **解压条目的显隐**（DLL 的 `is_archive_path`）。
+  >   `%APPDATA%\hzip\shell-menu.json`（`items` 决定有哪些条目、`archive_exts`
+  >   供 Linux/macOS 后端过滤；Windows DLL 不再按扩展名隐藏解压组）。
   >
   > 故本页扩展名清单变更后，右键菜单要生效需在上下文菜单页**再点一次「应用到系统」**；
   > 只点「应用关联」不会更新 `archive_exts`。

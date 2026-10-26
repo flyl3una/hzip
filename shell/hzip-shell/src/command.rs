@@ -17,8 +17,13 @@
 //!
 //! | 条目组 | 何时出现 |
 //! |---|---|
-//! | [`Group::ArchiveFile`]（解压类） | **全部**选中项都是已关联档案 |
+//! | [`Group::ArchiveFile`]（解压类） | **全部**选中项都是文件（不论扩展名） |
 //! | [`Group::Any`]（压缩类） | 始终 |
+//!
+//! 解压类**不再按扩展名过滤**（用户口径 2026-10-26）：改了后缀名的档案
+//! （`disk.img` / `a.qcow2` / 无扩展名）同样可能是 zip/7z，藏起来就等于没有入口。
+//! 是否真的是档案由引擎按魔数嗅探判定，不然就弹错误窗——比「菜单里什么都没有」
+//! 可诊断得多。
 //!
 //! 注意压缩类**不是**「否则才出现」——在 `.zip` 上右键时用户既想解压也想再压缩，
 //! 7-Zip/Bandizip 两者都给。故这里是「解压组附加」而非「二选一」。
@@ -120,16 +125,31 @@ impl HzipCommand {
 
     /// 该叶子项在当前选中项下是否适用。
     fn is_applicable(&self, group: Group, paths: &[String]) -> bool {
-        match group {
-            // 压缩类恒适用（文件、文件夹、空白处）
-            Group::Any => true,
-            // 解压类：必须全部选中项都是已关联档案（混合选择时不给解压，
-            // 否则会对着 .txt 执行 --extract-here）
-            Group::ArchiveFile => {
-                !paths.is_empty()
-                    && !self.config.archive_file.is_empty()
-                    && paths.iter().all(|p| self.config.is_archive_path(p))
-            }
+        is_applicable(&self.config, group, paths)
+    }
+}
+
+/// 适用性判定（**纯函数**：便于单测，不碰 COM）。
+pub(crate) fn is_applicable(config: &MenuConfig, group: Group, paths: &[String]) -> bool {
+    match group {
+        // 压缩类恒适用（文件、文件夹、空白处）
+        Group::Any => true,
+        // 解压类：**任意文件**都显示，不再看扩展名。
+        //
+        // 理由（用户口径 2026-10-26）：扩展名不是证据——`disk.img`、`a.qcow2`、
+        // 甚至无扩展名的文件都可能就是 zip/7z（厂商改过后缀、传输被重命名）。
+        // 真正的判定交给引擎：GUI 打开/解压时按**魔数**嗅探（zip 等魔数优先，
+        // 扩展名只是最后兜底），不是档案就弹错误窗。若这里按扩展名藏起来，
+        // 用户永远没有入口去试。
+        //
+        // 文件夹不参与解压（目录没有「解压」语义；压缩类已独立覆盖），因此
+        // 混合选择里只要出现目录就不给解压项。
+        Group::ArchiveFile => {
+            !paths.is_empty()
+                && !config.archive_file.is_empty()
+                && paths
+                    .iter()
+                    .all(|p| !std::path::Path::new(p.as_str()).is_dir())
         }
     }
 }
@@ -260,5 +280,136 @@ impl IExplorerCommand_Impl for HzipCommand_Impl {
             }
             Ok(IEnumExplorerCommand::from(HzipEnum::new(commands)))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    fn cfg(archive_items: usize) -> MenuConfig {
+        let item = |key: &str| Item {
+            key: key.to_string(),
+            label: key.to_string(),
+            args: vec![],
+        };
+        MenuConfig {
+            exe: r"C:\Program Files\hzip\hzip-gui.exe".to_string(),
+            archive_file: (0..archive_items).map(|_| item("extract_here")).collect(),
+            any: vec![item("add_zip")],
+        }
+    }
+
+    fn temp_file(name: &str) -> String {
+        let dir = std::env::temp_dir().join("hzip-cm-applicability");
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let p = dir.join(name);
+        std::fs::write(&p, b"PK\x03\x04").expect("write");
+        p.to_string_lossy().into_owned()
+    }
+
+    /// 解压类必须出现在**任意文件**上（用户口径 2026-10-26）：
+    /// 改了后缀名的档案（`.bin` / 无扩展名）也要有入口——扩展名不是证据。
+    #[test]
+    fn extract_items_show_on_any_file_regardless_of_extension() {
+        for name in ["renamed.bin", "disk.img", "noext", "actually-a-zip.dat"] {
+            let paths = vec![temp_file(name)];
+            assert!(
+                is_applicable(&cfg(1), Group::ArchiveFile, &paths),
+                "{} 上必须给解压项（可能是改过后缀的压缩包）",
+                name
+            );
+        }
+    }
+
+    /// 目录不参与解压；空选择不出菜单；设置里没勾解压项时整组隐藏。
+    #[test]
+    fn extract_items_are_hidden_for_directories_empty_selection_and_disabled_group() {
+        let dir = std::env::temp_dir();
+        let dirs = vec![dir.to_string_lossy().into_owned()];
+        assert!(
+            !is_applicable(&cfg(1), Group::ArchiveFile, &dirs),
+            "目录没有解压语义"
+        );
+        assert!(!is_applicable(&cfg(1), Group::ArchiveFile, &[]), "空选择");
+        assert!(
+            !is_applicable(&cfg(0), Group::ArchiveFile, &[temp_file("x.zip")]),
+            "设置里未启用解压项 ⇒ 整组不出现"
+        );
+    }
+
+    /// 压缩类恒适用（文件 / 目录 / 空白处）。
+    #[test]
+    fn compress_items_always_apply() {
+        assert!(is_applicable(&cfg(0), Group::Any, &[]));
+        assert!(is_applicable(
+            &cfg(1),
+            Group::Any,
+            &[std::env::temp_dir().to_string_lossy().into_owned()]
+        ));
+    }
+
+    /// 端到端（COM 层）：用**真实 shell 项**调 `GetState`，而不是只测纯函数。
+    ///
+    /// 用户口径 2026-10-26：`.msi`/`.jar` 右键里也要有「用 hzip 打开 / 解压」。
+    /// 这里把真实文件路径喂进 `IShellItemArray`，走 `selected_paths` → `is_applicable`
+    /// → `ECS_ENABLED/HIDDEN` 的完整链路；任何一环（含 `is_dir` 判定）写错都会红。
+    #[test]
+    fn get_state_enables_extract_items_for_msi_jar_and_unknown_extensions() {
+        use windows::core::HSTRING;
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        use windows::Win32::UI::Shell::{
+            IShellItem, IShellItemArray, SHCreateItemFromParsingName,
+            SHCreateShellItemArrayFromShellItem,
+        };
+
+        // SAFETY: 测试进程内初始化 STA（重复初始化返回 S_FALSE，可忽略）
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+
+        const SAMPLE: &str = r#"{"schema":1,"exe":"C:\\hzip\\hzip-gui.exe","items":{
+            "archive_file":[{"key":"extract_here","label":"解压到当前文件夹","args":["--extract-here","%SEL"]}],
+            "any":[{"key":"add_zip","label":"添加到 zip","args":["--compress","%SELS","--format","zip"]}]}}"#;
+        let config = std::sync::Arc::new(crate::menu_data::parse(SAMPLE).expect("样例配置"));
+        let root: windows::Win32::UI::Shell::IExplorerCommand = HzipCommand::root(config.clone()).into();
+        let array_of = |path: &std::path::Path| -> IShellItemArray {
+            let item: IShellItem =
+                // SAFETY: 路径来自临时目录里的真实文件
+                unsafe { SHCreateItemFromParsingName(&HSTRING::from(path.to_string_lossy().into_owned()), None) }
+                    .expect("SHCreateItemFromParsingName");
+            // SAFETY: item 有效
+            unsafe { SHCreateShellItemArrayFromShellItem(&item) }.expect("array")
+        };
+        let extract_leaf = || {
+            // SAFETY: root 为本地构造的 COM 对象，接口有效
+            let e = unsafe { root.EnumSubCommands() }.expect("EnumSubCommands");
+            let mut out: [Option<windows::Win32::UI::Shell::IExplorerCommand>; 1] = [None];
+            let mut fetched = 0u32;
+            // SAFETY: 出参指向 1 个槽位
+            unsafe { e.Next(&mut out, Some(&mut fetched)) }.ok().expect("Next");
+            assert_eq!(fetched, 1);
+            out[0].clone().expect("首个叶子")
+        };
+
+        let dir = std::env::temp_dir().join("hzip-cm-getstate");
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        for name in ["pkg.msi", "app.jar", "blob.bin", "noext"] {
+            let p = dir.join(name);
+            std::fs::write(&p, b"whatever").expect("write");
+            // SAFETY: 同上（本地 COM 对象 + 真实 shell 项数组）
+            let state = unsafe { extract_leaf().GetState(&array_of(&p), false) }.expect("GetState");
+            assert_eq!(
+                state,
+                ECS_ENABLED.0 as u32,
+                "{name} 上必须_show 解压项（扩展名不是证据）"
+            );
+        }
+        // 目录仍然不给解压
+        // SAFETY: 同上
+        let state = unsafe { extract_leaf().GetState(&array_of(&dir), false) }.expect("GetState");
+        assert_eq!(state, ECS_HIDDEN.0 as u32, "目录不给解压项");
     }
 }

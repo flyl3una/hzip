@@ -70,8 +70,10 @@ pub struct MenuSpec {
     pub compress: Vec<MenuEntry>,
     /// **本程序能解压的**档案扩展名（不带点），如 `["zip","7z","tar","gz"]`。
     ///
-    /// 用途：解压类条目的可见性判定——非档案文件上隐藏解压组（Windows 经
-    /// `shell-menu.json` 的 `archive_exts` 传给 DLL 的 `is_archive_path`）。
+    /// 用途：**Linux/macOS 后端**按它过滤解压类条目；Windows 的 DLL 自 2026-10-26
+    /// 起**不再用它判定可见性**（改由「任意文件都显示，打不开就报错」——扩展名
+    /// 不是证据，改过后缀的压缩包也要有入口），仍照常写入 `shell-menu.json`
+    /// 以保持三平台配置一致。
     ///
     /// **语义红线**：这是**能力集**（引擎注册的读处理器扩展名），不是用户在
     /// 「文件关联」页勾选的处理器注册范围。两者错配过一次：`assoc_formats = ["7z"]`

@@ -702,11 +702,13 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                             }
                             if let Err(e) = &res {
                                 tracing::error!("启动意图 {:?} 失败: {e}", intent.kind());
+                                // 失败**必须有出口**（用户口径 2026-10-26：右键菜单
+                                // 对任意文件都给「打开/解压」，点开不是压缩包的文件
+                                // 属常规结局，要求「正常弹窗报错」）。
+                                let msg =
+                                    crate::tr_with("dlg.params.failed", &[("err", e.as_str())]);
                                 if mode == UiMode::Direct {
-                                    // 直接模式无主界面：失败必须有出口，否则用户
-                                    // 看到的就是「点了没反应」（本模式最忌讳的形态）
-                                    let msg =
-                                        crate::tr_with("dlg.params.failed", &[("err", e.as_str())]);
+                                    // 直接模式无主界面：弹独立消息窗
                                     cx.update(|cx| {
                                         crate::ui::views::op_window::open_message_window(
                                             cx,
@@ -716,6 +718,17 @@ pub fn run_ui(args: LaunchArgs, raw_argv: Vec<String>) -> Result<(), String> {
                                             ),
                                         );
                                     });
+                                } else if let Ok(app) = d.lock()
+                                    && let Some(tx) = app.signal_tx.as_ref()
+                                {
+                                    // 已开主界面：主线程泵弹消息窗（旧实现在此处
+                                    // **只记日志** ⇒ 用户点完右键什么都没看到）
+                                    let _ = tx.try_send(crate::viewmodel::VmSignal::ShowMessage(
+                                        crate::viewmodel::message::MessageDialog::error(
+                                            crate::tr("dlg.error.title"),
+                                            msg,
+                                        ),
+                                    ));
                                 }
                             }
                             let _ = tx2.try_send(match &res {

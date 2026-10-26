@@ -3083,3 +3083,158 @@ fn entering_a_single_entry_wrapper_notifies_the_user(cx: &mut gpui_kit::TestAppC
     }
     assert!(found, "进入单条目同名包装层必须提示用户再双击一次");
 }
+
+/// 任意文件都能「按内容」打开（用户口径 2026-10-26）：
+/// 改了后缀名的压缩包（`.bin`）必须直接打开，不靠扩展名。
+#[gpui_kit::test]
+fn opens_a_renamed_archive_by_content(cx: &mut gpui_kit::TestAppContext) {
+    use std::io::Write;
+
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(128);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    data.lock().expect("lock").signal_tx = Some(tx.clone());
+    let data_for_window = data.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let app_shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_for_window.clone()),
+            None,
+        );
+        let app_shell = cx.new(|_| app_shell);
+        let view: gpui_kit::AnyView = app_shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+
+    // 夹具：真 zip，存成 `.bin`（后缀完全不像压缩包）
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let renamed = dir.path().join("payload.bin");
+    {
+        let mut w = hzip_format::FormatHandler::create_writer(
+            &hzip_fmt_zip::ZipFormatHandler::new(),
+            hzip_format::Sink::File(renamed.clone()),
+            &hzip_format::CreateOptions::default(),
+        )
+        .expect("create");
+        let meta = hzip_format::EntryMeta {
+            name: "inside.txt".into(),
+            size_raw: Some(5),
+            ..Default::default()
+        };
+        let mut s = w
+            .next_entry(&meta, hzip_format::PasswordRef::none())
+            .expect("entry");
+        s.write_all(b"hello").expect("write");
+        s.finish().expect("finish entry");
+        w.finish().expect("finish archive");
+    }
+
+    allow_parking_for_real_io(vtcx);
+    let outcome = Arc::new(std::sync::Mutex::new(None::<Result<(), String>>));
+    let out2 = outcome.clone();
+    let task = vtcx.update(|_, cx| {
+        crate::ui::shell::open_archive_task(cx, data.clone(), renamed.clone(), false)
+    });
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            *out2.lock().unwrap() = Some(task.await);
+        })
+        .detach();
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while outcome.lock().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "改名档案 20s 内未完成打开"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        vtcx.run_until_parked();
+    }
+    let res = outcome.lock().unwrap().clone().expect("已完成");
+    assert!(res.is_ok(), "按内容识别必须成功打开：{res:?}");
+    let names: Vec<String> = data
+        .lock()
+        .unwrap()
+        .main
+        .entries()
+        .iter()
+        .map(|e| e.name.as_str().to_string())
+        .collect();
+    assert_eq!(names, vec!["inside.txt"], "必须按魔数认出这是 zip");
+}
+
+/// 真不是压缩包 → 必须给出人话错误（点名文件 + 说明按内容识别），
+/// 而不是把 `HZ-2001 … bad signature` 直接甩给用户。
+#[gpui_kit::test]
+fn non_archive_reports_a_human_readable_error(cx: &mut gpui_kit::TestAppContext) {
+    let (tx, _rx): (
+        crate::ui::contracts::SignalTx,
+        crate::ui::contracts::SignalRx,
+    ) = smol::channel::bounded(128);
+    let tx = Arc::new(tx);
+    let engine = Arc::new(Engine::new(EngineConfig::default()).expect("engine"));
+    let data = Arc::new(std::sync::Mutex::new(crate::app::state::AppData::new(
+        engine,
+    )));
+    data.lock().expect("lock").signal_tx = Some(tx.clone());
+    let data_for_window = data.clone();
+    let (_root, vtcx) = cx.add_window_view(move |window, cx| {
+        gpui_kit::component::init(cx);
+        crate::ui::theme::init(cx);
+        let app_shell = AppShell::with_data(
+            cx,
+            ShellHandlers::default(),
+            Some(data_for_window.clone()),
+            None,
+        );
+        let app_shell = cx.new(|_| app_shell);
+        let view: gpui_kit::AnyView = app_shell.into();
+        gpui_kit::component::Root::new(view, window, cx)
+    });
+
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let plain = dir.path().join("notes.bin");
+    std::fs::write(&plain, b"definitely not an archive, just text").expect("write");
+
+    allow_parking_for_real_io(vtcx);
+    let outcome = Arc::new(std::sync::Mutex::new(None::<Result<(), String>>));
+    let out2 = outcome.clone();
+    let task = vtcx.update(|_, cx| {
+        crate::ui::shell::open_archive_task(cx, data.clone(), plain.clone(), false)
+    });
+    vtcx.update(|_, cx| {
+        cx.spawn(async move |_| {
+            *out2.lock().unwrap() = Some(task.await);
+        })
+        .detach();
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while outcome.lock().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "非档案 20s 内应失败返回"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        vtcx.run_until_parked();
+    }
+    let msg = outcome
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("已完成")
+        .expect_err("非压缩包必须失败");
+    assert!(msg.contains("notes.bin"), "必须点名文件：{msg}");
+    assert!(
+        msg.contains("不是可识别的压缩包"),
+        "必须说人话（说明按内容识别），而不是裸错误码：{msg}"
+    );
+}

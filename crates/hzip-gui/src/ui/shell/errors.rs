@@ -11,6 +11,30 @@ pub(crate) fn hz_reason(e: &hzip_error::HzipError) -> String {
     format!("HZ-{:04}: {e}", e.code())
 }
 
+/// 打开失败的人读文案（**非档案要说得像人话**）。
+///
+/// 用户口径 2026-10-26：右键菜单对**任意文件**都给出「打开/解压」（扩展名不是
+/// 证据，`disk.img` / 无扩展名的文件可能就是 zip）。因此「这文件不是压缩包」是
+/// 一种**常规结局**，不能只回 `HZ-2001: 格式错误 (unknown): bad signature`——
+/// 用户读不懂，也不知道 hzip 是怎么判断的。
+///
+/// 只有「魔数不匹配」走专用文案；`Password` / `Truncated` / 语义性错误保持
+/// 原样（那些情况下 hzip 确实认出了格式，只是别的地方有问题）。
+pub(crate) fn open_failure_text(path: &std::path::Path, e: &hzip_error::HzipError) -> String {
+    if let hzip_error::HzipError::Format {
+        kind: hzip_error::FormatErrorKind::BadSignature,
+        ..
+    } = e
+    {
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        return crate::tr_with("dlg.not_archive", &[("name", &name)]);
+    }
+    hz_reason(e)
+}
+
 /// 「新建文件夹」初值：`新建文件夹`／`新建文件夹 (2)`…（避开当前目录既有同名）。
 pub(super) fn unique_new_folder_name(data: &AppDataHandle, dir: &str) -> String {
     let base = crate::tr("browse.new_folder.default");

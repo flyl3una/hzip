@@ -153,8 +153,8 @@ en = "Extract menu"
 zh-CN = "解压菜单"
 
 [setting.ctx_extract.help]
-en = 'Which formats appear in the Explorer right-click "Extract" menu.'
-zh-CN = "资源管理器右键「解压」菜单里出现哪些格式。"
+en = 'Which extract actions appear in the Explorer right-click menu. They appear on any file — hzip detects the format from file content, so renamed archives (e.g. .img/.bin) work too; a non-archive reports an error.'
+zh-CN = "资源管理器右键里出现哪些解压动作。这些动作对任意文件都出现——hzip 按文件内容识别格式，改了后缀名（如 .img/.bin）的压缩包同样能解；确实不是压缩包时会弹窗报错。"
 
 [setting.ctx_compress.label]
 en = "Compress menu"
