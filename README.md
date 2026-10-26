@@ -71,44 +71,6 @@
 | `qcow2`（v2/v3、稀疏/压缩簇） | ✅ | — | ✅ | — | — | — |
 | `vmdk`（monolithicSparse / streamOptimized） | ✅ | — | ✅¹ | — | — | — |
 
-> **磁盘镜像**（MBR/GPT 分区 + ext4/ext3/FAT/NTFS/XFS 文件系统）：打开后**每个分区当作一个目录**显示
-> （名字取分区标签，没有标签则显示「分区 N」，图标为硬盘）；卷内文件可浏览、预览、提取、增删改
-> （`ChangeSet` 五类变更）与「就地编辑」——「就地写入」只在未压缩的顶层镜像上可用，写模式固定为
-> **覆盖写**（提交时才回放脏块、提交前原文件不变；见 `docs/design/02` 附录 C.4）。
-> 多分区镜像的内部编辑**按分区归集**（2026-10-16 起：id 型变更按投影 id 区间、名字型变更按
-> 「分区行名/」前缀选分区，隔壁分区逐字节不动）。仍未接通：写模式的「就地写 / 只读」三态开关、
-> 组合链（`qcow2.gz` 之类）的写回（见 `docs/tasks/T-IMG/T-IMG9`「仍未落地」）；VMware **分卷稀疏**
-> VMDK（`twoGbMaxExtentSparse`）与 flat 布局按既定口径拒绝（`vol.unsupported.multi-extent` /
-> `layout-flat`），流式 `streamOptimized` 只读。功能全景见 [`docs/features/功能清单.md`](docs/features/功能清单.md)。
-> **双击用本地程序打开 → 保存会写回**档案（顶层单格式）：普通档案走重写 + 原子替换、卷容器走
-> **就地写**；若是文件在容器内部（`.qcow2.gz` 这类组合链、或压缩包里的嵌套档案）或该格式不支持
-> 编辑，保存时**弹一条通知明确说明不会写回**（不再静默丢改动）。
-> **被包住的镜像现在真能改**（T-IMG0，2026-10-19 落地）：`.zip`/`.7z` 里的 `disk.qcow2`、
-> `.tgz`/`.tar.*` 里的 `disk.img`、`disk.qcow2.gz` 这类组合链，编辑/删除/重命名/粘贴都会
-> **逐层冒泡**写回最外层实体档案——中间层全程只落临时档，只有最外层做一次原子替换
-> （失败/取消时原档一字节不变，TC-CONF-009）。代价是格式决定的：组合链必然**全量重压**
-> （`.gz` 无随机写），提交后弹**进度窗**跟踪、可取消。外层是 rar/cpio（无写出能力）或
-> 容器套容器（深度 > 1）时整链只读：菜单/工具栏置灰 + 标题栏「只读 · 容器内部」+
-> 键位等入口触发也**当场**说明理由（不静默失败、不跑完进度条才报错）。
-> **保存节奏可选**（设置 ▸ 通用「改动后的保存方式」：**自动保存 / 手动保存**）：自动 = 每次改动立即写回；手动
-> ——改动先挂起，过滤框左侧出现「保存 (n)」按钮，点它把挂起的改动**合并成一个任务**写回
-> （组合链只重压一次，适合在被包住的镜像里连续改多个文件）；挂起期间双击/预览取到的就是
-> **改后的内容**，退出/切换目标前会尽力写回，不丢改动。
-> **进容器立刻弹进度窗**：双击容器/映像不再等「防闪窗」门槛，窗口当帧出现并显示阶段
-> （正在解出内层档案… / 正在索引内层档案…）与**已处理字节/总字节 + 已耗时**，读取整段
-> 都算在进度里；任务中心同样留一条「打开」记录。
-> **名称悬浮看全名**：目录树 / 图标网格 / 紧凑列表 / 详情表格的名称列，鼠标悬停即在指针右下弹出完整文本
-> （树行给**档案内完整路径**，档案根给档案名；组件库没有行 tooltip，浮层是自绘的，见 `ui/widgets/hover_tip.rs`）。
-> **密码框回车即提交**（与「确定」按钮同一路径；Esc 仍取消）。
-> **需要密码的档案重开也走打开流程**：密码提交后立刻弹出进度窗（不再是「输完密码先静默等」）。
-> **临时目录自愈**：正常退出清当次会话目录；启动时后台再扫一遍 `%TEMP%\hzip`，把崩溃/
-> 强杀留下的死会话整目录删除（活实例保留）——不会再出现会话目录堆积。
-> ¹ `streamOptimized`（OVA 导出形态）只读；`monolithicFlat`/`twoGbMaxExtent*`/`vmfsSparse`/快照 delta
-> 按名字拒绝。需要新分配空间的写入在覆盖写模式下会明确报错（见 T-IMG6 §已定边界），可另存为。
-
-> **分卷**：zip 读写都支持（`--split`）；7z **读**支持多卷（`.7z.001`、`.7z.002`…），写侧分卷尚未接通——`caps.split=false`，CLI/GUI 会直接拒绝（HZ-5001，待办 T46）。
->
-> **固实**：7z 固实块打包同样尚未接通（`caps.solid=false`）。
 
 其他能力：BCJ2 可执行文件过滤（7z）、稀疏文件（tar）。
 
@@ -155,17 +117,6 @@ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warni
 python build/checks/deps-direction.py && python build/checks/layout-conventions.py
 ```
 
-> 两条**已记录的 flake**（`ui::views::browse::tests::rename_and_new_folder_commands_enter_inline_edit`、
-> `hzip-fmt-single::cancel_mid_extract_cleans_partial`）是既有的竞态用例，隔离跑也可能随机报红：
-> CI 里对它们加了 `--skip`，逐条理由与恢复条件见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-> 的注释与 [`docs/tasks/`](docs/tasks) 下的 T-OPT / T-STD 记录。
->
-> **别加 `--release` 跑 GUI 用例**：界面用例靠 gpui-pre 的 `debug_bounds` 取锚点边界，而
-> `debug_selector` 在 release 下是**有意的 no-op**（上游注释：省掉每帧记边界的开销）⇒ `cargo test
-> --release -p hzip-gui` 会整片报「锚点缺失/未绘制」（实测 55 条，与产品代码无关）。这一组合现在是
-> **编译期错误**，原因写在同一处（`crates/hzip-gui/src/lib.rs` 的 `compile_error!`）；要看 release
-> 档行为请 `cargo build --release` 后手工跑，release 档下要跑非界面用例用 `cargo test --release -p <crate>`。
-
 **打包安装包**（一条命令出一个平台的全部产物，不构建二进制）：
 
 ```bash
@@ -175,19 +126,6 @@ python build/package/package.py --target x86_64-pc-windows-msvc --formats msi,zi
 python3 build/package/package.py --target x86_64-unknown-linux-gnu --formats tar.gz,deb,rpm,appimage
 python3 build/package/package.py --target x86_64-apple-darwin,aarch64-apple-darwin --formats dmg,tar.gz
 ```
-
-CI 上打 tag（`vX.Y.Z`）即自动跑全平台矩阵并建 Release；用法与「关掉某一格」的开关见
-[build/package/README.md](build/package/README.md) 与 [04-编译与部署.md](docs/design/04-编译与部署.md) §6。
-
-> **想拿安装包但不发版**：GitHub → Actions → **ci** → Run workflow，勾上
-> `upload_packages` ⇒ 三平台 smoke 安装包（Windows `msi,zip` / macOS `dmg,tar.gz` /
-> Linux `tar.gz,deb,rpm,appimage`）会作为 artifact 留下（14 天）。要走全矩阵（含两个
-> arm64 格）就是 **release** 工作流：push tag `vX.Y.Z`，或 Actions → release → Run
-> workflow 填一个**已存在**的 tag + `dry_run` 演练（不建 Release）。
-> **注意 tag 必须与 `Cargo.toml` 的 `[workspace.package].version` 一致**（当前 `0.1.2`
-> ⇒ `v0.1.2`），不一致会在建 Release 之前就炸掉——文件名里的版本号只有这一处来源。
-> 另外：`ci` 的 `package-smoke` **只在打包相关文件变动时才自动跑**（`build/package/**`
-> 等，见 `ci.yml` 的 `changes` 过滤），所以普通代码提交看不到它。
 
 ---
 
